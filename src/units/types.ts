@@ -1,23 +1,23 @@
-export type BodyKind = 'mesh' | 'sprite'
+export const enum BodyKind {
+  Mesh = 0,
+  Sprite = 1,
+}
 
-export type UnitTypeId = 'tank'
+export const enum UnitTypeId {
+  Scout = 0,
+  Tank = 1,
+  Heavy = 2,
+}
+
+export type HullSize = { x: number; y: number; z: number }
 
 export type UnitType = {
   id: UnitTypeId
+  label: string
   speed: number
   footprint: number
   maxHealth: number
   body: BodyKind
-}
-
-export const TANK: UnitType = {
-  id: 'tank',
-  speed: 3.2,
-  footprint: 1,
-  maxHealth: 100,
-  body: 'mesh',
-}
-
-export const UNIT_TYPES: Record<UnitTypeId, UnitType> = {
-  tank: TANK,
+  color: number
+  hull: HullSize
 }

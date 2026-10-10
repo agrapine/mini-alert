@@ -1,15 +1,24 @@
-import { tileCenter, type GridMap, type TileCoord } from '../map/grid.ts'
+import { tileCenter } from '../map/map.ts'
+import type { PathFinder } from '../path/pathfinder.ts'
 import type { UnitType } from '../units/types.ts'
 import type { Unit } from '../units/unit.ts'
+import { redirect } from './steering.ts'
 
-export function stepUnit(unit: Unit, map: GridMap, dt: number, type: UnitType) {
+export function stepUnit(
+  unit: Unit,
+  dt: number,
+  type: UnitType,
+  paths: PathFinder,
+  units: readonly Unit[],
+) {
   let remaining = type.speed * dt
+  let redirects = 0
 
   while (remaining > 0 && unit.path.length > 0) {
     const next = unit.path[0]
-    if (!map.isWalkable(next.x, next.y, unit.id)) {
-      unit.path = []
-      return
+    if (!paths.isWalkable(next.x, next.y, unit.id)) {
+      if (redirects++ > 3 || !redirect(unit, paths, units)) return
+      continue
     }
 
     const target = tileCenter(next)
@@ -18,55 +27,36 @@ export function stepUnit(unit: Unit, map: GridMap, dt: number, type: UnitType) {
     const dist = Math.hypot(dx, dz)
 
     if (dist <= 1e-6) {
-      claimTile(map, unit, next, type.footprint)
+      if (!paths.claim(unit, next, type.footprint)) {
+        if (redirects++ > 3 || !redirect(unit, paths, units)) return
+        continue
+      }
       unit.path.shift()
       continue
     }
 
     unit.facing = Math.atan2(dx, dz)
     if (remaining >= dist) {
+      if (!paths.claim(unit, next, type.footprint)) {
+        if (redirects++ > 3 || !redirect(unit, paths, units)) return
+        continue
+      }
       unit.pos.x = target.x
       unit.pos.z = target.z
       remaining -= dist
-      claimTile(map, unit, next, type.footprint)
       unit.path.shift()
     } else {
-      unit.pos.x += (dx / dist) * remaining
-      unit.pos.z += (dz / dist) * remaining
-      remaining = 0
-      const entered = { x: Math.floor(unit.pos.x), y: Math.floor(unit.pos.z) }
-      if (
-        (entered.x !== unit.tile.x || entered.y !== unit.tile.y) &&
-        map.isWalkable(entered.x, entered.y, unit.id)
-      ) {
-        claimTile(map, unit, entered, type.footprint)
+      const nx = unit.pos.x + (dx / dist) * remaining
+      const nz = unit.pos.z + (dz / dist) * remaining
+      const entered = { x: Math.floor(nx), y: Math.floor(nz) }
+      const changing = entered.x !== unit.tile.x || entered.y !== unit.tile.y
+      if (changing && !paths.claim(unit, entered, type.footprint)) {
+        if (redirects++ > 3 || !redirect(unit, paths, units)) return
+        continue
       }
-    }
-  }
-}
-
-function claimTile(map: GridMap, unit: Unit, tile: TileCoord, footprint: number) {
-  if (unit.tile.x === tile.x && unit.tile.y === tile.y) return
-  clearFootprint(map, unit.tile, footprint, unit.id)
-  fillFootprint(map, tile, footprint, unit.id)
-  unit.tile = { x: tile.x, y: tile.y }
-}
-
-function clearFootprint(map: GridMap, origin: TileCoord, footprint: number, unitId: number) {
-  for (let dy = 0; dy < footprint; dy++) {
-    for (let dx = 0; dx < footprint; dx++) {
-      const x = origin.x + dx
-      const y = origin.y + dy
-      if (!map.inBounds(x, y)) continue
-      if (map.get(x, y).occupantId === unitId) map.setOccupant(x, y, null)
-    }
-  }
-}
-
-function fillFootprint(map: GridMap, origin: TileCoord, footprint: number, unitId: number) {
-  for (let dy = 0; dy < footprint; dy++) {
-    for (let dx = 0; dx < footprint; dx++) {
-      map.setOccupant(origin.x + dx, origin.y + dy, unitId)
+      unit.pos.x = nx
+      unit.pos.z = nz
+      remaining = 0
     }
   }
 }

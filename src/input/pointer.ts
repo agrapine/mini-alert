@@ -1,31 +1,22 @@
+import type { Commander } from '../game/commander.ts'
 import type { World } from '../game/world.ts'
 import type { GameView } from '../render/view.ts'
+import { cursorFor } from './cursor.ts'
+import { bindPanKeys } from './keys.ts'
 
-const PAN_KEYS = new Set([
-  'w',
-  'a',
-  's',
-  'd',
-  'arrowup',
-  'arrowdown',
-  'arrowleft',
-  'arrowright',
-])
-
-export function bindInput(canvas: HTMLCanvasElement, world: World, view: GameView) {
-  const down = new Set<string>()
+export function bindInput(
+  canvas: HTMLCanvasElement,
+  world: World,
+  player: Commander,
+  view: GameView,
+) {
+  const keys = bindPanKeys(view)
   let dragging = false
   let lastX = 0
   let lastY = 0
 
-  const syncAxis = () => {
-    const x =
-      (down.has('d') || down.has('arrowright') ? 1 : 0) -
-      (down.has('a') || down.has('arrowleft') ? 1 : 0)
-    const z =
-      (down.has('s') || down.has('arrowdown') ? 1 : 0) -
-      (down.has('w') || down.has('arrowup') ? 1 : 0)
-    view.setPanAxis(x, z)
+  const refreshCursor = (clientX: number, clientY: number) => {
+    canvas.style.cursor = cursorFor(dragging, world, player, view, clientX, clientY)
   }
 
   canvas.addEventListener('contextmenu', (event) => event.preventDefault())
@@ -33,34 +24,42 @@ export function bindInput(canvas: HTMLCanvasElement, world: World, view: GameVie
 
   canvas.addEventListener('pointerdown', (event) => {
     if (event.button === 0) {
-      world.select(view.pickUnit(event.clientX, event.clientY))
-      return
-    }
-    if (event.button === 2) {
-      const tile = view.pickTile(event.clientX, event.clientY)
-      if (tile) world.orderMove(tile)
+      const unitId = view.pickUnit(event.clientX, event.clientY)
+      if (unitId !== null) player.select(unitId)
+      else {
+        const tile = view.pickTile(event.clientX, event.clientY)
+        if (tile) player.orderMove(tile)
+      }
+      refreshCursor(event.clientX, event.clientY)
       return
     }
     if (event.button === 1) {
       dragging = true
       lastX = event.clientX
       lastY = event.clientY
+      canvas.style.cursor = 'grabbing'
       canvas.setPointerCapture(event.pointerId)
       event.preventDefault()
     }
   })
 
   canvas.addEventListener('pointermove', (event) => {
-    if (!dragging) return
-    view.panByPixels(lastX, lastY, event.clientX, event.clientY)
-    lastX = event.clientX
-    lastY = event.clientY
+    if (dragging) {
+      view.panByPixels(lastX, lastY, event.clientX, event.clientY)
+      lastX = event.clientX
+      lastY = event.clientY
+      canvas.style.cursor = 'grabbing'
+      return
+    }
+    refreshCursor(event.clientX, event.clientY)
   })
 
-  const endDrag = (event: PointerEvent) => {
-    if (event.button === 1) dragging = false
-  }
-  canvas.addEventListener('pointerup', endDrag)
+  canvas.addEventListener('pointerup', (event) => {
+    if (event.button !== 1) return
+    dragging = false
+    refreshCursor(event.clientX, event.clientY)
+  })
+
   canvas.addEventListener('pointercancel', () => {
     dragging = false
   })
@@ -74,24 +73,8 @@ export function bindInput(canvas: HTMLCanvasElement, world: World, view: GameVie
     { passive: false },
   )
 
-  window.addEventListener('keydown', (event) => {
-    const key = event.key.toLowerCase()
-    if (!PAN_KEYS.has(key)) return
-    event.preventDefault()
-    down.add(key)
-    syncAxis()
-  })
-
-  window.addEventListener('keyup', (event) => {
-    const key = event.key.toLowerCase()
-    if (!PAN_KEYS.has(key)) return
-    down.delete(key)
-    syncAxis()
-  })
-
   window.addEventListener('blur', () => {
-    down.clear()
     dragging = false
-    syncAxis()
+    keys.release()
   })
 }

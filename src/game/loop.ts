@@ -1,9 +1,10 @@
+import type { Commander } from './commander.ts'
 import type { World } from './world.ts'
 import type { GameView } from '../render/view.ts'
 
 const STEP = 1 / 30
 
-export function startLoop(world: World, view: GameView) {
+export function startLoop(world: World, player: Commander, view: GameView) {
   let last = performance.now()
   let acc = 0
 
@@ -16,7 +17,7 @@ export function startLoop(world: World, view: GameView) {
       acc -= STEP
     }
     view.update(frameDt)
-    view.render(world)
+    view.render(world, player.selected())
     requestAnimationFrame(frame)
   }
 

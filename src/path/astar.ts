@@ -1,4 +1,10 @@
-import type { GridMap, TileCoord } from '../map/grid.ts'
+import type { TileCoord } from '../map/map.ts'
+
+export type PathGrid = {
+  readonly width: number
+  inBounds(x: number, y: number): boolean
+  isWalkable(x: number, y: number, ignoreUnitId: number): boolean
+}
 
 const DIRS = [
   { x: 1, y: 0, cost: 1 },
@@ -27,7 +33,7 @@ function key(x: number, y: number, width: number): number {
 
 /** Path from start to goal, excluding start. Null when the goal cannot be reached. */
 export function findPath(
-  map: GridMap,
+  map: PathGrid,
   start: TileCoord,
   goal: TileCoord,
   ignoreUnitId: number,
