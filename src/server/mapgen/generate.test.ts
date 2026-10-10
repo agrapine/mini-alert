@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { blockerHoles, blockerTiles, smoothShore } from '../../shared/shore.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import { isWalkableTerrain, Terrain } from '../../shared/tiles.ts'
 import { SCOUT, UnitTypeId } from '../../shared/unit-types.ts'
@@ -97,6 +98,68 @@ describe('island match', () => {
     const spawned = game.units[game.units.length - 1]
     expect(isWalkableTerrain(game.world.terrainAt(spawned.tile.x, spawned.tile.y))).toBe(true)
     expect(spawned.ownerId).toBe(human.id)
+  })
+})
+
+function inside(loop: { x: number; y: number }[], x: number, y: number): boolean {
+  let c = false
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const a = loop[i]
+    const b = loop[j]
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) c = !c
+  }
+  return c
+}
+
+describe('coverage', () => {
+  it('opens a hole in the grass for every lake the shore covers', () => {
+    for (const seed of [101, 1]) {
+      const map = generateIsland(seed)
+      const shore = smoothShore(map.terrain, map.width, map.height, map.seed)
+      const tiles = new Set(
+        blockerTiles(map.terrain, map.width, map.height, shore.coast).map((tile) => tile.y * map.width + tile.x),
+      )
+      const holes = blockerHoles(map.terrain, map.width, map.height, shore.coast, map.seed)
+      const prepared = holes.map((hole) => {
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const point of hole) {
+          minX = Math.min(minX, point.x)
+          minY = Math.min(minY, point.y)
+          maxX = Math.max(maxX, point.x)
+          maxY = Math.max(maxY, point.y)
+        }
+        return { hole, minX, minY, maxX, maxY }
+      })
+      let lakes = 0
+      let seen = 0
+      let missed = 0
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          if (map.terrain[y * map.width + x] !== Terrain.Lake) continue
+          const cx = x + 0.5
+          const cy = y + 0.5
+          if (!inside(shore.coast, cx, cy)) continue
+          lakes++
+          if ((x + y * 3) % 17 !== 0) continue
+          seen++
+          expect(tiles.has(y * map.width + x)).toBe(true)
+          const covered = prepared.some(
+            (item) =>
+              cx >= item.minX && cx <= item.maxX && cy >= item.minY && cy <= item.maxY && inside(item.hole, cx, cy),
+          )
+          if (!covered) missed++
+        }
+      }
+      expect(lakes).toBeGreaterThan(0)
+      expect(seen).toBeGreaterThan(0)
+      expect(missed).toBeLessThan(Math.max(2, Math.round(seen * 0.02)))
+      for (const hole of holes) {
+        for (const point of hole) expect(inside(shore.coast, point.x, point.y)).toBe(true)
+      }
+    }
   })
 })
 

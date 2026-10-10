@@ -13,7 +13,7 @@ import {
   Vector2,
 } from 'three'
 import type { MapPoint, WorldSnapshot } from '../../shared/protocol.ts'
-import { smoothShore } from '../../shared/shore.ts'
+import { blockerHoles, smoothShore } from '../../shared/shore.ts'
 import { TILE_TOP } from './terrain.ts'
 
 const SAMPLE = 0.32
@@ -44,7 +44,8 @@ function landMesh(world: WorldSnapshot): Group | null {
   const shore = smoothShore(world.terrain, world.width, world.height, world.seed)
   const coast = shore.coast.length >= 3 ? shore.coast : world.coast
   if (coast.length < 3) return null
-  const holes = shore.coast.length >= 3 ? shore.holes : world.holes
+  const holes =
+    shore.coast.length >= 3 ? blockerHoles(world.terrain, world.width, world.height, coast, world.seed) : world.holes
   const material = new MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,

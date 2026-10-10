@@ -6,8 +6,8 @@ import { generateIsland, type Island } from './mapgen/generate.ts'
 import type { Player } from './player.ts'
 import { World } from './world.ts'
 
-// const MATCH_SEED = Math.random()*100;
-const MATCH_SEED = 101;
+const MATCH_SEED = Math.random()*100;
+//const MATCH_SEED = 101;
 
 const SQUAD = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.HeavyTank, UnitTypeId.Artillery]
 

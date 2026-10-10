@@ -74,6 +74,180 @@ export function smoothShore(
   return { coast, holes }
 }
 
+export function blockerTiles(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  coast: readonly MapPoint[],
+): MapPoint[] {
+  if (coast.length < 3) return []
+  const tiles: MapPoint[] = []
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const tile = terrain[y * width + x]
+      if (tile === Terrain.Lake && contains(coast, x + 0.5, y + 0.5)) tiles.push({ x, y })
+      else if (tile === Terrain.Water && nearLand(terrain, width, height, x, y) && squareInside(coast, x, y))
+        tiles.push({ x, y })
+    }
+  }
+  return tiles
+}
+
+export function blockerHoles(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  coast: readonly MapPoint[],
+  seed = 0,
+): MapPoint[][] {
+  const blocked = new Uint8Array(width * height)
+  for (const tile of blockerTiles(terrain, width, height, coast)) blocked[tile.y * width + tile.x] = 1
+  const cols = width + 1
+  const rows = height + 1
+  const field: Float32Array<ArrayBufferLike> = new Float32Array(cols * rows)
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) field[y * cols + x] = cornerBlocked(blocked, width, height, x, y) ? 1 : 0
+  }
+  const holes: MapPoint[][] = []
+  for (const loop of contour(field, width, height)) {
+    let rounded = resample(loop, 0.5)
+    rounded = expand(wobble(chaikin(chaikin(rounded)), seed), 0.28)
+    if (rounded.length < 3 || Math.abs(signedArea(rounded)) < 1.5) continue
+    const fitted = rounded.map((point) => pullInside(point, coast, blocked, width, height))
+    if (!fitted.every((point) => contains(coast, point.x, point.y))) continue
+    if (signedArea(fitted) > 0) fitted.reverse()
+    if (signedArea(fitted) < -0.5) holes.push(fitted)
+  }
+  return holes
+}
+
+function wobble(loop: readonly MapPoint[], seed: number): MapPoint[] {
+  return loop.map((point, index) => {
+    const prev = loop[(index - 1 + loop.length) % loop.length]
+    const next = loop[(index + 1) % loop.length]
+    let dx = next.x - prev.x
+    let dy = next.y - prev.y
+    const len = Math.hypot(dx, dy) || 1
+    dx /= len
+    dy /= len
+    const n = (valueNoise(point.x, point.y, seed, 0.18) - 0.5) * 0.45
+    return { x: point.x - dy * n, y: point.y + dx * n }
+  })
+}
+
+function expand(loop: readonly MapPoint[], amount: number): MapPoint[] {
+  const sign = signedArea(loop) >= 0 ? 1 : -1
+  return loop.map((point, index) => {
+    const prev = loop[(index - 1 + loop.length) % loop.length]
+    const next = loop[(index + 1) % loop.length]
+    let dx = next.x - prev.x
+    let dy = next.y - prev.y
+    const len = Math.hypot(dx, dy) || 1
+    dx /= len
+    dy /= len
+    return { x: point.x + dy * amount * sign, y: point.y - dx * amount * sign }
+  })
+}
+
+function chaikin(loop: readonly MapPoint[]): MapPoint[] {
+  const out: MapPoint[] = []
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i]
+    const b = loop[(i + 1) % loop.length]
+    out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 })
+    out.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 })
+  }
+  return out
+}
+
+function cornerBlocked(blocked: Uint8Array, width: number, height: number, cx: number, cy: number): boolean {
+  const tiles = [
+    [cx - 1, cy - 1],
+    [cx, cy - 1],
+    [cx - 1, cy],
+    [cx, cy],
+  ]
+  for (const [tx, ty] of tiles) {
+    if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+    if (blocked[ty * width + tx]) return true
+  }
+  return false
+}
+
+function pullInside(
+  point: MapPoint,
+  coast: readonly MapPoint[],
+  blocked: Uint8Array,
+  width: number,
+  height: number,
+): MapPoint {
+  if (contains(coast, point.x, point.y)) return point
+  let bestX = -1
+  let bestY = -1
+  let best = Infinity
+  const x0 = Math.max(0, Math.floor(point.x) - 3)
+  const x1 = Math.min(width - 1, Math.floor(point.x) + 3)
+  const y0 = Math.max(0, Math.floor(point.y) - 3)
+  const y1 = Math.min(height - 1, Math.floor(point.y) + 3)
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!blocked[y * width + x]) continue
+      const dist = (x + 0.5 - point.x) ** 2 + (y + 0.5 - point.y) ** 2
+      if (dist >= best) continue
+      best = dist
+      bestX = x
+      bestY = y
+    }
+  }
+  if (bestX < 0) return point
+  const towardX = bestX + 0.5
+  const towardY = bestY + 0.5
+  for (let step = 1; step <= 20; step++) {
+    const t = step / 20
+    const next = { x: point.x + (towardX - point.x) * t, y: point.y + (towardY - point.y) * t }
+    if (contains(coast, next.x, next.y)) return next
+  }
+  return { x: towardX, y: towardY }
+}
+
+function nearLand(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): boolean {
+  for (let dy = -6; dy <= 6; dy++) {
+    for (let dx = -6; dx <= 6; dx++) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const tile = terrain[ny * width + nx]
+      if (tile !== Terrain.Water && tile !== Terrain.Lake) return true
+    }
+  }
+  return false
+}
+
+function squareInside(loop: readonly MapPoint[], x: number, y: number): boolean {
+  return (
+    contains(loop, x + 0.08, y + 0.08) &&
+    contains(loop, x + 0.92, y + 0.08) &&
+    contains(loop, x + 0.08, y + 0.92) &&
+    contains(loop, x + 0.92, y + 0.92)
+  )
+}
+
+function contains(loop: readonly MapPoint[], x: number, y: number): boolean {
+  let inside = false
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const a = loop[i]
+    const b = loop[j]
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside
+  }
+  return inside
+}
+
 export function signedArea(loop: readonly MapPoint[]): number {
   let area = 0
   for (let i = 0; i < loop.length; i++) {

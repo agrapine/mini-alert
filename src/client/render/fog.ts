@@ -13,9 +13,12 @@ import {
 } from 'three'
 import type { SightSource } from '../../shared/vision.ts'
 import { EXPLORED_FOG, stampSight } from '../../shared/vision.ts'
+import { PITCH } from './stage.ts'
 
 const BLEND_SECONDS = 0.2
 const FOG_Y = 3
+const FOG_OVERHANG = FOG_Y / Math.tan(PITCH)
+const FOG_SLACK = 0.5
 
 export class Fog {
   readonly mask: Float32Array
@@ -43,9 +46,10 @@ export class Fog {
     this.texture.wrapT = ClampToEdgeWrapping
     this.texture.flipY = false
     this.texture.needsUpdate = true
-    const mesh = new Mesh(new PlaneGeometry(width, height), fogMaterial(this.texture, width, height))
+    const depth = height + FOG_OVERHANG + FOG_SLACK
+    const mesh = new Mesh(new PlaneGeometry(width, depth), fogMaterial(this.texture, width, height))
     mesh.rotation.x = -Math.PI / 2
-    mesh.position.set(width / 2, FOG_Y, height / 2)
+    mesh.position.set(width / 2, FOG_Y, depth / 2)
     mesh.renderOrder = 20
     mesh.frustumCulled = false
     scene.add(mesh)
@@ -73,6 +77,7 @@ function fogMaterial(mask: DataTexture, width: number, height: number): ShaderMa
     uniforms: {
       mask: { value: mask },
       mapSize: { value: new Vector2(width, height) },
+      overhang: { value: FOG_OVERHANG },
     },
     vertexShader: `
       varying vec3 vWorld;
@@ -85,9 +90,10 @@ function fogMaterial(mask: DataTexture, width: number, height: number): ShaderMa
     fragmentShader: `
       uniform sampler2D mask;
       uniform vec2 mapSize;
+      uniform float overhang;
       varying vec3 vWorld;
       void main() {
-        vec2 uv = clamp(vWorld.xz / mapSize, 0.0, 1.0);
+        vec2 uv = clamp(vec2(vWorld.x, vWorld.z - overhang) / mapSize, 0.0, 1.0);
         float fog = texture2D(mask, uv).a;
         gl_FragColor = vec4(0.0, 0.0, 0.0, fog);
       }

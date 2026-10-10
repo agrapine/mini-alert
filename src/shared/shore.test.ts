@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MapPoint } from './protocol.ts'
-import { signedArea, smoothShore } from './shore.ts'
+import { blockerHoles, signedArea, smoothShore } from './shore.ts'
 import { Terrain } from './tiles.ts'
 
 describe('smooth shore', () => {
@@ -37,8 +37,28 @@ describe('smooth shore', () => {
     expect(shore.holes.length).toBe(1)
     expect(signedArea(shore.holes[0])).toBeLessThan(0)
     for (const point of shore.holes[0]) expect(distanceToMask(point, tiles, width, height)).toBeLessThanOrEqual(2)
+    tiles[10 * width + 13] = Terrain.Lake
+    tiles[10 * width + 14] = Terrain.Lake
+    const holes = blockerHoles(tiles, width, height, shore.coast, 5)
+    expect(holes.length).toBeGreaterThan(0)
+    for (let y = 7; y <= 12; y++) {
+      for (let x = 7; x <= 12; x++) {
+        expect(holes.some((hole) => contains(hole, x + 0.5, y + 0.5))).toBe(true)
+      }
+    }
+    for (const hole of holes) expect(hasStairRun(hole)).toBe(false)
   })
 })
+
+function contains(loop: readonly MapPoint[], x: number, y: number): boolean {
+  let inside = false
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const a = loop[i]
+    const b = loop[j]
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside
+  }
+  return inside
+}
 
 function gap(loop: readonly MapPoint[]): number {
   const first = loop[0]
