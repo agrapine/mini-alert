@@ -1,12 +1,20 @@
-import { BoxGeometry, Group, Mesh, MeshStandardMaterial } from 'three'
+import { Group, Mesh, MeshStandardMaterial } from 'three'
 import type { UnitSnapshot } from '../../../shared/protocol.ts'
-import { BodyKind, UNIT_TYPES, type UnitType } from '../../../shared/unit-types.ts'
+import { UnitTypeId } from '../../../shared/unit-types.ts'
 import { TILE_TOP } from '../terrain.ts'
+import { createHeavyTank } from './heavy-tank.ts'
+import { createMedTank } from './med-tank.ts'
+import { createScout } from './scout-car.ts'
 
 export function createUnitMesh(unit: UnitSnapshot): Group {
-  const type = UNIT_TYPES[unit.typeId]
-  if (type.body === BodyKind.Mesh) return createVehicle(unit, type)
-  throw new Error(`no view for body ${type.body}`)
+  switch (unit.typeId) {
+    case UnitTypeId.Scout:
+      return createScout(unit)
+    case UnitTypeId.MedTank:
+      return createMedTank(unit)
+    case UnitTypeId.HeavyTank:
+      return createHeavyTank(unit)
+  }
 }
 
 export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean) {
@@ -25,36 +33,6 @@ export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean
 
 export function unitSpan(group: Group): number {
   return meshNumber(group, 'span', 0.7)
-}
-
-function createVehicle(unit: UnitSnapshot, type: UnitType): Group {
-  const hull = type.hull
-  const hullMaterial = new MeshStandardMaterial({
-    color: unit.color,
-    roughness: 0.42,
-    metalness: 0.32,
-  })
-  const turretMaterial = hullMaterial.clone()
-  turretMaterial.color.multiplyScalar(0.72)
-  const body = new Mesh(new BoxGeometry(hull.x, hull.y, hull.z), hullMaterial)
-  const turret = new Mesh(
-    new BoxGeometry(hull.x * 0.55, hull.y * 0.5, hull.z * 0.42),
-    turretMaterial,
-  )
-  turret.position.set(0, hull.y * 0.62, -hull.z * 0.04)
-  turret.userData.shade = 0.72
-  const barrel = new Mesh(
-    new BoxGeometry(hull.x * 0.16, hull.y * 0.22, hull.z * 0.4),
-    turretMaterial,
-  )
-  barrel.position.set(0, hull.y * 0.62, hull.z * 0.38)
-  barrel.userData.shade = 0.72
-  const group = new Group()
-  group.add(body, turret, barrel)
-  group.userData.unitId = unit.id
-  group.userData.bodyHeight = hull.y
-  group.userData.span = Math.max(hull.x, hull.z)
-  return group
 }
 
 function meshNumber(group: Group, key: string, fallback: number): number {

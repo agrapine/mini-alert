@@ -39,6 +39,7 @@ export class Stage {
   private readonly ground = new Plane(new Vector3(0, 1, 0), 0)
   private readonly look: Vector3
   private readonly hit = new Vector3()
+  private readonly projected = new Vector3()
   private axisX = 0
   private axisZ = 0
   private zoomTarget = 1
@@ -164,6 +165,16 @@ export class Stage {
       }
     }
     return null
+  }
+
+  project(x: number, z: number): { x: number; y: number } {
+    this.projected.set(x, 0, z)
+    this.projected.project(this.camera)
+    const rect = this.canvas.getBoundingClientRect()
+    return {
+      x: (this.projected.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-this.projected.y * 0.5 + 0.5) * rect.height + rect.top,
+    }
   }
 
   pickTile(clientX: number, clientY: number): TileCoord | null {

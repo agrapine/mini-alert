@@ -17,7 +17,7 @@ export function cursorFor(
     if (unit && unit.ownerId === replica.playerId) return 'pointer'
   }
   const selected = player.selected()
-  const tile = selected ? view.pickTile(clientX, clientY) : null
-  if (!selected || !tile) return 'default'
-  return replica.isOpen(tile, selected.id) ? 'crosshair' : 'not-allowed'
+  const tile = selected.length > 0 ? view.pickTile(clientX, clientY) : null
+  if (selected.length === 0 || !tile) return 'default'
+  return replica.isOpen(tile, selected.map((unit) => unit.id)) ? 'crosshair' : 'not-allowed'
 }

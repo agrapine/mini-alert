@@ -3,9 +3,22 @@ import type { UnitSnapshot } from '../shared/protocol.ts'
 import { UNIT_TYPES, type UnitTypeId } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { Player } from './player.ts'
-import { stepUnit } from './sim/movement.ts'
+import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
 import type { World } from './world.ts'
+
+const SPAWN_TILE = { x: 1, y: 12 }
+const SPAWN_STEPS: TileCoord[] = [
+  { x: 0, y: 0 },
+  { x: 0, y: 1 },
+  { x: 0, y: -1 },
+  { x: 1, y: 0 },
+  { x: 1, y: 1 },
+  { x: 1, y: -1 },
+  { x: 0, y: 2 },
+  { x: 0, y: -2 },
+  { x: 2, y: 0 },
+]
 
 export class Game {
   readonly world: World
@@ -30,12 +43,24 @@ export class Game {
     return this.players.get(id)
   }
 
+  trySpawn(playerId: number, typeId: UnitTypeId): boolean {
+    const owner = this.players.get(playerId)
+    if (!owner) return false
+    for (const step of SPAWN_STEPS) {
+      const tile = { x: SPAWN_TILE.x + step.x, y: SPAWN_TILE.y + step.y }
+      if (!this.pathfinder.isWalkable(tile.x, tile.y, -1)) continue
+      this.spawn(owner, typeId, tile, Math.PI / 2)
+      return true
+    }
+    return false
+  }
+
   spawn(owner: Player, typeId: UnitTypeId, tile: TileCoord, facing = 0): Unit {
     const type = UNIT_TYPES[typeId]
     if (!this.pathfinder.isWalkable(tile.x, tile.y, -1)) {
       throw new Error(`cannot spawn on ${tile.x},${tile.y}`)
     }
-    const unit = new Unit(this.nextUnitId++, owner.id, type, tile, facing)
+    const unit = createUnit(this.nextUnitId++, owner.id, type, tile, facing)
     this.units.push(unit)
     owner.addUnit(unit.id)
     this.pathfinder.setOccupant(tile.x, tile.y, unit.id)
@@ -52,7 +77,7 @@ export class Game {
 
   tick(dt: number) {
     for (const unit of this.units) {
-      stepUnit(unit, dt, UNIT_TYPES[unit.typeId], this.pathfinder, this.units)
+      unit.step(dt, this.pathfinder, this.units)
     }
   }
 

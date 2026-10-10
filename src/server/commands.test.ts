@@ -35,12 +35,30 @@ describe('player commands', () => {
     expect(enemy.path.at(-1)).toEqual({ x: 14, y: 8 })
   })
 
+  it('spawns for the connected player on the fixed tile', () => {
+    const { game, human, ai } = createSkirmish()
+    const host = new ServerHost(game, new AiPlayer(ai.id, game))
+    const humanPort = host.join(human)
+    const before = game.units.length
+
+    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout })
+    const spawned = game.units.find((unit) => unit.tile.x === 1 && unit.tile.y === 12)
+    expect(spawned?.ownerId).toBe(human.id)
+    expect(spawned?.typeId).toBe(UnitTypeId.Scout)
+
+    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.MedTank })
+    const second = game.units.find((unit) => unit.typeId === UnitTypeId.MedTank && unit.tile.x === 1)
+    expect(second?.ownerId).toBe(human.id)
+    expect(second?.tile).not.toEqual({ x: 1, y: 12 })
+    expect(game.units.length).toBe(before + 2)
+  })
+
   it('lets the AI order only its own units', () => {
     const game = new Game(new World(8, 8))
     const human = game.addPlayer()
     const ai = game.addPlayer()
-    const humanUnit = game.spawn(human, UnitTypeId.Tank, { x: 1, y: 1 })
-    const aiUnit = game.spawn(ai, UnitTypeId.Tank, { x: 6, y: 6 })
+    const humanUnit = game.spawn(human, UnitTypeId.MedTank, { x: 1, y: 1 })
+    const aiUnit = game.spawn(ai, UnitTypeId.MedTank, { x: 6, y: 6 })
     const aiPlayer = new AiPlayer(ai.id, game)
 
     let ordered = false

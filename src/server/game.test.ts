@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HEAVY, SCOUT, TANK, UnitTypeId } from '../shared/unit-types.ts'
+import { HEAVY_TANK, MED_TANK, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
@@ -10,6 +10,10 @@ function battle(width: number, height: number) {
   const game = new Game(new World(width, height))
   const player = game.addPlayer()
   return { game, player }
+}
+
+function ticks(game: Game, seconds: number) {
+  for (let i = 0; i < 30 * seconds; i++) game.tick(STEP)
 }
 
 describe('skirmish orders', () => {
@@ -29,7 +33,7 @@ describe('skirmish orders', () => {
     expect(game.orderMove(human.id, tank.id, { x: 11, y: 8 })).toBe(false)
     expect(tank.path.at(-1)).toEqual({ x: 18, y: 12 })
 
-    for (let i = 0; i < 30 * 20; i++) game.tick(STEP)
+    ticks(game, 40)
     expect(tank.tile).toEqual({ x: 18, y: 12 })
     expect(parked?.tile).toEqual({ x: 11, y: 8 })
     expect(game.pathfinder.occupant(18, 12)).toBe(tank.id)
@@ -40,24 +44,25 @@ describe('skirmish orders', () => {
     expect(parked.path).toEqual([])
   })
 
-  it('places scouts, tanks, and heavies', () => {
+  it('places scouts, med tanks, and heavy tanks', () => {
     const { game, human, ai } = createSkirmish()
     expect(game.units.map((unit) => unit.typeId).sort()).toEqual([
       UnitTypeId.Scout,
       UnitTypeId.Scout,
-      UnitTypeId.Tank,
-      UnitTypeId.Tank,
-      UnitTypeId.Tank,
-      UnitTypeId.Heavy,
-      UnitTypeId.Heavy,
+      UnitTypeId.MedTank,
+      UnitTypeId.MedTank,
+      UnitTypeId.MedTank,
+      UnitTypeId.HeavyTank,
+      UnitTypeId.HeavyTank,
     ])
-    expect(SCOUT.speed).toBeGreaterThan(TANK.speed)
-    expect(TANK.speed).toBeGreaterThan(HEAVY.speed)
-    expect(SCOUT.hull.x).toBeLessThan(TANK.hull.x)
-    expect(TANK.hull.x).toBeLessThan(HEAVY.hull.x)
+    expect(SCOUT.topSpeed).toBeGreaterThan(MED_TANK.topSpeed)
+    expect(MED_TANK.topSpeed).toBeGreaterThan(HEAVY_TANK.topSpeed)
+    expect(MED_TANK.turnRate).toBeGreaterThan(HEAVY_TANK.turnRate)
+    expect(SCOUT.hull.x).toBeLessThan(MED_TANK.hull.x)
+    expect(MED_TANK.hull.x).toBeLessThan(HEAVY_TANK.hull.x)
     expect(SCOUT.label).toBe('Scout')
-    expect(TANK.label).toBe('Tank')
-    expect(HEAVY.label).toBe('Heavy')
+    expect(MED_TANK.label).toBe('Med Tank')
+    expect(HEAVY_TANK.label).toBe('Heavy Tank')
     const snapshots = game.unitSnapshots()
     const colorsOf = (ownerId: number) =>
       snapshots.filter((unit) => unit.ownerId === ownerId).map((unit) => unit.color)
@@ -68,43 +73,65 @@ describe('skirmish orders', () => {
 })
 
 describe('movement', () => {
-  it('lets a faster scout pull ahead of a heavy', () => {
-    const { game, player } = battle(20, 5)
-    const scout = game.spawn(player, UnitTypeId.Scout, { x: 1, y: 1 })
-    const heavy = game.spawn(player, UnitTypeId.Heavy, { x: 1, y: 3 })
-    expect(game.orderMove(player.id, scout.id, { x: 16, y: 1 })).toBe(true)
-    expect(game.orderMove(player.id, heavy.id, { x: 16, y: 3 })).toBe(true)
+  it('lets a faster scout pull ahead of a heavy tank', () => {
+    const { game, player } = battle(24, 8)
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 1, y: 2 }, Math.PI / 2)
+    const heavy = game.spawn(player, UnitTypeId.HeavyTank, { x: 1, y: 5 }, Math.PI / 2)
+    expect(game.orderMove(player.id, scout.id, { x: 18, y: 2 })).toBe(true)
+    expect(game.orderMove(player.id, heavy.id, { x: 18, y: 5 })).toBe(true)
 
-    for (let i = 0; i < 45; i++) game.tick(STEP)
+    ticks(game, 4)
     expect(scout.pos.x).toBeGreaterThan(heavy.pos.x + 1)
   })
 
-  it('steps aside when two units meet head-on', () => {
-    const { game, player } = battle(12, 5)
-    const eastbound = game.spawn(player, UnitTypeId.Tank, { x: 2, y: 2 })
-    const westbound = game.spawn(player, UnitTypeId.Tank, { x: 8, y: 2 })
-    expect(game.orderMove(player.id, eastbound.id, { x: 9, y: 2 })).toBe(true)
-    expect(game.orderMove(player.id, westbound.id, { x: 1, y: 2 })).toBe(true)
+  it('steps aside when two tanks meet head-on', () => {
+    const { game, player } = battle(16, 7)
+    const eastbound = game.spawn(player, UnitTypeId.MedTank, { x: 2, y: 3 }, Math.PI / 2)
+    const westbound = game.spawn(player, UnitTypeId.MedTank, { x: 10, y: 3 }, -Math.PI / 2)
+    expect(game.orderMove(player.id, eastbound.id, { x: 12, y: 3 })).toBe(true)
+    expect(game.orderMove(player.id, westbound.id, { x: 1, y: 3 })).toBe(true)
 
-    for (let i = 0; i < 30 * 15; i++) {
+    for (let i = 0; i < 30 * 40; i++) {
       game.tick(STEP)
       const tiles = game.units.map((unit) => `${unit.tile.x},${unit.tile.y}`)
       expect(new Set(tiles).size).toBe(tiles.length)
     }
-
-    expect(eastbound.tile).toEqual({ x: 9, y: 2 })
-    expect(westbound.tile).toEqual({ x: 1, y: 2 })
+    expect(eastbound.tile).toEqual({ x: 12, y: 3 })
+    expect(westbound.tile).toEqual({ x: 1, y: 3 })
   })
 
-  it('follows a slower unit without cancelling the order', () => {
-    const { game, player } = battle(14, 3)
-    const lead = game.spawn(player, UnitTypeId.Heavy, { x: 2, y: 1 })
-    const trail = game.spawn(player, UnitTypeId.Scout, { x: 1, y: 1 })
-    expect(game.orderMove(player.id, lead.id, { x: 10, y: 1 })).toBe(true)
-    expect(game.orderMove(player.id, trail.id, { x: 9, y: 1 })).toBe(true)
+  it('follows a slower tank without cancelling the order', () => {
+    const { game, player } = battle(16, 5)
+    const lead = game.spawn(player, UnitTypeId.HeavyTank, { x: 2, y: 2 }, Math.PI / 2)
+    const trail = game.spawn(player, UnitTypeId.Scout, { x: 1, y: 2 }, Math.PI / 2)
+    expect(game.orderMove(player.id, lead.id, { x: 12, y: 2 })).toBe(true)
+    expect(game.orderMove(player.id, trail.id, { x: 11, y: 2 })).toBe(true)
 
-    for (let i = 0; i < 30 * 20; i++) game.tick(STEP)
-    expect(lead.tile).toEqual({ x: 10, y: 1 })
-    expect(trail.tile).toEqual({ x: 9, y: 1 })
+    ticks(game, 40)
+    expect(lead.tile).toEqual({ x: 12, y: 2 })
+    expect(trail.tile).toEqual({ x: 11, y: 2 })
+  })
+
+  it('pivots a stopped med tank', () => {
+    const { game, player } = battle(8, 5)
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 1, y: 2 })
+    expect(tank.speed).toBe(0)
+    expect(game.orderMove(player.id, tank.id, { x: 4, y: 2 })).toBe(true)
+    const facing = tank.facing
+    tank.drive(STEP)
+    expect(Math.abs(tank.facing - facing)).toBeGreaterThan(0.02)
+  })
+
+  it('does not yaw a scout until it is moving', () => {
+    const { game, player } = battle(10, 5)
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 1, y: 2 })
+    expect(scout.speed).toBe(0)
+    expect(game.orderMove(player.id, scout.id, { x: 6, y: 2 })).toBe(true)
+    const facing = scout.facing
+    scout.drive(STEP)
+    expect(scout.facing).toBeCloseTo(facing)
+    expect(Math.abs(scout.speed)).toBeGreaterThan(0)
+    scout.drive(STEP)
+    expect(Math.abs(scout.facing - facing)).toBeGreaterThan(0.01)
   })
 })

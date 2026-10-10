@@ -6,6 +6,7 @@ import { GameView } from './client/render/view.ts'
 import { AiPlayer } from './server/ai.ts'
 import { ServerHost } from './server/host.ts'
 import { createSkirmish } from './server/skirmish.ts'
+import { HEAVY_TANK, MED_TANK, SCOUT } from './shared/unit-types.ts'
 
 const STEP = 1 / 30
 
@@ -28,6 +29,17 @@ if (lead) player.select(lead.id)
 const view = new GameView(canvas, status, replica.world.width, replica.world.height)
 view.mountTerrain(replica.world)
 bindInput(canvas, replica, player, view)
+
+const spawnBar = document.querySelector<HTMLElement>('#spawn')
+if (spawnBar) {
+  for (const type of [SCOUT, MED_TANK, HEAVY_TANK]) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = type.label
+    button.addEventListener('click', () => player.spawn(type.id))
+    spawnBar.append(button)
+  }
+}
 
 let last = performance.now()
 let acc = 0

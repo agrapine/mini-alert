@@ -21,13 +21,14 @@ export class Replica {
     return this.units.find((unit) => unit.id === id)
   }
 
-  isOpen(tile: TileCoord, ignoreUnitId: number): boolean {
+  isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
     const world = this.world
     if (!world) return false
     if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
     if (world.terrain[tile.y * world.width + tile.x] !== Terrain.Clear) return false
+    const skip = typeof ignore === 'number' ? [ignore] : ignore
     return !this.units.some(
-      (unit) => unit.tileX === tile.x && unit.tileY === tile.y && unit.id !== ignoreUnitId,
+      (unit) => unit.tileX === tile.x && unit.tileY === tile.y && !skip.includes(unit.id),
     )
   }
 }

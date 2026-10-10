@@ -10,7 +10,11 @@ export class GameView {
   private readonly stage: Stage
   private readonly status: HTMLElement
   private readonly units = new Map<number, Group>()
-  private hoveredId: number | null = null
+  private readonly selectionRings: Mesh[] = []
+  private readonly hoverRings: Mesh[] = []
+  private readonly orderRings: Mesh[] = []
+  private hoveredIds: number[] = []
+  private boxPreview = false
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
     this.status = status
@@ -41,8 +45,37 @@ export class GameView {
     this.stage.zoomAt(deltaY, clientX, clientY)
   }
 
-  setHovered(unitId: number | null) {
-    this.hoveredId = unitId
+  setHovered(ids: readonly number[]) {
+    this.hoveredIds = [...ids]
+  }
+
+  setBoxPreview(active: boolean) {
+    this.boxPreview = active
+  }
+
+  unitsInRect(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    units: readonly UnitSnapshot[],
+    ownerId: number | null,
+  ): number[] {
+    const left = Math.min(x0, x1)
+    const right = Math.max(x0, x1)
+    const top = Math.min(y0, y1)
+    const bottom = Math.max(y0, y1)
+    const hits: number[] = []
+    for (const unit of units) {
+      if (unit.ownerId !== ownerId) continue
+      const center = this.stage.project(unit.x, unit.z)
+      const mesh = this.units.get(unit.id)
+      const span = mesh ? unitSpan(mesh) : 0.7
+      const edge = this.stage.project(unit.x + span / 2, unit.z)
+      const radius = Math.max(6, Math.hypot(edge.x - center.x, edge.y - center.y))
+      if (circleHitsRect(center.x, center.y, radius, left, top, right, bottom)) hits.push(unit.id)
+    }
+    return hits
   }
 
   pickUnit(clientX: number, clientY: number): number | null {
@@ -53,7 +86,8 @@ export class GameView {
     return this.stage.pickTile(clientX, clientY)
   }
 
-  render(units: readonly UnitSnapshot[], selected: UnitSnapshot | null) {
+  render(units: readonly UnitSnapshot[], selected: readonly UnitSnapshot[]) {
+    const selectedIds = new Set(selected.map((unit) => unit.id))
     for (const unit of units) {
       let group = this.units.get(unit.id)
       if (!group) {
@@ -61,37 +95,91 @@ export class GameView {
         this.units.set(unit.id, group)
         this.stage.scene.add(group)
       }
-      syncUnitMesh(group, unit, selected?.id === unit.id)
+      syncUnitMesh(group, unit, selectedIds.has(unit.id))
     }
 
-    this.stage.selection.visible = selected !== null
-    if (selected) {
-      placeRing(this.stage.selection, selected, this.units.get(selected.id))
-      this.stage.orderMark.visible = selected.goal !== null
-      if (selected.goal) {
-        this.stage.orderMark.position.set(
-          selected.goal.x + 0.5,
-          TILE_TOP + 0.02,
-          selected.goal.y + 0.5,
-        )
-      }
-      const moving = selected.goal ? ' · moving' : ''
-      const label = UNIT_TYPES[selected.typeId].label
-      this.status.textContent = `${label} ${selected.id} · tile ${selected.tileX},${selected.tileY}${moving}`
+    const showSelection = !this.boxPreview
+    this.placeRings(this.selectionRings, this.stage.selection, showSelection ? selected : [])
+    const goals = showSelection ? selected.filter((unit) => unit.goal !== null) : []
+    this.placeOrders(goals)
+
+    if (selected.length === 1) {
+      const unit = selected[0]
+      const moving = unit.goal ? ' · moving' : ''
+      const label = UNIT_TYPES[unit.typeId].label
+      this.status.textContent = `${label} ${unit.id} · tile ${unit.tileX},${unit.tileY}${moving}`
+    } else if (selected.length > 1) {
+      this.status.textContent = `${selected.length} selected`
     } else {
-      this.stage.orderMark.visible = false
       this.status.textContent = 'No unit selected'
     }
 
-    const hovered =
-      this.hoveredId !== null && this.hoveredId !== selected?.id
-        ? units.find((unit) => unit.id === this.hoveredId)
-        : undefined
-    this.stage.hover.visible = hovered !== undefined
-    if (hovered) placeRing(this.stage.hover, hovered, this.units.get(hovered.id))
+    const hovered = this.hoveredIds.flatMap((id) => {
+      if (!this.boxPreview && selectedIds.has(id)) return []
+      const unit = units.find((candidate) => candidate.id === id)
+      return unit ? [unit] : []
+    })
+    this.placeRings(this.hoverRings, this.stage.hover, hovered)
 
     this.stage.draw()
   }
+
+  private placeRings(pool: Mesh[], source: Mesh, units: readonly UnitSnapshot[]) {
+    source.visible = false
+    const rings = growRings(pool, source, units.length, this.stage.scene)
+    for (let i = 0; i < rings.length; i++) {
+      const ring = rings[i]
+      const unit = units[i]
+      if (!unit) {
+        ring.visible = false
+        continue
+      }
+      ring.visible = true
+      placeRing(ring, unit, this.units.get(unit.id))
+    }
+  }
+
+  private placeOrders(units: readonly UnitSnapshot[]) {
+    this.stage.orderMark.visible = false
+    const rings = growRings(this.orderRings, this.stage.orderMark, units.length, this.stage.scene)
+    for (let i = 0; i < rings.length; i++) {
+      const ring = rings[i]
+      const goal = units[i]?.goal
+      if (!goal) {
+        ring.visible = false
+        continue
+      }
+      ring.visible = true
+      ring.scale.set(1, 1, 1)
+      ring.position.set(goal.x + 0.5, TILE_TOP + 0.02, goal.y + 0.5)
+    }
+  }
+}
+
+function growRings(pool: Mesh[], source: Mesh, count: number, scene: { add(mesh: Mesh): void }): Mesh[] {
+  while (pool.length < count) {
+    const mesh = source.clone()
+    mesh.visible = false
+    scene.add(mesh)
+    pool.push(mesh)
+  }
+  return pool
+}
+
+function circleHitsRect(
+  cx: number,
+  cy: number,
+  radius: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+): boolean {
+  const nearestX = Math.min(right, Math.max(left, cx))
+  const nearestY = Math.min(bottom, Math.max(top, cy))
+  const dx = cx - nearestX
+  const dy = cy - nearestY
+  return dx * dx + dy * dy <= radius * radius
 }
 
 function placeRing(ring: Mesh, unit: UnitSnapshot, mesh: Group | undefined) {

@@ -3,6 +3,7 @@ import type { UnitTypeId } from './unit-types.ts'
 
 export const enum ClientMessageKind {
   OrderMove = 1,
+  Spawn = 2,
 }
 
 export const enum ServerMessageKind {
@@ -17,7 +18,12 @@ export type OrderMove = {
   tile: TileCoord
 }
 
-export type ClientMessage = OrderMove
+export type OrderSpawn = {
+  kind: ClientMessageKind.Spawn
+  typeId: UnitTypeId
+}
+
+export type ClientMessage = OrderMove | OrderSpawn
 
 export type Welcome = {
   kind: ServerMessageKind.Welcome

@@ -5,8 +5,8 @@ export const enum BodyKind {
 
 export const enum UnitTypeId {
   Scout = 0,
-  Tank = 1,
-  Heavy = 2,
+  MedTank = 1,
+  HeavyTank = 2,
 }
 
 export type HullSize = { x: number; y: number; z: number }
@@ -14,7 +14,11 @@ export type HullSize = { x: number; y: number; z: number }
 export type UnitType = {
   id: UnitTypeId
   label: string
-  speed: number
+  topSpeed: number
+  acceleration: number
+  turnRate: number
+  wheelbase: number
+  maxSteer: number
   footprint: number
   maxHealth: number
   body: BodyKind
@@ -24,35 +28,47 @@ export type UnitType = {
 export const SCOUT: UnitType = {
   id: UnitTypeId.Scout,
   label: 'Scout',
-  speed: 5.6,
+  topSpeed: 6.2,
+  acceleration: 9,
+  turnRate: 0,
+  wheelbase: 0.55,
+  maxSteer: 0.85,
   footprint: 1,
   maxHealth: 60,
   body: BodyKind.Mesh,
-  hull: { x: 0.48, y: 0.32, z: 0.6 },
+  hull: { x: 0.4, y: 0.28, z: 0.78 },
 }
 
-export const TANK: UnitType = {
-  id: UnitTypeId.Tank,
-  label: 'Tank',
-  speed: 3.2,
+export const MED_TANK: UnitType = {
+  id: UnitTypeId.MedTank,
+  label: 'Med Tank',
+  topSpeed: 3.4,
+  acceleration: 7,
+  turnRate: 2.8,
+  wheelbase: 0,
+  maxSteer: 0,
   footprint: 1,
   maxHealth: 120,
   body: BodyKind.Mesh,
-  hull: { x: 0.66, y: 0.44, z: 0.86 },
+  hull: { x: 0.62, y: 0.4, z: 0.86 },
 }
 
-export const HEAVY: UnitType = {
-  id: UnitTypeId.Heavy,
-  label: 'Heavy',
-  speed: 1.7,
+export const HEAVY_TANK: UnitType = {
+  id: UnitTypeId.HeavyTank,
+  label: 'Heavy Tank',
+  topSpeed: 1.8,
+  acceleration: 2.5,
+  turnRate: 1.15,
+  wheelbase: 0,
+  maxSteer: 0,
   footprint: 1,
   maxHealth: 220,
   body: BodyKind.Mesh,
-  hull: { x: 0.9, y: 0.56, z: 0.92 },
+  hull: { x: 0.9, y: 0.52, z: 1.02 },
 }
 
 export const UNIT_TYPES: Record<UnitTypeId, UnitType> = {
   [UnitTypeId.Scout]: SCOUT,
-  [UnitTypeId.Tank]: TANK,
-  [UnitTypeId.Heavy]: HEAVY,
+  [UnitTypeId.MedTank]: MED_TANK,
+  [UnitTypeId.HeavyTank]: HEAVY_TANK,
 }
