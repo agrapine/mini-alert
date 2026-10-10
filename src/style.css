@@ -34,6 +34,41 @@ body {
   margin-top: 2px;
 }
 
+#minimap {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: 180px;
+  aspect-ratio: 1;
+  z-index: 2;
+  border: 1px solid #2c3324;
+  background: #7ec8e3;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#minimap[hidden] {
+  display: none;
+}
+
+#minimap-map,
+#minimap-marks {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#minimap-map {
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+#minimap-marks {
+  cursor: crosshair;
+}
+
 #spawn {
   position: fixed;
   left: 16px;

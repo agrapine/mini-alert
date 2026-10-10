@@ -18,15 +18,30 @@ export function bindInput(
   document.body.append(marquee)
 
   let panning = false
+  let spaceDown = false
   let selectArmed = false
   let boxSelecting = false
   let originX = 0
   let originY = 0
   let lastX = 0
   let lastY = 0
+  let pointerX = 0
+  let pointerY = 0
 
   const refreshCursor = (clientX: number, clientY: number) => {
-    canvas.style.cursor = cursorFor(panning, replica, player, view, clientX, clientY)
+    if (panning) canvas.style.cursor = 'grabbing'
+    else if (spaceDown) canvas.style.cursor = 'grab'
+    else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY)
+  }
+
+  const beginPan = (event: PointerEvent) => {
+    panning = true
+    view.setHovered([])
+    lastX = event.clientX
+    lastY = event.clientY
+    canvas.style.cursor = 'grabbing'
+    canvas.setPointerCapture(event.pointerId)
+    event.preventDefault()
   }
 
   const hideBox = () => {
@@ -43,6 +58,10 @@ export function bindInput(
   canvas.addEventListener('auxclick', (event) => event.preventDefault())
 
   canvas.addEventListener('pointerdown', (event) => {
+    if (event.button === 0 && spaceDown) {
+      beginPan(event)
+      return
+    }
     if (event.button === 0) {
       selectArmed = true
       boxSelecting = false
@@ -52,18 +71,14 @@ export function bindInput(
       return
     }
     if (event.button === 1) {
-      panning = true
-      view.setHovered([])
-      lastX = event.clientX
-      lastY = event.clientY
-      canvas.style.cursor = 'grabbing'
-      canvas.setPointerCapture(event.pointerId)
-      event.preventDefault()
+      beginPan(event)
     }
   })
 
   canvas.addEventListener('pointermove', (event) => {
     view.setZoomCursor(event.clientX, event.clientY)
+    pointerX = event.clientX
+    pointerY = event.clientY
     if (panning) {
       view.panByPixels(lastX, lastY, event.clientX, event.clientY)
       lastX = event.clientX
@@ -92,7 +107,7 @@ export function bindInput(
   })
 
   canvas.addEventListener('pointerup', (event) => {
-    if (event.button === 1) {
+    if (event.button === 1 || (event.button === 0 && spaceDown)) {
       panning = false
       refreshCursor(event.clientX, event.clientY)
       return
@@ -135,8 +150,26 @@ export function bindInput(
     { passive: false },
   )
 
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Space') return
+    event.preventDefault()
+    if (spaceDown) return
+    spaceDown = true
+    hideBox()
+    view.setHovered([])
+    refreshCursor(pointerX, pointerY)
+  })
+
+  window.addEventListener('keyup', (event) => {
+    if (event.code !== 'Space') return
+    spaceDown = false
+    panning = false
+    refreshCursor(pointerX, pointerY)
+  })
+
   window.addEventListener('blur', () => {
     panning = false
+    spaceDown = false
     hideBox()
     view.setHovered([])
     keys.release()

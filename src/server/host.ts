@@ -56,6 +56,17 @@ export class ServerHost {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) terrain.push(this.game.world.terrainAt(x, y))
     }
-    return { kind: ServerMessageKind.World, width, height, terrain }
+    const scenery = this.game.scenery
+    return {
+      kind: ServerMessageKind.World,
+      width,
+      height,
+      terrain,
+      coast: scenery.coast,
+      holes: scenery.holes,
+      roads: scenery.roads,
+      towns: scenery.towns,
+      seed: scenery.seed,
+    }
   }
 }

@@ -5,7 +5,7 @@ import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
 import { AiPlayer } from './server/ai.ts'
 import { ServerHost } from './server/host.ts'
-import { createSkirmish } from './server/skirmish.ts'
+import { createIslandMatch } from './server/island-match.ts'
 import { HEAVY_TANK, MED_TANK, SCOUT } from './shared/unit-types.ts'
 
 const STEP = 1 / 30
@@ -14,7 +14,7 @@ const canvas = document.querySelector<HTMLCanvasElement>('#view')
 const status = document.querySelector<HTMLElement>('#status')
 if (!canvas || !status) throw new Error('missing game canvas')
 
-const { game, human, ai } = createSkirmish()
+const { game, human, ai } = createIslandMatch()
 const host = new ServerHost(game, new AiPlayer(ai.id, game))
 const port = host.join(human)
 const replica = new Replica()
@@ -28,6 +28,7 @@ if (lead) player.select(lead.id)
 
 const view = new GameView(canvas, status, replica.world.width, replica.world.height)
 view.mountTerrain(replica.world)
+if (lead) view.focus(lead.x, lead.z)
 bindInput(canvas, replica, player, view)
 
 const spawnBar = document.querySelector<HTMLElement>('#spawn')

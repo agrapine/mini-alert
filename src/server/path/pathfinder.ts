@@ -1,4 +1,4 @@
-import { Terrain, type TileCoord } from '../../shared/tiles.ts'
+import { isWalkableTerrain, type TileCoord } from '../../shared/tiles.ts'
 import type { Unit } from '../units/unit.ts'
 import type { World } from '../world.ts'
 import { findPath } from './astar.ts'
@@ -33,7 +33,7 @@ export class PathFinder {
 
   isWalkable(x: number, y: number, ignoreUnitId: number): boolean {
     if (!this.world.inBounds(x, y)) return false
-    if (this.world.terrainAt(x, y) !== Terrain.Clear) return false
+    if (!isWalkableTerrain(this.world.terrainAt(x, y))) return false
     const occupantId = this.occupants[y * this.world.width + x]
     return occupantId === EMPTY || occupantId === ignoreUnitId
   }

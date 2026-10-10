@@ -1,5 +1,5 @@
+import type { MapPoint, UnitSnapshot } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
-import type { UnitSnapshot } from '../shared/protocol.ts'
 import { UNIT_TYPES, type UnitTypeId } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { Player } from './player.ts'
@@ -8,6 +8,16 @@ import { Unit } from './units/unit.ts'
 import type { World } from './world.ts'
 
 const SPAWN_TILE = { x: 1, y: 12 }
+
+export type Scenery = {
+  coast: MapPoint[]
+  holes: MapPoint[][]
+  roads: MapPoint[][]
+  towns: MapPoint[]
+  seed: number
+}
+
+const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 const SPAWN_STEPS: TileCoord[] = [
   { x: 0, y: 0 },
   { x: 0, y: 1 },
@@ -27,6 +37,8 @@ export class Game {
   private readonly players = new Map<number, Player>()
   private nextUnitId = 1
   private nextPlayerId = 1
+  private spawnAnchor: TileCoord | null = null
+  scenery: Scenery = EMPTY_SCENERY
 
   constructor(world: World) {
     this.world = world
@@ -43,11 +55,16 @@ export class Game {
     return this.players.get(id)
   }
 
+  setSpawnAnchor(tile: TileCoord) {
+    this.spawnAnchor = tile
+  }
+
   trySpawn(playerId: number, typeId: UnitTypeId): boolean {
     const owner = this.players.get(playerId)
     if (!owner) return false
+    const origin = this.spawnAnchor ?? SPAWN_TILE
     for (const step of SPAWN_STEPS) {
-      const tile = { x: SPAWN_TILE.x + step.x, y: SPAWN_TILE.y + step.y }
+      const tile = { x: origin.x + step.x, y: origin.y + step.y }
       if (!this.pathfinder.isWalkable(tile.x, tile.y, -1)) continue
       this.spawn(owner, typeId, tile, Math.PI / 2)
       return true

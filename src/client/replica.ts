@@ -4,7 +4,7 @@ import {
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
-import { Terrain, type TileCoord } from '../shared/tiles.ts'
+import { isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
 
 export class Replica {
   playerId: number | null = null
@@ -25,7 +25,7 @@ export class Replica {
     const world = this.world
     if (!world) return false
     if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    if (world.terrain[tile.y * world.width + tile.x] !== Terrain.Clear) return false
+    if (!isWalkableTerrain(world.terrain[tile.y * world.width + tile.x])) return false
     const skip = typeof ignore === 'number' ? [ignore] : ignore
     return !this.units.some(
       (unit) => unit.tileX === tile.x && unit.tileY === tile.y && !skip.includes(unit.id),

@@ -19,8 +19,8 @@ import type { TileCoord } from '../../shared/tiles.ts'
 const PITCH = (50 * Math.PI) / 180
 const CAM_DIST = 36
 const PAN_SPEED = 14
-const ZOOM_MIN = 0.55
-const ZOOM_MAX = 2.8
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 4
 const ZOOM_PER_PIXEL = 0.005
 const ZOOM_EASE_SECONDS = 0.15
 
@@ -88,6 +88,28 @@ export class Stage {
     window.addEventListener('resize', () => this.resize())
   }
 
+  groundViewport(): { x: number; z: number }[] {
+    const corners: { x: number; z: number }[] = []
+    const ndc: [number, number][] = [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ]
+    for (const [x, y] of ndc) {
+      this.pointer.set(x, y)
+      this.raycaster.setFromCamera(this.pointer, this.camera)
+      if (!this.raycaster.ray.intersectPlane(this.ground, this.hit)) return []
+      corners.push({ x: this.hit.x, z: this.hit.z })
+    }
+    return corners
+  }
+
+  focus(x: number, z: number) {
+    this.look.set(clamp(x, 0, this.mapWidth), 0, clamp(z, 0, this.mapHeight))
+    this.syncCamera()
+  }
+
   setPanAxis(x: number, z: number) {
     this.axisX = x
     this.axisZ = z
@@ -96,7 +118,8 @@ export class Stage {
   update(dt: number) {
     if (this.axisX !== 0 || this.axisZ !== 0) {
       const len = Math.hypot(this.axisX, this.axisZ)
-      this.moveLook((this.axisX / len) * PAN_SPEED * dt, (this.axisZ / len) * PAN_SPEED * dt)
+      const speed = (PAN_SPEED / this.camera.zoom) * dt
+      this.moveLook((this.axisX / len) * speed, (this.axisZ / len) * speed)
     }
     this.easeZoom(dt)
   }

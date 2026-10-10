@@ -2,6 +2,9 @@ import { Group, Mesh } from 'three'
 import type { UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { UNIT_TYPES } from '../../shared/unit-types.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
+import { buildIsland } from './island.ts'
+import { Minimap } from './minimap.ts'
+import { loadProps } from './props.ts'
 import { Stage } from './stage.ts'
 import { TILE_TOP, buildTerrain } from './terrain.ts'
 import { createUnitMesh, syncUnitMesh, unitSpan } from './units/vehicle.ts'
@@ -15,6 +18,7 @@ export class GameView {
   private readonly orderRings: Mesh[] = []
   private hoveredIds: number[] = []
   private boxPreview = false
+  private minimap: Minimap | null = null
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
     this.status = status
@@ -22,7 +26,23 @@ export class GameView {
   }
 
   mountTerrain(world: WorldSnapshot) {
+    const root = document.querySelector<HTMLElement>('#minimap')
+    const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
+    const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
+    if (world.coast.length > 0) {
+      this.stage.scene.add(buildIsland(world))
+      if (root && map && marks) {
+        this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
+      }
+      void loadProps(world).then((props) => this.stage.scene.add(props))
+      return
+    }
+    if (root) root.hidden = true
     this.stage.scene.add(buildTerrain(world))
+  }
+
+  focus(x: number, z: number) {
+    this.stage.focus(x, z)
   }
 
   setPanAxis(x: number, z: number) {
@@ -121,6 +141,7 @@ export class GameView {
     })
     this.placeRings(this.hoverRings, this.stage.hover, hovered)
 
+    this.minimap?.draw(units, selectedIds, this.stage.groundViewport())
     this.stage.draw()
   }
 
@@ -151,7 +172,7 @@ export class GameView {
       }
       ring.visible = true
       ring.scale.set(1, 1, 1)
-      ring.position.set(goal.x + 0.5, TILE_TOP + 0.02, goal.y + 0.5)
+      ring.position.set(goal.x + 0.5, TILE_TOP + 0.06, goal.y + 0.5)
     }
   }
 }
@@ -185,5 +206,5 @@ function circleHitsRect(
 function placeRing(ring: Mesh, unit: UnitSnapshot, mesh: Group | undefined) {
   const span = mesh ? unitSpan(mesh) : 0.7
   ring.scale.set(span / 0.72, span / 0.72, 1)
-  ring.position.set(unit.x, TILE_TOP + 0.02, unit.z)
+  ring.position.set(unit.x, TILE_TOP + 0.06, unit.z)
 }

@@ -15,6 +15,13 @@ export class World {
     }
   }
 
+  static fromTiles(width: number, height: number, tiles: Uint8Array): World {
+    if (tiles.length !== width * height) throw new Error('terrain size')
+    const world = new World(width, height)
+    world.terrain.set(tiles)
+    return world
+  }
+
   inBounds(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.width && y < this.height
   }

@@ -8,9 +8,13 @@
   </head>
   <body>
     <canvas id="view"></canvas>
+    <div id="minimap">
+      <canvas id="minimap-map"></canvas>
+      <canvas id="minimap-marks"></canvas>
+    </div>
     <div id="hud">
       <p id="status"></p>
-      <p id="help">Click a unit to select, drag a box for several, click the ground to move · WASD or middle-drag pan · Wheel zoom</p>
+      <p id="help">Click a unit to select, drag a box for several, click the ground to move · WASD, middle-drag, or Space-drag to pan · Wheel zoom · Minimap click or drag</p>
     </div>
     <div id="spawn"></div>
     <script type="module" src="/src/main.ts"></script>

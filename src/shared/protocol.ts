@@ -30,11 +30,18 @@ export type Welcome = {
   playerId: number
 }
 
+export type MapPoint = { x: number; y: number }
+
 export type WorldSnapshot = {
   kind: ServerMessageKind.World
   width: number
   height: number
   terrain: Terrain[]
+  coast: MapPoint[]
+  holes: MapPoint[][]
+  roads: MapPoint[][]
+  towns: MapPoint[]
+  seed: number
 }
 
 export type UnitSnapshot = {
