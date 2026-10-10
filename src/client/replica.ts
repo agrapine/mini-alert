@@ -2,6 +2,7 @@ import {
   ServerMessageKind,
   type ServerMessage,
   type ShotEvent,
+  type TrainJob,
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
@@ -14,6 +15,7 @@ export class Replica {
   world: WorldSnapshot | null = null
   units: UnitSnapshot[] = []
   credits = 0
+  training: TrainJob[] = []
   private pendingShots: ShotEvent[] = []
 
   apply(message: ServerMessage) {
@@ -23,6 +25,7 @@ export class Replica {
     else {
       this.units = message.units
       this.credits = message.credits
+      this.training = message.training
     }
   }
 

@@ -29,6 +29,22 @@ body {
   margin: 0;
 }
 
+#credits {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  margin-bottom: 4px;
+}
+
+#credits.up {
+  color: #7dce4a;
+}
+
+#credits.down {
+  color: #d64545;
+}
+
 #help {
   opacity: 0.75;
   margin-top: 2px;

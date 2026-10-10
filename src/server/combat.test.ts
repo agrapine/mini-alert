@@ -78,7 +78,7 @@ describe('combat', () => {
   it('holds shell damage until the flight time elapses', () => {
     const { game, human, enemy } = battle()
     game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
-    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 10 }, 0)
+    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 7 }, 0)
     const before = foe.health
     const shots = game.tick(1 / 30)
     expect(shots[0]?.flight).toBeGreaterThan(0)
@@ -93,7 +93,7 @@ describe('combat', () => {
   it('aims a shell ahead of a moving target', () => {
     const { game, human, enemy } = battle()
     game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
-    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 10 }, 0)
+    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 7 }, 0)
     foe.speed = foe.type.topSpeed
     expect(game.orderMove(enemy.id, foe.id, { x: 2, y: 20 })).toBe(true)
     const shots = game.tick(1 / 30)
@@ -103,7 +103,7 @@ describe('combat', () => {
   it('fires two artillery rounds before the reload', () => {
     const { game, human, enemy } = battle()
     const gun = game.spawn(human, UnitTypeId.Artillery, { x: 2, y: 2 }, 0)
-    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 16 }, 0)
+    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 8 }, 0)
     foe.health = 1000
     expect(game.tick(1 / 30)).toHaveLength(1)
     expect(gun.rounds).toBe(1)
@@ -164,11 +164,22 @@ describe('combat', () => {
     expect(chaser.attackId).toBeNull()
   })
 
+  it('fires artillery at a distant enemy only while a friendly unit can see them', () => {
+    const { game, human, enemy } = battle()
+    const gun = game.spawn(human, UnitTypeId.Artillery, { x: 2, y: 2 }, 0)
+    game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 16 }, 0)
+    expect(game.tick(1 / 30)).toEqual([])
+    expect(gun.rounds).toBe(2)
+    game.spawn(human, UnitTypeId.Scout, { x: 2, y: 10 }, 0)
+    const shots = game.tick(1 / 30)
+    expect(shots.some((shot) => shot.shooterId === gun.id)).toBe(true)
+  })
+
   it('deals less splash damage farther from the impact', () => {
     const { game, human, enemy } = battle()
     game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
-    const direct = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 10 }, 0)
-    const nearby = game.spawn(enemy, UnitTypeId.Scout, { x: 3, y: 10 }, 0)
+    const direct = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 7 }, 0)
+    const nearby = game.spawn(enemy, UnitTypeId.Scout, { x: 3, y: 7 }, 0)
     const before = direct.health
     const shots = game.tick(1 / 30)
     const flight = shots[0].flight

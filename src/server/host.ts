@@ -37,6 +37,7 @@ export class ServerHost {
       kind: ServerMessageKind.Units,
       units: this.unitsFor(playerId),
       credits: this.creditsFor(playerId),
+      training: this.game.trainingFor(playerId),
     })
   }
 
@@ -52,6 +53,7 @@ export class ServerHost {
         kind: ServerMessageKind.Units,
         units,
         credits: this.creditsFor(session.playerId),
+        training: this.game.trainingFor(session.playerId),
       })
       const seen = shotsForPlayer(shots, living, session.playerId)
       if (seen.length > 0) session.send({ kind: ServerMessageKind.Shots, shots: seen })

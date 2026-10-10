@@ -90,10 +90,16 @@ export type ShotsSnapshot = {
   shots: ShotEvent[]
 }
 
+export type TrainJob = {
+  typeId: UnitTypeId
+  progress: number
+}
+
 export type UnitsSnapshot = {
   kind: ServerMessageKind.Units
   units: UnitSnapshot[]
   credits: number
+  training: TrainJob[]
 }
 
 export type ServerMessage = Welcome | WorldSnapshot | UnitsSnapshot | ShotsSnapshot

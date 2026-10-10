@@ -30,6 +30,11 @@ export class GameView {
   private readonly selectionRings: Mesh[] = []
   private readonly hoverRings: Mesh[] = []
   private readonly orderRings: Mesh[] = []
+  private readonly rangeRings: Mesh[] = []
+  private readonly sightRings: Mesh[] = []
+  private readonly rangeMark: Mesh
+  private readonly sightMark: Mesh
+  private showRanges = false
   private hoveredIds: number[] = []
   private boxPreview = false
   private minimap: Minimap | null = null
@@ -46,6 +51,30 @@ export class GameView {
     this.stage = new Stage(canvas, mapWidth, mapHeight)
     this.shots = new ShotLayer(this.stage.scene)
     this.particles = new Particles(this.stage.scene)
+    this.rangeMark = new Mesh(
+      new RingGeometry(0.86, 1, 72),
+      new MeshBasicMaterial({
+        color: 0xd64545,
+        transparent: true,
+        opacity: 0.8,
+        side: DoubleSide,
+        depthWrite: false,
+      }),
+    )
+    this.rangeMark.rotation.x = -Math.PI / 2
+    this.rangeMark.visible = false
+    this.sightMark = new Mesh(
+      new RingGeometry(0.94, 1, 72),
+      new MeshBasicMaterial({
+        color: 0xf6f1dc,
+        transparent: true,
+        opacity: 0.35,
+        side: DoubleSide,
+        depthWrite: false,
+      }),
+    )
+    this.sightMark.rotation.x = -Math.PI / 2
+    this.sightMark.visible = false
   }
 
   mountTerrain(world: WorldSnapshot) {
@@ -96,6 +125,10 @@ export class GameView {
 
   setBoxPreview(active: boolean) {
     this.boxPreview = active
+  }
+
+  setShowRanges(on: boolean) {
+    this.showRanges = on
   }
 
   showPlacement(cells: readonly { x: number; y: number; open: boolean }[] | null) {
@@ -197,7 +230,7 @@ export class GameView {
     for (const unit of living) {
       let group = this.units.get(unit.id)
       const stage = buildStage(unit.progress)
-      const built = UNIT_TYPES[unit.typeId].buildTime > 0
+      const built = UNIT_TYPES[unit.typeId].topSpeed <= 0
       if (group && built && group.userData.stage !== stage) {
         releaseMesh(group)
         this.units.delete(unit.id)
@@ -213,6 +246,7 @@ export class GameView {
 
     const showSelection = !this.boxPreview
     this.placeRings(this.selectionRings, this.stage.selection, showSelection ? selected : [])
+    this.placeRanges(showSelection && this.showRanges ? selected : [])
     const goals = showSelection ? selected.filter((unit) => unit.goal !== null) : []
     this.placeOrders(goals)
 
@@ -311,6 +345,57 @@ export class GameView {
       }
       ring.visible = true
       placeRing(ring, unit, this.units.get(unit.id))
+    }
+  }
+
+  private placeRanges(units: readonly UnitSnapshot[]) {
+    const ready = units.filter((unit) => unit.progress >= 1)
+    this.placeDistance(
+      this.sightRings,
+      this.sightMark,
+      ready.flatMap((unit) => {
+        const sight = UNIT_TYPES[unit.typeId].weapon.sight
+        return sight > 0 ? [{ unit, radius: sight }] : []
+      }),
+      0.06,
+      TILE_TOP + 0.065,
+    )
+    this.placeDistance(
+      this.rangeRings,
+      this.rangeMark,
+      ready.flatMap((unit) => {
+        const weapon = UNIT_TYPES[unit.typeId].weapon
+        return weapon.damage > 0 && weapon.range > 0 ? [{ unit, radius: weapon.range }] : []
+      }),
+      0.14,
+      TILE_TOP + 0.07,
+    )
+  }
+
+  private placeDistance(
+    pool: Mesh[],
+    source: Mesh,
+    marks: readonly { unit: UnitSnapshot; radius: number }[],
+    band: number,
+    y: number,
+  ) {
+    const rings = growRings(pool, source, marks.length, this.stage.scene)
+    for (let i = 0; i < rings.length; i++) {
+      const ring = rings[i]
+      const mark = marks[i]
+      if (!mark) {
+        ring.visible = false
+        continue
+      }
+      if (ring.userData.range !== mark.radius) {
+        const next = new RingGeometry(Math.max(0.05, mark.radius - band), mark.radius, 80)
+        if (ring.geometry !== source.geometry) ring.geometry.dispose()
+        ring.geometry = next
+        ring.userData.range = mark.radius
+      }
+      ring.visible = true
+      ring.scale.set(1, 1, 1)
+      ring.position.set(mark.unit.x, y, mark.unit.z)
     }
   }
 

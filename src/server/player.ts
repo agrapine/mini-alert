@@ -1,6 +1,7 @@
 const PLAYER_COLORS = [0x2f7edb, 0xd64545]
 
 export const STARTING_CREDITS = 10_000
+export const CREDIT_INCOME = 12
 
 export class Player {
   readonly id: number

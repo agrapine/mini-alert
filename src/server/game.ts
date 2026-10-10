@@ -1,8 +1,8 @@
-import type { MapPoint, ShotEvent, UnitSnapshot } from '../shared/protocol.ts'
+import type { MapPoint, ShotEvent, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
-import { Player } from './player.ts'
+import { CREDIT_INCOME, Player } from './player.ts'
 import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
 import { applyImpacts, engage, type Impact } from './sim/combat.ts'
@@ -59,7 +59,8 @@ export class Game {
   private impacts: Impact[] = []
   private time = 0
   private deaths: Unit[] = []
-  private readonly jobs = new Map<number, number>()
+  private readonly jobs = new Map<number, number[]>()
+  private readonly training = new Map<number, TrainJob[]>()
   scenery: Scenery = EMPTY_SCENERY
 
   constructor(world: World) {
@@ -94,13 +95,15 @@ export class Game {
   placeBuilding(playerId: number, typeId: UnitTypeId, tile: TileCoord): boolean {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
-    if (!owner || type.buildTime <= 0) return false
-    if (this.jobs.has(playerId)) return false
+    if (!owner || type.topSpeed > 0) return false
     if (owner.credits < type.cost) return false
     if (!this.footprintFree(tile, type.footprint)) return false
     owner.credits -= type.cost
     const unit = this.spawn(owner, typeId, tile, 0)
-    this.jobs.set(playerId, unit.id)
+    unit.progress = 0
+    const queue = this.jobs.get(playerId) ?? []
+    queue.push(unit.id)
+    this.jobs.set(playerId, queue)
     return true
   }
 
@@ -115,31 +118,31 @@ export class Game {
   }
 
   finishBuild(playerId: number) {
-    const id = this.jobs.get(playerId)
+    const queue = this.jobs.get(playerId)
+    const id = queue?.[0]
     if (id === undefined) return
     const unit = this.units.find((candidate) => candidate.id === id)
     if (unit) unit.progress = 1
-    this.jobs.delete(playerId)
+    queue?.shift()
+    if (queue && queue.length === 0) this.jobs.delete(playerId)
+  }
+
+  trainingFor(playerId: number): TrainJob[] {
+    return (this.training.get(playerId) ?? []).map((job) => ({ typeId: job.typeId, progress: job.progress }))
+  }
+
+  trainingCount(playerId: number): number {
+    return this.training.get(playerId)?.length ?? 0
   }
 
   trySpawn(playerId: number, typeId: UnitTypeId): boolean {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
-    if (!owner || type.buildTime > 0 || type.topSpeed <= 0) return false
-    const factory = this.units.find(
-      (unit) =>
-        unit.ownerId === playerId &&
-        unit.typeId === UnitTypeId.Factory &&
-        unit.health > 0 &&
-        unit.progress >= 1,
-    )
-    if (!factory) return false
-    const exit = this.exitTile(factory)
-    if (!exit) return false
-    const unit = this.spawn(owner, typeId, exit.tile, exit.facing)
-    if (exit.rally.x !== exit.tile.x || exit.rally.y !== exit.tile.y) {
-      unit.orderMove(exit.rally, this.pathfinder)
-    }
+    if (!owner || type.topSpeed <= 0 || !this.hasFinishedFactory(playerId) || owner.credits < type.cost) return false
+    owner.credits -= type.cost
+    const queue = this.training.get(playerId) ?? []
+    queue.push({ typeId, progress: 0 })
+    this.training.set(playerId, queue)
     return true
   }
 
@@ -176,6 +179,7 @@ export class Game {
   }
 
   tick(dt: number): ShotEvent[] {
+    for (const player of this.players.values()) player.credits += CREDIT_INCOME * dt
     this.advanceBuilds(dt)
     for (const unit of this.units) {
       if (unit.health <= 0) continue
@@ -185,6 +189,7 @@ export class Game {
     const shots = engage(this.units, dt, this.time, this.impacts)
     applyImpacts(this.units, this.impacts, this.time)
     this.removeDead()
+    this.advanceTraining(dt)
     return shots
   }
 
@@ -234,15 +239,69 @@ export class Game {
   }
 
   private advanceBuilds(dt: number) {
-    for (const [playerId, unitId] of this.jobs) {
-      const unit = this.units.find((candidate) => candidate.id === unitId)
-      if (!unit || unit.health <= 0) {
-        this.jobs.delete(playerId)
-        continue
+    for (const [playerId, queue] of this.jobs) {
+      let left = dt
+      while (queue.length > 0 && left > 0) {
+        const unit = this.units.find((candidate) => candidate.id === queue[0])
+        if (!unit || unit.health <= 0) {
+          queue.shift()
+          continue
+        }
+        const duration = unit.type.buildTime
+        const need = (1 - unit.progress) * duration
+        if (need > left) {
+          unit.progress += left / duration
+          break
+        }
+        left -= need
+        unit.progress = 1
+        queue.shift()
       }
-      unit.progress = Math.min(1, unit.progress + dt / unit.type.buildTime)
-      if (unit.progress >= 1) this.jobs.delete(playerId)
+      if (queue.length === 0) this.jobs.delete(playerId)
     }
+  }
+
+  private advanceTraining(dt: number) {
+    for (const [playerId, queue] of this.training) {
+      let left = dt
+      while (queue.length > 0 && left > 0) {
+        const job = queue[0]
+        if (job.progress >= 1) {
+          if (!this.releaseTrainee(playerId, job.typeId)) break
+          queue.shift()
+          continue
+        }
+        const duration = UNIT_TYPES[job.typeId].buildTime
+        const need = (1 - job.progress) * duration
+        if (need > left) {
+          job.progress += left / duration
+          break
+        }
+        left -= need
+        job.progress = 1
+        if (!this.releaseTrainee(playerId, job.typeId)) break
+        queue.shift()
+      }
+      if (queue.length === 0) this.training.delete(playerId)
+    }
+  }
+
+  private releaseTrainee(playerId: number, typeId: UnitTypeId): boolean {
+    const owner = this.players.get(playerId)
+    if (!owner) return false
+    const factory = this.units.find(
+      (unit) =>
+        unit.ownerId === playerId &&
+        unit.typeId === UnitTypeId.Factory &&
+        unit.health > 0 &&
+        unit.progress >= 1,
+    )
+    if (!factory) return false
+    const exit = this.exitTile(factory)
+    if (!exit) return false
+    const unit = this.spawn(owner, typeId, exit.tile, exit.facing)
+    if (exit.rally.x !== exit.tile.x || exit.rally.y !== exit.tile.y) unit.orderMove(exit.rally, this.pathfinder)
+    return true
   }
 
   private footprintFree(origin: TileCoord, footprint: number): boolean {
@@ -289,8 +348,11 @@ export class Game {
   }
 
   private clearJob(unitId: number) {
-    for (const [playerId, id] of this.jobs) {
-      if (id === unitId) this.jobs.delete(playerId)
+    for (const [playerId, queue] of this.jobs) {
+      const next = queue.filter((id) => id !== unitId)
+      if (next.length === queue.length) continue
+      if (next.length === 0) this.jobs.delete(playerId)
+      else this.jobs.set(playerId, next)
     }
   }
 }

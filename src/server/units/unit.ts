@@ -35,7 +35,6 @@ export abstract class Unit {
     this.turretYaw = facing
     this.health = type.maxHealth
     this.rounds = type.weapon.magazine
-    this.progress = type.buildTime > 0 ? 0 : 1
   }
 
   abstract drive(dt: number): void

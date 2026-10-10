@@ -218,7 +218,14 @@ export function bindInput(
     { passive: false },
   )
 
+  const syncRanges = (event: KeyboardEvent) => {
+    const ctrl = event.key === 'Control' && event.type === 'keyup' ? false : event.ctrlKey
+    const meta = event.key === 'Meta' && event.type === 'keyup' ? false : event.metaKey
+    view.setShowRanges(ctrl || meta)
+  }
+
   window.addEventListener('keydown', (event) => {
+    syncRanges(event)
     if (event.code !== 'Space') return
     event.preventDefault()
     if (spaceDown) return
@@ -229,6 +236,7 @@ export function bindInput(
   })
 
   window.addEventListener('keyup', (event) => {
+    syncRanges(event)
     if (event.code !== 'Space') return
     spaceDown = false
     panning = false
@@ -238,6 +246,7 @@ export function bindInput(
   window.addEventListener('blur', () => {
     panning = false
     spaceDown = false
+    view.setShowRanges(false)
     hideBox()
     view.setHovered([])
     keys.release()

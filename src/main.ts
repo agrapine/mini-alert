@@ -6,7 +6,7 @@ import { GameView } from './client/render/view.ts'
 import { AiPlayer } from './server/ai.ts'
 import { ServerHost } from './server/host.ts'
 import { createIslandMatch } from './server/island-match.ts'
-import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UNIT_TYPES, UnitTypeId } from './shared/unit-types.ts'
+import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UnitTypeId } from './shared/unit-types.ts'
 
 const STEP = 1 / 30
 
@@ -34,16 +34,20 @@ bindInput(canvas, replica, player, view)
 const credits = document.querySelector<HTMLElement>('#credits')
 const spawnBar = document.querySelector<HTMLElement>('#spawn')
 const buildBar = document.querySelector<HTMLElement>('#build')
-const spawnButtons: HTMLButtonElement[] = []
+const spawnButtons: { button: HTMLButtonElement; id: UnitTypeId; cost: number }[] = []
 const buildButtons: { button: HTMLButtonElement; id: UnitTypeId; cost: number }[] = []
 if (spawnBar) {
   for (const type of [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY]) {
     const button = document.createElement('button')
     button.type = 'button'
-    button.textContent = type.label
-    button.addEventListener('click', () => player.spawn(type.id))
+    button.dataset.label = type.label
+    button.textContent = `${type.label} ${type.cost}`
+    button.addEventListener('click', () => {
+      if (button.disabled) return
+      player.spawn(type.id)
+    })
     spawnBar.append(button)
-    spawnButtons.push(button)
+    spawnButtons.push({ button, id: type.id, cost: type.cost })
   }
 }
 if (buildBar) {
@@ -60,17 +64,39 @@ if (buildBar) {
   }
 }
 
-const refreshHud = () => {
-  if (credits) credits.textContent = replica.credits.toLocaleString('en-US')
+const COUNT_SECONDS = 0.15
+let shownCredits = replica.credits
+
+const refreshHud = (dt: number) => {
+  const target = replica.credits
+  const blend = dt <= 0 ? 1 : 1 - Math.exp(-dt / COUNT_SECONDS)
+  shownCredits += (target - shownCredits) * blend
+  if (Math.abs(target - shownCredits) < 0.5) shownCredits = target
+  if (credits) {
+    credits.textContent = Math.round(shownCredits).toLocaleString('en-US')
+    const gap = target - shownCredits
+    credits.classList.toggle('up', gap > 30)
+    credits.classList.toggle('down', gap < -30)
+  }
   const own = replica.units.filter((unit) => unit.ownerId === replica.playerId && unit.health > 0)
-  const busy = own.some((unit) => unit.progress < 1 && UNIT_TYPES[unit.typeId].buildTime > 0)
   const factoryReady = own.some((unit) => unit.typeId === UnitTypeId.Factory && unit.progress >= 1)
-  for (const button of spawnButtons) button.disabled = !factoryReady
+  for (const entry of spawnButtons) {
+    entry.button.disabled = !factoryReady || replica.credits < entry.cost
+    entry.button.textContent = trainLabel(entry.cost, entry.button.dataset.label ?? '', entry.id, replica.training)
+  }
   const armed = player.placingType()
   for (const entry of buildButtons) {
-    entry.button.disabled = busy || replica.credits < entry.cost
+    entry.button.disabled = replica.credits < entry.cost
     entry.button.classList.toggle('armed', armed === entry.id)
   }
+}
+
+function trainLabel(cost: number, label: string, typeId: UnitTypeId, queue: readonly { typeId: UnitTypeId; progress: number }[]): string {
+  const mine = queue.filter((job) => job.typeId === typeId)
+  if (mine.length === 0) return `${label} ${cost}`
+  const active = queue[0]?.typeId === typeId ? ` · ${Math.floor(queue[0].progress * 100)}%` : ''
+  const count = mine.length > 1 || queue[0]?.typeId !== typeId ? ` ×${mine.length}` : ''
+  return `${label} ${cost}${active}${count}`
 }
 
 let last = performance.now()
@@ -84,7 +110,7 @@ const frame = (now: number) => {
     acc -= STEP
   }
   view.update(frameDt)
-  refreshHud()
+  refreshHud(frameDt)
   view.render(replica.units, player.selected(), replica.takeShots(), replica.playerId)
   requestAnimationFrame(frame)
 }

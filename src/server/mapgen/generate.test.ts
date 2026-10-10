@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import { isWalkableTerrain, Terrain } from '../../shared/tiles.ts'
-import { UnitTypeId } from '../../shared/unit-types.ts'
+import { SCOUT, UnitTypeId } from '../../shared/unit-types.ts'
 import { createIslandMatch } from '../island-match.ts'
 import { MAX_HOPS, countyHops, fillWaterCracks, generateIsland } from './generate.ts'
 
@@ -93,6 +93,7 @@ describe('island match', () => {
     expect(placed).toBe(true)
     game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    game.tick(SCOUT.buildTime)
     const spawned = game.units[game.units.length - 1]
     expect(isWalkableTerrain(game.world.terrainAt(spawned.tile.x, spawned.tile.y))).toBe(true)
     expect(spawned.ownerId).toBe(human.id)

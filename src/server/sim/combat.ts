@@ -1,5 +1,6 @@
 import type { ShotEvent } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
+import { seesPoint, type SightSource } from '../../shared/vision.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
 import type { Unit } from '../units/unit.ts'
 
@@ -13,6 +14,7 @@ export type Impact = {
 }
 
 export function engage(units: readonly Unit[], dt: number, time: number, impacts: Impact[]): ShotEvent[] {
+  const vision = teamVision(units)
   const shots: ShotEvent[] = []
   for (const unit of units) {
     if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
@@ -23,7 +25,7 @@ export function engage(units: readonly Unit[], dt: number, time: number, impacts
       unit.rounds = weapon.magazine
     }
 
-    const target = pickTarget(unit, units)
+    const target = pickTarget(unit, units, vision.get(unit.ownerId) ?? [])
     const aim = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
     if (!target) continue
     const predicted = weapon.kind === WeaponKind.Shell ? lead(unit, target) : null
@@ -114,10 +116,25 @@ function bodyReach(unit: Unit): number {
 
 const ATTACK_COMMIT = 1.5
 
-function pickTarget(unit: Unit, units: readonly Unit[]): Unit | null {
+function teamVision(units: readonly Unit[]): Map<number, SightSource[]> {
+  const vision = new Map<number, SightSource[]>()
+  for (const unit of units) {
+    if (unit.health <= 0 || unit.progress < 1) continue
+    const sight = unit.type.weapon.sight
+    if (sight <= 0) continue
+    const friends = vision.get(unit.ownerId) ?? []
+    friends.push({ x: unit.pos.x, z: unit.pos.z, sight })
+    vision.set(unit.ownerId, friends)
+  }
+  return vision
+}
+
+function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightSource[]): Unit | null {
   const weapon = unit.type.weapon
+  const reach = Math.max(weapon.sight, weapon.range)
   const ordered = orderedTarget(unit, units)
-  if (ordered && distance(unit, ordered) <= weapon.range * ATTACK_COMMIT) return ordered
+  const orderedVisible = ordered !== null && seesPoint(friends, ordered.pos.x, ordered.pos.z)
+  if (ordered && orderedVisible && distance(unit, ordered) <= weapon.range * ATTACK_COMMIT) return ordered
   const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
   let closest: Unit | null = null
   let closestDist = Infinity
@@ -125,8 +142,9 @@ function pickTarget(unit: Unit, units: readonly Unit[]): Unit | null {
   let lockedDist = Infinity
   for (const other of units) {
     if (other.id === unit.id || other.ownerId === unit.ownerId || other.health <= 0) continue
+    if (!seesPoint(friends, other.pos.x, other.pos.z)) continue
     const dist = distance(unit, other)
-    if (dist > weapon.sight) continue
+    if (dist > reach) continue
     if (dist < closestDist) {
       closest = other
       closestDist = dist

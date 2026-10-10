@@ -43,13 +43,15 @@ export class AiPlayer {
 
   private reinforce() {
     if (!this.game.hasFinishedFactory(this.playerId)) {
-      this.game.placeNearAnchor(this.playerId, UnitTypeId.Factory)
+      if (!this.game.units.some((unit) => unit.ownerId === this.playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0)) {
+        this.game.placeNearAnchor(this.playerId, UnitTypeId.Factory)
+      }
       return
     }
     const living = this.game.units.filter(
       (unit) => unit.ownerId === this.playerId && unit.type.topSpeed > 0,
     ).length
-    if (living >= AI_MAX_UNITS) return
+    if (living + this.game.trainingCount(this.playerId) >= AI_MAX_UNITS) return
     const typeId = SPAWN_TYPES[this.spawnCursor % SPAWN_TYPES.length]
     if (!this.game.trySpawn(this.playerId, typeId)) return
     this.spawnCursor += 1

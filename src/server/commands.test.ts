@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ClientMessageKind } from '../shared/protocol.ts'
-import { UnitTypeId } from '../shared/unit-types.ts'
+import { HEAVY_TANK, MED_TANK, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { AI_MAX_UNITS, AiPlayer } from './ai.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
@@ -46,6 +46,7 @@ describe('player commands', () => {
     const before = game.units.length
 
     humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout })
+    game.tick(SCOUT.buildTime)
     const spawned = game.units[game.units.length - 1]
     expect(spawned?.ownerId).toBe(human.id)
     expect(spawned?.typeId).toBe(UnitTypeId.Scout)
@@ -53,6 +54,7 @@ describe('player commands', () => {
     expect(spawned.path.length).toBeGreaterThan(0)
 
     humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.MedTank })
+    game.tick(MED_TANK.buildTime)
     const second = game.units[game.units.length - 1]
     expect(second?.ownerId).toBe(human.id)
     expect(second.tile).not.toEqual(spawned.tile)
@@ -82,9 +84,13 @@ describe('player commands', () => {
     game.setSpawnAnchor(ai.id, { x: 4, y: 4 })
     expect(game.placeBuilding(ai.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(ai.id)
+    ai.credits = 100_000
     const aiPlayer = new AiPlayer(ai.id, game)
 
-    for (let i = 0; i < AI_MAX_UNITS; i++) aiPlayer.update(5)
+    for (let i = 0; i < AI_MAX_UNITS; i++) {
+      aiPlayer.update(5)
+      game.tick(HEAVY_TANK.buildTime)
+    }
     const owned = () => game.units.filter((unit) => unit.ownerId === ai.id && unit.type.topSpeed > 0)
     expect(owned()).toHaveLength(AI_MAX_UNITS)
 
