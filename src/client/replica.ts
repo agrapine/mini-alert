@@ -30,6 +30,10 @@ export class Replica {
     return this.units.find((unit) => unit.id === id)
   }
 
+  occupant(tile: TileCoord): UnitSnapshot | undefined {
+    return this.units.find((unit) => unit.tileX === tile.x && unit.tileY === tile.y)
+  }
+
   isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
     const world = this.world
     if (!world) return false

@@ -107,11 +107,21 @@ export class Game {
   }
 
   orderMove(playerId: number, unitId: number, tile: TileCoord): boolean {
-    const player = this.players.get(playerId)
-    if (!player?.owns(unitId)) return false
-    const unit = this.units.find((candidate) => candidate.id === unitId)
+    const unit = this.owned(playerId, unitId)
     if (!unit) return false
+    unit.attackId = null
     return unit.orderMove(tile, this.pathfinder)
+  }
+
+  orderAttack(playerId: number, unitId: number, targetId: number): boolean {
+    const unit = this.owned(playerId, unitId)
+    const target = this.units.find((candidate) => candidate.id === targetId)
+    if (!unit || !target || target.id === unit.id || target.ownerId === unit.ownerId || target.health <= 0) {
+      return false
+    }
+    unit.attackId = target.id
+    unit.step(0, this.pathfinder, this.units)
+    return true
   }
 
   tick(dt: number): ShotEvent[] {
@@ -141,6 +151,12 @@ export class Game {
       tileY: unit.tile.y,
       goal: unit.path.length > 0 ? unit.path[unit.path.length - 1] : null,
     }))
+  }
+
+  private owned(playerId: number, unitId: number): Unit | undefined {
+    const player = this.players.get(playerId)
+    if (!player?.owns(unitId)) return undefined
+    return this.units.find((candidate) => candidate.id === unitId)
   }
 
   private removeDead() {

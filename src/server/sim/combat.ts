@@ -110,8 +110,12 @@ function bodyReach(unit: Unit): number {
   return Math.max(unit.type.hull.x, unit.type.hull.z) / 2
 }
 
+const ATTACK_COMMIT = 1.5
+
 function pickTarget(unit: Unit, units: readonly Unit[]): Unit | null {
   const weapon = unit.type.weapon
+  const ordered = orderedTarget(unit, units)
+  if (ordered && distance(unit, ordered) <= weapon.range * ATTACK_COMMIT) return ordered
   const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
   let closest: Unit | null = null
   let closestDist = Infinity
@@ -133,6 +137,13 @@ function pickTarget(unit: Unit, units: readonly Unit[]): Unit | null {
     }
   }
   return locked ?? closest
+}
+
+function orderedTarget(unit: Unit, units: readonly Unit[]): Unit | null {
+  if (unit.attackId === null) return null
+  const target = units.find((other) => other.id === unit.attackId)
+  if (!target || target.health <= 0 || target.ownerId === unit.ownerId) return null
+  return target
 }
 
 function bearing(from: Unit, to: Unit): number {

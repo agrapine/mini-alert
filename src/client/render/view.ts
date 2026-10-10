@@ -1,4 +1,4 @@
-import { Group, Mesh } from 'three'
+import { DoubleSide, Group, Mesh, MeshBasicMaterial, RingGeometry } from 'three'
 import type { ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { UNIT_TYPES, type WeaponKind } from '../../shared/unit-types.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
@@ -34,6 +34,7 @@ export class GameView {
   private readonly shots: ShotLayer
   private readonly particles: Particles
   private readonly wrecks: Wreck[] = []
+  private readonly pings: { mesh: Mesh; age: number }[] = []
   private shotDt = 0
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
@@ -125,6 +126,23 @@ export class GameView {
     return this.stage.pickTile(clientX, clientY)
   }
 
+  ping(x: number, z: number, attack: boolean) {
+    const mesh = new Mesh(
+      new RingGeometry(0.34, 0.5, 28),
+      new MeshBasicMaterial({
+        color: attack ? 0xd64545 : 0x3cde73,
+        transparent: true,
+        opacity: 1,
+        side: DoubleSide,
+        depthWrite: false,
+      }),
+    )
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.set(x, TILE_TOP + 0.07, z)
+    this.stage.scene.add(mesh)
+    this.pings.push({ mesh, age: 0 })
+  }
+
   render(units: readonly UnitSnapshot[], selected: readonly UnitSnapshot[], shots: readonly ShotEvent[] = []) {
     const alive = new Set(units.map((unit) => unit.id))
     for (const [id, group] of this.units) {
@@ -133,6 +151,7 @@ export class GameView {
       this.units.delete(id)
     }
     this.advanceWrecks(this.shotDt)
+    this.advancePings(this.shotDt)
     const selectedIds = new Set(selected.map((unit) => unit.id))
     for (const unit of units) {
       let group = this.units.get(unit.id)
@@ -198,6 +217,27 @@ export class GameView {
       if (t < 1) continue
       releaseMesh(wreck.group)
       this.wrecks.splice(i, 1)
+    }
+  }
+
+  private advancePings(dt: number) {
+    const life = 0.42
+    for (let i = this.pings.length - 1; i >= 0; i--) {
+      const ping = this.pings[i]
+      ping.age += dt
+      const t = ping.age / life
+      if (t >= 1) {
+        ping.mesh.removeFromParent()
+        ping.mesh.geometry.dispose()
+        const material = ping.mesh.material
+        if (material instanceof MeshBasicMaterial) material.dispose()
+        this.pings.splice(i, 1)
+        continue
+      }
+      const bounce = Math.sin(Math.min(t * 1.15, 1) * Math.PI)
+      ping.mesh.scale.setScalar(0.25 + bounce * 1.25)
+      const material = ping.mesh.material
+      if (material instanceof MeshBasicMaterial) material.opacity = t < 0.4 ? 1 : 1 - (t - 0.4) / 0.6
     }
   }
 

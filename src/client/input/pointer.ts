@@ -123,10 +123,17 @@ export function bindInput(
     if (!selectArmed) return
     selectArmed = false
     const unitId = view.pickUnit(event.clientX, event.clientY)
-    if (unitId !== null) player.select(unitId)
-    else {
-      const tile = view.pickTile(event.clientX, event.clientY)
-      if (tile) player.orderMove(tile)
+    const picked = unitId === null ? undefined : replica.unit(unitId)
+    const tile = view.pickTile(event.clientX, event.clientY)
+    const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
+    if (standing && standing.ownerId !== replica.playerId && player.selected().length > 0) {
+      player.orderAttack(standing.id)
+      view.ping(standing.x, standing.z, true)
+    } else if (picked && picked.ownerId === replica.playerId) {
+      player.select(picked.id)
+    } else if (tile && player.selected().length > 0 && replica.isOpen(tile, player.selected().map((unit) => unit.id))) {
+      player.orderMove(tile)
+      view.ping(tile.x + 0.5, tile.y + 0.5, false)
     }
     refreshCursor(event.clientX, event.clientY)
   })

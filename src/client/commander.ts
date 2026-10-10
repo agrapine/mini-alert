@@ -55,6 +55,16 @@ export class Commander {
     }
   }
 
+  orderAttack(targetId: number) {
+    for (const unit of this.selected()) {
+      this.port.send({
+        kind: ClientMessageKind.OrderAttack,
+        unitId: unit.id,
+        targetId,
+      })
+    }
+  }
+
   spawn(typeId: UnitTypeId) {
     this.port.send({ kind: ClientMessageKind.Spawn, typeId })
   }

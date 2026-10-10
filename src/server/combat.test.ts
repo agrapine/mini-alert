@@ -117,6 +117,53 @@ describe('combat', () => {
     expect(gun.rounds).toBe(2)
   })
 
+  it('closes on an attack order and locks the turret inside commit range', () => {
+    const { game, human, enemy } = battle()
+    const tank = game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
+    const far = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 20 }, 0)
+    expect(game.orderAttack(human.id, tank.id, far.id)).toBe(true)
+    expect(tank.attackId).toBe(far.id)
+    expect(tank.path.length).toBeGreaterThan(0)
+    expect(game.orderAttack(enemy.id, tank.id, far.id)).toBe(false)
+
+    const close = new Game(new World(24, 24))
+    const owner = close.addPlayer()
+    const other = close.addPlayer()
+    const holder = close.spawn(owner, UnitTypeId.MedTank, { x: 4, y: 4 }, 0)
+    const prey = close.spawn(other, UnitTypeId.Scout, { x: 4, y: 9 }, 0)
+    expect(close.orderAttack(owner.id, holder.id, prey.id)).toBe(true)
+    expect(holder.path).toEqual([])
+    expect(holder.attackId).toBe(prey.id)
+    close.orderMove(owner.id, holder.id, { x: 8, y: 4 })
+    expect(holder.attackId).toBeNull()
+  })
+
+  it('aims the ordered target inside 1.5 range and ignores it beyond that', () => {
+    const near = new Game(new World(24, 24))
+    const owner = near.addPlayer()
+    const other = near.addPlayer()
+    const tank = near.spawn(owner, UnitTypeId.MedTank, { x: 10, y: 10 }, 0)
+    near.spawn(other, UnitTypeId.Scout, { x: 10, y: 14 }, 0)
+    const ordered = near.spawn(other, UnitTypeId.Scout, { x: 16, y: 10 }, 0)
+    expect(near.orderAttack(owner.id, tank.id, ordered.id)).toBe(true)
+    near.tick(0.25)
+    expect(tank.turretYaw).toBeGreaterThan(0.4)
+
+    const wide = new Game(new World(40, 16))
+    const human = wide.addPlayer()
+    const enemy = wide.addPlayer()
+    const chaser = wide.spawn(human, UnitTypeId.MedTank, { x: 4, y: 4 }, 0)
+    wide.spawn(enemy, UnitTypeId.Scout, { x: 4, y: 8 }, 0)
+    const distant = wide.spawn(enemy, UnitTypeId.Scout, { x: 24, y: 4 }, 0)
+    expect(wide.orderAttack(human.id, chaser.id, distant.id)).toBe(true)
+    wide.tick(0.25)
+    expect(Math.abs(chaser.turretYaw)).toBeLessThan(0.35)
+    expect(chaser.path.length).toBeGreaterThan(0)
+    distant.health = 0
+    wide.tick(1 / 30)
+    expect(chaser.attackId).toBeNull()
+  })
+
   it('deals less splash damage farther from the impact', () => {
     const { game, human, enemy } = battle()
     game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)

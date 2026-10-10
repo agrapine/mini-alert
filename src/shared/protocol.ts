@@ -4,6 +4,7 @@ import type { UnitTypeId, WeaponKind } from './unit-types.ts'
 export const enum ClientMessageKind {
   OrderMove = 1,
   Spawn = 2,
+  OrderAttack = 3,
 }
 
 export const enum ServerMessageKind {
@@ -24,7 +25,13 @@ export type OrderSpawn = {
   typeId: UnitTypeId
 }
 
-export type ClientMessage = OrderMove | OrderSpawn
+export type OrderAttack = {
+  kind: ClientMessageKind.OrderAttack
+  unitId: number
+  targetId: number
+}
+
+export type ClientMessage = OrderMove | OrderSpawn | OrderAttack
 
 export type Welcome = {
   kind: ServerMessageKind.Welcome

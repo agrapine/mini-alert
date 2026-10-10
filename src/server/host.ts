@@ -48,6 +48,8 @@ export class ServerHost {
   private onCommand(playerId: number, message: ClientMessage) {
     if (message.kind === ClientMessageKind.OrderMove) {
       this.game.orderMove(playerId, message.unitId, message.tile)
+    } else if (message.kind === ClientMessageKind.OrderAttack) {
+      this.game.orderAttack(playerId, message.unitId, message.targetId)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
     }
