@@ -9,7 +9,7 @@ import { World } from './world.ts'
 // const MATCH_SEED = Math.random()*100;
 const MATCH_SEED = 101;
 
-const SQUAD = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.HeavyTank]
+const SQUAD = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.HeavyTank, UnitTypeId.Artillery]
 
 const OFFSETS: TileCoord[] = [
   { x: 0, y: 1 },
@@ -43,9 +43,9 @@ export function createIslandMatch(seed = MATCH_SEED): { game: Game; human: Playe
   const humanFacing = facingAlongRoad(island, humanTown)
   const aiFacing = facingAlongRoad(island, aiTown)
   const humanTiles = spawnSquad(game, human, island, humanTown, humanFacing)
-  spawnSquad(game, ai, island, aiTown, aiFacing)
-  const anchor = humanTiles[0] ?? tileOf(humanTown)
-  game.setSpawnAnchor(anchor)
+  const aiTiles = spawnSquad(game, ai, island, aiTown, aiFacing)
+  game.setSpawnAnchor(human.id, humanTiles[0] ?? tileOf(humanTown))
+  game.setSpawnAnchor(ai.id, aiTiles[0] ?? tileOf(aiTown))
   return { game, human, ai }
 }
 

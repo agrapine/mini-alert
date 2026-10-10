@@ -1,13 +1,25 @@
 import { Group, Mesh } from 'three'
-import type { UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { UNIT_TYPES } from '../../shared/unit-types.ts'
+import type { ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import { UNIT_TYPES, type WeaponKind } from '../../shared/unit-types.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { buildIsland } from './island.ts'
 import { Minimap } from './minimap.ts'
 import { loadProps } from './props.ts'
 import { Stage } from './stage.ts'
+import { Particles } from './particles.ts'
+import { ShotLayer } from './shots.ts'
 import { TILE_TOP, buildTerrain } from './terrain.ts'
-import { createUnitMesh, syncUnitMesh, unitSpan } from './units/vehicle.ts'
+import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from './units/vehicle.ts'
+
+const WRECK_HOLD = 4
+const WRECK_SINK = 1.6
+
+type Wreck = {
+  group: Group
+  age: number
+  baseY: number
+  drop: number
+}
 
 export class GameView {
   private readonly stage: Stage
@@ -19,10 +31,16 @@ export class GameView {
   private hoveredIds: number[] = []
   private boxPreview = false
   private minimap: Minimap | null = null
+  private readonly shots: ShotLayer
+  private readonly particles: Particles
+  private readonly wrecks: Wreck[] = []
+  private shotDt = 0
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
     this.status = status
     this.stage = new Stage(canvas, mapWidth, mapHeight)
+    this.shots = new ShotLayer(this.stage.scene)
+    this.particles = new Particles(this.stage.scene)
   }
 
   mountTerrain(world: WorldSnapshot) {
@@ -50,6 +68,7 @@ export class GameView {
   }
 
   update(dt: number) {
+    this.shotDt = dt
     this.stage.update(dt)
   }
 
@@ -106,7 +125,14 @@ export class GameView {
     return this.stage.pickTile(clientX, clientY)
   }
 
-  render(units: readonly UnitSnapshot[], selected: readonly UnitSnapshot[]) {
+  render(units: readonly UnitSnapshot[], selected: readonly UnitSnapshot[], shots: readonly ShotEvent[] = []) {
+    const alive = new Set(units.map((unit) => unit.id))
+    for (const [id, group] of this.units) {
+      if (alive.has(id)) continue
+      this.wreck(group)
+      this.units.delete(id)
+    }
+    this.advanceWrecks(this.shotDt)
     const selectedIds = new Set(selected.map((unit) => unit.id))
     for (const unit of units) {
       let group = this.units.get(unit.id)
@@ -141,8 +167,38 @@ export class GameView {
     })
     this.placeRings(this.hoverRings, this.stage.hover, hovered)
 
+    const impact = (x: number, z: number, kind: WeaponKind) => this.particles.hit(x, z, kind)
+    this.shots.spawn(shots, impact)
+    this.shots.advance(this.shotDt, impact)
+    this.particles.advance(this.shotDt)
     this.minimap?.draw(units, selectedIds, this.stage.groundViewport())
     this.stage.draw()
+  }
+
+  private wreck(group: Group) {
+    const bodyHeight = group.userData.bodyHeight
+    const height = typeof bodyHeight === 'number' ? bodyHeight : 0.5
+    scorchUnit(group)
+    this.particles.explosion(group.position.x, group.position.y, group.position.z)
+    this.wrecks.push({
+      group,
+      age: 0,
+      baseY: group.position.y,
+      drop: height + 0.28,
+    })
+  }
+
+  private advanceWrecks(dt: number) {
+    for (let i = this.wrecks.length - 1; i >= 0; i--) {
+      const wreck = this.wrecks[i]
+      wreck.age += dt
+      if (wreck.age <= WRECK_HOLD) continue
+      const t = Math.min(1, (wreck.age - WRECK_HOLD) / WRECK_SINK)
+      wreck.group.position.y = wreck.baseY - wreck.drop * t * t
+      if (t < 1) continue
+      releaseMesh(wreck.group)
+      this.wrecks.splice(i, 1)
+    }
   }
 
   private placeRings(pool: Mesh[], source: Mesh, units: readonly UnitSnapshot[]) {

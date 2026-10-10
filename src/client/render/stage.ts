@@ -16,7 +16,7 @@ import {
 } from 'three'
 import type { TileCoord } from '../../shared/tiles.ts'
 
-const PITCH = (50 * Math.PI) / 180
+export const PITCH = (50 * Math.PI) / 180
 const CAM_DIST = 36
 const PAN_SPEED = 14
 const ZOOM_MIN = 0.25

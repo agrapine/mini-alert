@@ -6,7 +6,7 @@ import { GameView } from './client/render/view.ts'
 import { AiPlayer } from './server/ai.ts'
 import { ServerHost } from './server/host.ts'
 import { createIslandMatch } from './server/island-match.ts'
-import { HEAVY_TANK, MED_TANK, SCOUT } from './shared/unit-types.ts'
+import { ARTILLERY, HEAVY_TANK, MED_TANK, SCOUT } from './shared/unit-types.ts'
 
 const STEP = 1 / 30
 
@@ -33,7 +33,7 @@ bindInput(canvas, replica, player, view)
 
 const spawnBar = document.querySelector<HTMLElement>('#spawn')
 if (spawnBar) {
-  for (const type of [SCOUT, MED_TANK, HEAVY_TANK]) {
+  for (const type of [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY]) {
     const button = document.createElement('button')
     button.type = 'button'
     button.textContent = type.label
@@ -53,7 +53,7 @@ const frame = (now: number) => {
     acc -= STEP
   }
   view.update(frameDt)
-  view.render(replica.units, player.selected())
+  view.render(replica.units, player.selected(), replica.takeShots())
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

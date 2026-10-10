@@ -1,12 +1,30 @@
-import { Group, Mesh, MeshStandardMaterial } from 'three'
+import {
+  BufferGeometry,
+  DoubleSide,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  Object3D,
+  PlaneGeometry,
+  type Material,
+} from 'three'
 import type { UnitSnapshot } from '../../../shared/protocol.ts'
-import { UnitTypeId } from '../../../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId } from '../../../shared/unit-types.ts'
+import { PITCH } from '../stage.ts'
 import { TILE_TOP } from '../terrain.ts'
+import { createArtillery } from './artillery.ts'
 import { createHeavyTank } from './heavy-tank.ts'
 import { createMedTank } from './med-tank.ts'
 import { createScout } from './scout-car.ts'
 
 export function createUnitMesh(unit: UnitSnapshot): Group {
+  const group = meshFor(unit)
+  addHealthBar(group, UNIT_TYPES[unit.typeId].maxHealth)
+  return group
+}
+
+function meshFor(unit: UnitSnapshot): Group {
   switch (unit.typeId) {
     case UnitTypeId.Scout:
       return createScout(unit)
@@ -14,6 +32,8 @@ export function createUnitMesh(unit: UnitSnapshot): Group {
       return createMedTank(unit)
     case UnitTypeId.HeavyTank:
       return createHeavyTank(unit)
+    case UnitTypeId.Artillery:
+      return createArtillery(unit)
   }
 }
 
@@ -21,7 +41,11 @@ export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean
   const bodyHeight = meshNumber(group, 'bodyHeight', 0.44)
   group.position.set(unit.x, TILE_TOP + bodyHeight / 2, unit.z)
   group.rotation.y = unit.facing
+  const turret = group.getObjectByName('turret')
+  if (turret) turret.rotation.y = wrapAngle(unit.turretYaw - unit.facing)
+  syncHealthBar(group, unit)
   group.traverse((obj) => {
+    if (obj.userData.healthBar) return
     const material = obj instanceof Mesh ? obj.material : null
     if (!(material instanceof MeshStandardMaterial)) return
     const shade = typeof obj.userData.shade === 'number' ? obj.userData.shade : 1
@@ -35,7 +59,89 @@ export function unitSpan(group: Group): number {
   return meshNumber(group, 'span', 0.7)
 }
 
+export function scorchUnit(group: Group) {
+  const bar = group.getObjectByName('health-bar')
+  if (bar) {
+    bar.removeFromParent()
+    releaseMesh(bar)
+  }
+  group.traverse((obj) => {
+    if (!(obj instanceof Mesh)) return
+    const material = obj.material
+    if (!(material instanceof MeshStandardMaterial)) return
+    material.color.set(0x111111)
+    material.emissive.set(0x000000)
+    material.emissiveIntensity = 0
+    material.roughness = 0.92
+    material.metalness = 0.04
+  })
+}
+
+export function releaseMesh(root: Object3D) {
+  root.removeFromParent()
+  const materials = new Set<Material>()
+  const geometries = new Set<BufferGeometry>()
+  root.traverse((obj) => {
+    if (!(obj instanceof Mesh)) return
+    geometries.add(obj.geometry)
+    const list = Array.isArray(obj.material) ? obj.material : [obj.material]
+    for (const material of list) materials.add(material)
+  })
+  for (const geometry of geometries) geometry.dispose()
+  for (const material of materials) material.dispose()
+}
+
 function meshNumber(group: Group, key: string, fallback: number): number {
   const value = group.userData[key]
   return typeof value === 'number' ? value : fallback
+}
+
+function addHealthBar(group: Group, maxHealth: number) {
+  const width = 0.72
+  const height = 0.09
+  const bar = new Group()
+  bar.name = 'health-bar'
+  bar.position.y = meshNumber(group, 'bodyHeight', 0.44) / 2 + 0.22
+  const back = new Mesh(
+    new PlaneGeometry(width, height),
+    new MeshBasicMaterial({ color: 0x1a1c14, side: DoubleSide }),
+  )
+  back.userData.healthBar = true
+  const fill = new Mesh(
+    new PlaneGeometry(width, height),
+    new MeshBasicMaterial({ color: 0x7dce4a, side: DoubleSide }),
+  )
+  fill.name = 'health-fill'
+  fill.position.z = 0.01
+  fill.userData.healthBar = true
+  fill.userData.barWidth = width
+  bar.add(back, fill)
+  group.add(bar)
+  group.userData.maxHealth = maxHealth
+}
+
+function syncHealthBar(group: Group, unit: UnitSnapshot) {
+  const bar = group.getObjectByName('health-bar')
+  if (bar) {
+    bar.rotation.set(0, 0, 0)
+    bar.rotateY(-unit.facing)
+    bar.rotateX(-PITCH)
+  }
+  const fill = group.getObjectByName('health-fill')
+  if (!(fill instanceof Mesh)) return
+  const maxHealth = meshNumber(group, 'maxHealth', unit.health)
+  const ratio = maxHealth <= 0 ? 0 : Math.max(0, Math.min(1, unit.health / maxHealth))
+  const width = typeof fill.userData.barWidth === 'number' ? fill.userData.barWidth : 0.72
+  fill.scale.x = Math.max(ratio, 0.001)
+  fill.position.x = ((ratio - 1) * width) / 2
+  const material = fill.material
+  if (material instanceof MeshBasicMaterial) material.color.set(ratio > 0.35 ? 0x7dce4a : 0xd64545)
+}
+
+function wrapAngle(angle: number): number {
+  const turn = Math.PI * 2
+  let wrapped = angle % turn
+  if (wrapped > Math.PI) wrapped -= turn
+  if (wrapped < -Math.PI) wrapped += turn
+  return wrapped
 }

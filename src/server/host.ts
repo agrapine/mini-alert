@@ -37,9 +37,12 @@ export class ServerHost {
 
   tick(dt: number) {
     this.ai.update(dt)
-    this.game.tick(dt)
+    const shots = this.game.tick(dt)
     const units = { kind: ServerMessageKind.Units, units: this.game.unitSnapshots() } as const
-    for (const session of this.sessions) session.send(units)
+    for (const session of this.sessions) {
+      session.send(units)
+      if (shots.length > 0) session.send({ kind: ServerMessageKind.Shots, shots })
+    }
   }
 
   private onCommand(playerId: number, message: ClientMessage) {

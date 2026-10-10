@@ -1,6 +1,7 @@
 import {
   ServerMessageKind,
   type ServerMessage,
+  type ShotEvent,
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
@@ -10,11 +11,19 @@ export class Replica {
   playerId: number | null = null
   world: WorldSnapshot | null = null
   units: UnitSnapshot[] = []
+  private pendingShots: ShotEvent[] = []
 
   apply(message: ServerMessage) {
     if (message.kind === ServerMessageKind.Welcome) this.playerId = message.playerId
     else if (message.kind === ServerMessageKind.World) this.world = message
+    else if (message.kind === ServerMessageKind.Shots) this.pendingShots.push(...message.shots)
     else this.units = message.units
+  }
+
+  takeShots(): ShotEvent[] {
+    const shots = this.pendingShots
+    this.pendingShots = []
+    return shots
   }
 
   unit(id: number): UnitSnapshot | undefined {

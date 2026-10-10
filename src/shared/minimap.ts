@@ -4,10 +4,10 @@ export type Rgb = [number, number, number]
 
 const WATER: Rgb = [127, 206, 232]
 const LAKE: Rgb = [110, 196, 224]
-const LAND: Rgb = [143, 206, 106]
-const SHORE: Rgb = [106, 175, 74]
+const LAND: Rgb = [118, 164, 72]
+const SHORE: Rgb = [86, 128, 54]
 const FOREST: Rgb = [61, 154, 74]
-const ROAD: Rgb = [225, 91, 91]
+const ROAD: Rgb = [102, 119, 85]
 const TOWN: Rgb = [26, 26, 26]
 
 const SHORE_DIRS = [

@@ -11,6 +11,7 @@ export type Part = {
   y: number
   z: number
   shade?: number
+  turret?: boolean
 }
 
 export function assemble(
@@ -26,13 +27,17 @@ export function assemble(
   })
   const detail = panel.clone()
   const group = new Group()
+  const turret = new Group()
+  turret.name = 'turret'
   for (const part of parts) {
     const shade = part.shade ?? 1
     const mesh = new Mesh(new BoxGeometry(part.w, part.h, part.d), shade === 1 ? panel : detail)
     mesh.position.set(part.x, part.y - bodyHeight / 2, part.z)
     if (shade !== 1) mesh.userData.shade = shade
-    group.add(mesh)
+    if (part.turret) turret.add(mesh)
+    else group.add(mesh)
   }
+  if (turret.children.length > 0) group.add(turret)
   group.userData.unitId = unit.id
   group.userData.bodyHeight = bodyHeight
   group.userData.span = span

@@ -88,16 +88,6 @@ function scatter(world: WorldSnapshot, props: Map<PropName, Group>): Group {
       }
     }
   }
-  for (const town of world.towns) {
-    const x = Math.floor(town.x)
-    const y = Math.floor(town.y)
-    const yaw = ((hash(x, y, seed) % 360) * Math.PI) / 180
-    // group.add(place(props, 'building-structure', x, y, yaw))
-    // group.add(place(props, 'building-roof', x, y, yaw))
-    // group.add(place(props, 'flag', x, y, yaw))
-    // const tent = tentTile(world, x, y)
-    // if (tent) group.add(place(props, 'tent', tent.x, tent.y, yaw))
-  }
   return group
 }
 
@@ -108,23 +98,6 @@ function place(props: Map<PropName, Group>, name: PropName, x: number, y: number
   mesh.position.set(x + 0.5, TILE_TOP, y + 0.5)
   mesh.rotation.y = yaw
   return mesh
-}
-
-function tentTile(world: WorldSnapshot, x: number, y: number): { x: number; y: number } | null {
-  for (const [dx, dy] of [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ] as const) {
-    const nx = x + dx
-    const ny = y + dy
-    if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue
-    const tile = world.terrain[ny * world.width + nx]
-    if (tile === Terrain.Road || tile === Terrain.Town || tile === Terrain.Water || tile === Terrain.Lake) continue
-    return { x: nx, y: ny }
-  }
-  return null
 }
 
 function onCoast(world: WorldSnapshot, x: number, y: number): boolean {

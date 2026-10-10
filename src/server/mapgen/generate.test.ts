@@ -47,6 +47,8 @@ describe('island generator', () => {
 
   it('follows the minimap color rules', () => {
     expect(minimapRgb(Terrain.Flowers, false)).toEqual(minimapRgb(Terrain.Land, false))
+    expect(minimapRgb(Terrain.Land, false)).toEqual([118, 164, 72])
+    expect(minimapRgb(Terrain.Road, false)).toEqual([102, 119, 85])
     const inland = minimapRgb(Terrain.Land, false)
     const shore = minimapRgb(Terrain.Land, true)
     expect(shore[1]).toBeLessThan(inland[1])
@@ -77,8 +79,8 @@ describe('island match', () => {
     const { game, human, ai } = createIslandMatch()
     const humans = game.units.filter((unit) => unit.ownerId === human.id)
     const bots = game.units.filter((unit) => unit.ownerId === ai.id)
-    expect(humans.length).toBe(3)
-    expect(bots.length).toBe(3)
+    expect(humans.length).toBe(4)
+    expect(bots.length).toBe(4)
     for (const unit of game.units) {
       expect(isWalkableTerrain(game.world.terrainAt(unit.tile.x, unit.tile.y))).toBe(true)
     }

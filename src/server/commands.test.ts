@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ClientMessageKind } from '../shared/protocol.ts'
 import { UnitTypeId } from '../shared/unit-types.ts'
-import { AiPlayer } from './ai.ts'
+import { AI_MAX_UNITS, AiPlayer } from './ai.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
 import { createSkirmish } from './skirmish.ts'
@@ -68,5 +68,19 @@ describe('player commands', () => {
       if (aiUnit.path.length > 0) ordered = true
     }
     expect(ordered).toBe(true)
+  })
+
+  it('spawns an AI unit every five seconds until the cap', () => {
+    const game = new Game(new World(16, 16))
+    const ai = game.addPlayer()
+    game.setSpawnAnchor(ai.id, { x: 4, y: 4 })
+    const aiPlayer = new AiPlayer(ai.id, game)
+
+    for (let i = 0; i < AI_MAX_UNITS; i++) aiPlayer.update(5)
+    const owned = () => game.units.filter((unit) => unit.ownerId === ai.id)
+    expect(owned()).toHaveLength(AI_MAX_UNITS)
+
+    aiPlayer.update(5)
+    expect(owned()).toHaveLength(AI_MAX_UNITS)
   })
 })

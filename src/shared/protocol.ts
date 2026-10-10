@@ -1,5 +1,5 @@
 import type { Terrain, TileCoord } from './tiles.ts'
-import type { UnitTypeId } from './unit-types.ts'
+import type { UnitTypeId, WeaponKind } from './unit-types.ts'
 
 export const enum ClientMessageKind {
   OrderMove = 1,
@@ -10,6 +10,7 @@ export const enum ServerMessageKind {
   Welcome = 1,
   World = 2,
   Units = 3,
+  Shots = 4,
 }
 
 export type OrderMove = {
@@ -52,9 +53,26 @@ export type UnitSnapshot = {
   x: number
   z: number
   facing: number
+  turretYaw: number
+  health: number
   tileX: number
   tileY: number
   goal: TileCoord | null
+}
+
+export type ShotEvent = {
+  kind: WeaponKind
+  shooterId: number
+  x: number
+  z: number
+  aimX: number
+  aimZ: number
+  flight: number
+}
+
+export type ShotsSnapshot = {
+  kind: ServerMessageKind.Shots
+  shots: ShotEvent[]
 }
 
 export type UnitsSnapshot = {
@@ -62,7 +80,7 @@ export type UnitsSnapshot = {
   units: UnitSnapshot[]
 }
 
-export type ServerMessage = Welcome | WorldSnapshot | UnitsSnapshot
+export type ServerMessage = Welcome | WorldSnapshot | UnitsSnapshot | ShotsSnapshot
 
 export type ClientPort = {
   send(message: ClientMessage): void

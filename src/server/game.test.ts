@@ -33,6 +33,8 @@ describe('skirmish orders', () => {
     expect(game.orderMove(human.id, tank.id, { x: 11, y: 8 })).toBe(false)
     expect(tank.path.at(-1)).toEqual({ x: 18, y: 12 })
 
+    tank.health = 1_000_000
+    if (parked) parked.health = 1_000_000
     ticks(game, 40)
     expect(tank.tile).toEqual({ x: 18, y: 12 })
     expect(parked?.tile).toEqual({ x: 11, y: 8 })

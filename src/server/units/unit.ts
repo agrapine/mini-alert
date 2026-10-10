@@ -14,8 +14,12 @@ export abstract class Unit {
   pos: { x: number; z: number }
   tile: TileCoord
   facing: number
+  turretYaw: number
   speed = 0
   health: number
+  rounds: number
+  cooldown = 0
+  sinceShot = 0
   path: TileCoord[] = []
 
   constructor(id: number, ownerId: number, type: UnitType, tile: TileCoord, facing: number) {
@@ -26,7 +30,9 @@ export abstract class Unit {
     this.pos = tileCenter(tile)
     this.tile = { x: tile.x, y: tile.y }
     this.facing = facing
+    this.turretYaw = facing
     this.health = type.maxHealth
+    this.rounds = type.weapon.magazine
   }
 
   abstract drive(dt: number): void

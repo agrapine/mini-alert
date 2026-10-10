@@ -2,8 +2,14 @@ import type { MapPoint } from '../../shared/protocol.ts'
 import { Terrain } from '../../shared/tiles.ts'
 import { mulberry32, valueNoise } from './noise.ts'
 
-export const ISLAND_WIDTH = 32
-export const ISLAND_HEIGHT = 32
+function rnd<T>(...arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
+// const size = rnd(64, 256, 512);
+const size = rnd(64, 96);
+export const ISLAND_WIDTH = size;
+export const ISLAND_HEIGHT = size;
 export const MAX_HOPS = 4
 
 const SITES = 42

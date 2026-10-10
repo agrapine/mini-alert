@@ -51,6 +51,10 @@ export class PathFinder {
     return true
   }
 
+  release(unit: Unit) {
+    this.clearFootprint(unit.tile, unit.type.footprint, unit.id)
+  }
+
   private index(x: number, y: number): number {
     if (!this.world.inBounds(x, y)) throw new Error(`tile out of bounds: ${x},${y}`)
     return y * this.world.width + x
