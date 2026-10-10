@@ -14,9 +14,11 @@ import { UNIT_TYPES, UnitTypeId } from '../../../shared/unit-types.ts'
 import { PITCH } from '../stage.ts'
 import { TILE_TOP } from '../terrain.ts'
 import { createArtillery } from './artillery.ts'
+import { createFactory } from './factory.ts'
 import { createHeavyTank } from './heavy-tank.ts'
 import { createMedTank } from './med-tank.ts'
 import { createScout } from './scout-car.ts'
+import { createTurret } from './turret.ts'
 
 export function createUnitMesh(unit: UnitSnapshot): Group {
   const group = meshFor(unit)
@@ -34,6 +36,10 @@ function meshFor(unit: UnitSnapshot): Group {
       return createHeavyTank(unit)
     case UnitTypeId.Artillery:
       return createArtillery(unit)
+    case UnitTypeId.Factory:
+      return createFactory(unit)
+    case UnitTypeId.Turret:
+      return createTurret(unit)
   }
 }
 
@@ -48,8 +54,11 @@ export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean
     if (obj.userData.healthBar) return
     const material = obj instanceof Mesh ? obj.material : null
     if (!(material instanceof MeshStandardMaterial)) return
-    const shade = typeof obj.userData.shade === 'number' ? obj.userData.shade : 1
-    material.color.set(unit.color).multiplyScalar(shade)
+    if (typeof obj.userData.tint === 'number') material.color.set(obj.userData.tint)
+    else {
+      const shade = typeof obj.userData.shade === 'number' ? obj.userData.shade : 1
+      material.color.set(unit.color).multiplyScalar(shade)
+    }
     material.emissive.set(selected ? 0x3a2e10 : 0x000000)
     material.emissiveIntensity = selected ? 0.45 : 0
   })
@@ -97,7 +106,7 @@ function meshNumber(group: Group, key: string, fallback: number): number {
 }
 
 function addHealthBar(group: Group, maxHealth: number) {
-  const width = 0.72
+  const width = Math.max(0.72, meshNumber(group, 'span', 0.7) * 0.55)
   const height = 0.09
   const bar = new Group()
   bar.name = 'health-bar'
@@ -129,13 +138,16 @@ function syncHealthBar(group: Group, unit: UnitSnapshot) {
   }
   const fill = group.getObjectByName('health-fill')
   if (!(fill instanceof Mesh)) return
+  const building = unit.progress < 1
   const maxHealth = meshNumber(group, 'maxHealth', unit.health)
-  const ratio = maxHealth <= 0 ? 0 : Math.max(0, Math.min(1, unit.health / maxHealth))
+  const ratio = building ? unit.progress : maxHealth <= 0 ? 0 : Math.max(0, Math.min(1, unit.health / maxHealth))
   const width = typeof fill.userData.barWidth === 'number' ? fill.userData.barWidth : 0.72
   fill.scale.x = Math.max(ratio, 0.001)
   fill.position.x = ((ratio - 1) * width) / 2
   const material = fill.material
-  if (material instanceof MeshBasicMaterial) material.color.set(ratio > 0.35 ? 0x7dce4a : 0xd64545)
+  if (material instanceof MeshBasicMaterial) {
+    material.color.set(building ? 0xe0a040 : ratio > 0.35 ? 0x7dce4a : 0xd64545)
+  }
 }
 
 function wrapAngle(angle: number): number {

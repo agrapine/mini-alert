@@ -8,6 +8,8 @@ export const enum UnitTypeId {
   MedTank = 1,
   HeavyTank = 2,
   Artillery = 3,
+  Factory = 4,
+  Turret = 5,
 }
 
 export const enum WeaponKind {
@@ -42,9 +44,18 @@ export type UnitType = {
   maxSteer: number
   footprint: number
   maxHealth: number
+  cost: number
+  buildTime: number
   body: BodyKind
   hull: HullSize
   weapon: Weapon
+}
+
+export function buildStage(progress: number): number {
+  if (progress >= 1) return 3
+  if (progress >= 2 / 3) return 2
+  if (progress >= 1 / 3) return 1
+  return 0
 }
 
 export const SCOUT: UnitType = {
@@ -57,6 +68,8 @@ export const SCOUT: UnitType = {
   maxSteer: 0.85,
   footprint: 1,
   maxHealth: 60,
+  cost: 0,
+  buildTime: 0,
   body: BodyKind.Mesh,
   hull: { x: 0.4, y: 0.28, z: 0.78 },
   weapon: {
@@ -85,6 +98,8 @@ export const MED_TANK: UnitType = {
   maxSteer: 0,
   footprint: 1,
   maxHealth: 120,
+  cost: 0,
+  buildTime: 0,
   body: BodyKind.Mesh,
   hull: { x: 0.62, y: 0.4, z: 0.86 },
   weapon: {
@@ -113,6 +128,8 @@ export const HEAVY_TANK: UnitType = {
   maxSteer: 0,
   footprint: 1,
   maxHealth: 220,
+  cost: 0,
+  buildTime: 0,
   body: BodyKind.Mesh,
   hull: { x: 0.9, y: 0.52, z: 1.02 },
   weapon: {
@@ -141,6 +158,8 @@ export const ARTILLERY: UnitType = {
   maxSteer: 0,
   footprint: 1,
   maxHealth: 40,
+  cost: 0,
+  buildTime: 0,
   body: BodyKind.Mesh,
   hull: { x: 0.44, y: 0.3, z: 0.62 },
   weapon: {
@@ -159,9 +178,73 @@ export const ARTILLERY: UnitType = {
   },
 }
 
+const UNARMED: Weapon = {
+  kind: WeaponKind.Bullet,
+  sight: 0,
+  range: 0,
+  damage: 0,
+  reload: 0,
+  fireInterval: 0,
+  magazine: 0,
+  shellSpeed: 0,
+  splash: 0,
+  turretRate: 0,
+  lockAngle: 0,
+  aimTolerance: 0,
+}
+
+export const FACTORY: UnitType = {
+  id: UnitTypeId.Factory,
+  label: 'Factory',
+  topSpeed: 0,
+  acceleration: 0,
+  turnRate: 0,
+  wheelbase: 0,
+  maxSteer: 0,
+  footprint: 2,
+  maxHealth: 480,
+  cost: 2500,
+  buildTime: 8,
+  body: BodyKind.Mesh,
+  hull: { x: 1.8, y: 0.9, z: 1.8 },
+  weapon: UNARMED,
+}
+
+export const TURRET: UnitType = {
+  id: UnitTypeId.Turret,
+  label: 'Turret',
+  topSpeed: 0,
+  acceleration: 0,
+  turnRate: 0,
+  wheelbase: 0,
+  maxSteer: 0,
+  footprint: 1,
+  maxHealth: 100,
+  cost: 800,
+  buildTime: 5,
+  body: BodyKind.Mesh,
+  hull: { x: 0.8, y: 0.5, z: 0.8 },
+  weapon: {
+    kind: WeaponKind.Shell,
+    sight: 14,
+    range: 12,
+    damage: 30,
+    reload: 1.6,
+    fireInterval: 0,
+    magazine: 1,
+    shellSpeed: 18,
+    splash: 1.2,
+    turretRate: 1.8,
+    lockAngle: 0.8,
+    aimTolerance: 0.08,
+  },
+}
+
 export const UNIT_TYPES: Record<UnitTypeId, UnitType> = {
   [UnitTypeId.Scout]: SCOUT,
   [UnitTypeId.MedTank]: MED_TANK,
   [UnitTypeId.HeavyTank]: HEAVY_TANK,
   [UnitTypeId.Artillery]: ARTILLERY,
+  [UnitTypeId.Factory]: FACTORY,
+  [UnitTypeId.Turret]: TURRET,
 }

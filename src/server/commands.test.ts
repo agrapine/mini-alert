@@ -35,21 +35,27 @@ describe('player commands', () => {
     expect(enemy.path.at(-1)).toEqual({ x: 14, y: 8 })
   })
 
-  it('spawns for the connected player on the fixed tile', () => {
-    const { game, human, ai } = createSkirmish()
+  it('spawns for the connected player beside a finished factory', () => {
+    const game = new Game(new World(16, 16))
+    const human = game.addPlayer()
+    const ai = game.addPlayer()
     const host = new ServerHost(game, new AiPlayer(ai.id, game))
     const humanPort = host.join(human)
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
+    game.finishBuild(human.id)
     const before = game.units.length
 
     humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout })
-    const spawned = game.units.find((unit) => unit.tile.x === 1 && unit.tile.y === 12)
+    const spawned = game.units[game.units.length - 1]
     expect(spawned?.ownerId).toBe(human.id)
     expect(spawned?.typeId).toBe(UnitTypeId.Scout)
+    expect(spawned.tile.x < 4 || spawned.tile.x > 5 || spawned.tile.y < 4 || spawned.tile.y > 5).toBe(true)
+    expect(spawned.path.length).toBeGreaterThan(0)
 
     humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.MedTank })
-    const second = game.units.find((unit) => unit.typeId === UnitTypeId.MedTank && unit.tile.x === 1)
+    const second = game.units[game.units.length - 1]
     expect(second?.ownerId).toBe(human.id)
-    expect(second?.tile).not.toEqual({ x: 1, y: 12 })
+    expect(second.tile).not.toEqual(spawned.tile)
     expect(game.units.length).toBe(before + 2)
   })
 
@@ -74,10 +80,12 @@ describe('player commands', () => {
     const game = new Game(new World(16, 16))
     const ai = game.addPlayer()
     game.setSpawnAnchor(ai.id, { x: 4, y: 4 })
+    expect(game.placeBuilding(ai.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
+    game.finishBuild(ai.id)
     const aiPlayer = new AiPlayer(ai.id, game)
 
     for (let i = 0; i < AI_MAX_UNITS; i++) aiPlayer.update(5)
-    const owned = () => game.units.filter((unit) => unit.ownerId === ai.id)
+    const owned = () => game.units.filter((unit) => unit.ownerId === ai.id && unit.type.topSpeed > 0)
     expect(owned()).toHaveLength(AI_MAX_UNITS)
 
     aiPlayer.update(5)

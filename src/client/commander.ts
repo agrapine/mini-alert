@@ -1,12 +1,13 @@
 import type { ClientPort } from '../shared/protocol.ts'
 import { ClientMessageKind } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
-import type { UnitTypeId } from '../shared/unit-types.ts'
+import { UNIT_TYPES, type UnitTypeId } from '../shared/unit-types.ts'
 import type { UnitSnapshot } from '../shared/protocol.ts'
 import type { Replica } from './replica.ts'
 
 export class Commander {
   private selectedIds: number[] = []
+  private placing: UnitTypeId | null = null
   private readonly replica: Replica
   private readonly port: ClientPort
 
@@ -21,7 +22,7 @@ export class Commander {
       return
     }
     const unit = this.replica.unit(id)
-    if (!unit || unit.ownerId !== this.replica.playerId) return
+    if (!unit || unit.ownerId !== this.replica.playerId || UNIT_TYPES[unit.typeId].topSpeed <= 0) return
     this.selectedIds = [id]
   }
 
@@ -29,7 +30,7 @@ export class Commander {
     const own: number[] = []
     for (const id of ids) {
       const unit = this.replica.unit(id)
-      if (!unit || unit.ownerId !== this.replica.playerId || own.includes(id)) continue
+      if (!unit || unit.ownerId !== this.replica.playerId || UNIT_TYPES[unit.typeId].topSpeed <= 0 || own.includes(id)) continue
       own.push(id)
     }
     this.selectedIds = own
@@ -67,5 +68,23 @@ export class Commander {
 
   spawn(typeId: UnitTypeId) {
     this.port.send({ kind: ClientMessageKind.Spawn, typeId })
+  }
+
+  placingType(): UnitTypeId | null {
+    return this.placing
+  }
+
+  armBuilding(typeId: UnitTypeId) {
+    this.placing = this.placing === typeId ? null : typeId
+  }
+
+  cancelPlace() {
+    this.placing = null
+  }
+
+  placeBuilding(tile: TileCoord) {
+    if (this.placing === null) return
+    this.port.send({ kind: ClientMessageKind.PlaceBuilding, typeId: this.placing, tile })
+    this.placing = null
   }
 }

@@ -5,19 +5,25 @@ import {
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
+import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
+import { UNIT_TYPES } from '../shared/unit-types.ts'
 import { isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
 
 export class Replica {
   playerId: number | null = null
   world: WorldSnapshot | null = null
   units: UnitSnapshot[] = []
+  credits = 0
   private pendingShots: ShotEvent[] = []
 
   apply(message: ServerMessage) {
     if (message.kind === ServerMessageKind.Welcome) this.playerId = message.playerId
     else if (message.kind === ServerMessageKind.World) this.world = message
     else if (message.kind === ServerMessageKind.Shots) this.pendingShots.push(...message.shots)
-    else this.units = message.units
+    else {
+      this.units = message.units
+      this.credits = message.credits
+    }
   }
 
   takeShots(): ShotEvent[] {
@@ -31,7 +37,9 @@ export class Replica {
   }
 
   occupant(tile: TileCoord): UnitSnapshot | undefined {
-    return this.units.find((unit) => unit.tileX === tile.x && unit.tileY === tile.y)
+    return this.units.find((unit) =>
+      footprintCovers(unit.tileX, unit.tileY, UNIT_TYPES[unit.typeId].footprint, tile),
+    )
   }
 
   isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
@@ -40,8 +48,6 @@ export class Replica {
     if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
     if (!isWalkableTerrain(world.terrain[tile.y * world.width + tile.x])) return false
     const skip = typeof ignore === 'number' ? [ignore] : ignore
-    return !this.units.some(
-      (unit) => unit.tileX === tile.x && unit.tileY === tile.y && !skip.includes(unit.id),
-    )
+    return !tileOccupied(this.units, tile, skip)
   }
 }

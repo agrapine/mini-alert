@@ -6,6 +6,9 @@ const DOT = 3.25
 
 export class Minimap {
   private readonly world: WorldSnapshot
+  private readonly base: Uint8ClampedArray
+  private readonly image: ImageData
+  private readonly ctx: CanvasRenderingContext2D
   private dragging = false
 
   constructor(
@@ -18,7 +21,10 @@ export class Minimap {
     this.world = world
     this.root.hidden = false
     this.root.style.aspectRatio = `${world.width} / ${world.height}`
-    paintTerrain(map, world)
+    const painted = paintTerrain(map, world)
+    this.ctx = painted.ctx
+    this.image = painted.image
+    this.base = painted.base
     this.root.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return
       this.dragging = true
@@ -44,7 +50,9 @@ export class Minimap {
     units: readonly UnitSnapshot[],
     selectedIds: ReadonlySet<number>,
     viewport: readonly { x: number; z: number }[],
+    fog?: Float32Array,
   ) {
+    if (fog) this.applyFog(fog)
     const ctx = this.marks.getContext('2d')
     if (!ctx) return
     const width = this.root.clientWidth
@@ -68,6 +76,20 @@ export class Minimap {
     }
     for (const unit of rest) this.dot(ctx, unit, width, height, false)
     for (const unit of picked) this.dot(ctx, unit, width, height, true)
+  }
+
+  private applyFog(mask: Float32Array) {
+    const data = this.image.data
+    const base = this.base
+    const count = Math.min(mask.length, base.length / 4)
+    for (let i = 0; i < count; i++) {
+      const lit = 1 - mask[i]
+      const pixel = i * 4
+      data[pixel] = base[pixel] * lit
+      data[pixel + 1] = base[pixel + 1] * lit
+      data[pixel + 2] = base[pixel + 2] * lit
+    }
+    this.ctx.putImageData(this.image, 0, 0)
   }
 
   private strokeViewport(
@@ -126,11 +148,14 @@ export class Minimap {
   }
 }
 
-function paintTerrain(canvas: HTMLCanvasElement, world: WorldSnapshot) {
+function paintTerrain(
+  canvas: HTMLCanvasElement,
+  world: WorldSnapshot,
+): { ctx: CanvasRenderingContext2D; image: ImageData; base: Uint8ClampedArray } {
   canvas.width = world.width
   canvas.height = world.height
   const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  if (!ctx) throw new Error('minimap canvas has no 2d context')
   const image = ctx.createImageData(world.width, world.height)
   for (let y = 0; y < world.height; y++) {
     for (let x = 0; x < world.width; x++) {
@@ -145,7 +170,11 @@ function paintTerrain(canvas: HTMLCanvasElement, world: WorldSnapshot) {
       image.data[pixel + 3] = 255
     }
   }
+  const base = new Uint8ClampedArray(image.data)
+  image.data.fill(0)
+  for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255
   ctx.putImageData(image, 0, 0)
+  return { ctx, image, base }
 }
 
 function cssColor(color: number): string {

@@ -1,7 +1,9 @@
-import { DoubleSide, Group, Mesh, MeshBasicMaterial, RingGeometry } from 'three'
+import { DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry } from 'three'
 import type { ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { UNIT_TYPES, type WeaponKind } from '../../shared/unit-types.ts'
+import { UNIT_TYPES, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
+import type { SightSource } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
+import { Fog } from './fog.ts'
 import { buildIsland } from './island.ts'
 import { Minimap } from './minimap.ts'
 import { loadProps } from './props.ts'
@@ -31,6 +33,8 @@ export class GameView {
   private hoveredIds: number[] = []
   private boxPreview = false
   private minimap: Minimap | null = null
+  private fog: Fog | null = null
+  private readonly placement: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
   private readonly wrecks: Wreck[] = []
@@ -48,6 +52,7 @@ export class GameView {
     const root = document.querySelector<HTMLElement>('#minimap')
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
+    this.fog = new Fog(this.stage.scene, world.width, world.height)
     if (world.coast.length > 0) {
       this.stage.scene.add(buildIsland(world))
       if (root && map && marks) {
@@ -93,6 +98,29 @@ export class GameView {
     this.boxPreview = active
   }
 
+  showPlacement(cells: readonly { x: number; y: number; open: boolean }[] | null) {
+    const list = cells ?? []
+    while (this.placement.length < list.length) {
+      const mesh = new Mesh(
+        new PlaneGeometry(0.92, 0.92),
+        new MeshBasicMaterial({ transparent: true, opacity: 0.45, depthWrite: false }),
+      )
+      mesh.rotation.x = -Math.PI / 2
+      mesh.renderOrder = 4
+      this.stage.scene.add(mesh)
+      this.placement.push(mesh)
+    }
+    for (let i = 0; i < this.placement.length; i++) {
+      const mesh = this.placement[i]
+      const cell = list[i]
+      mesh.visible = cell !== undefined
+      if (!cell) continue
+      mesh.position.set(cell.x + 0.5, TILE_TOP + 0.09, cell.y + 0.5)
+      const material = mesh.material
+      if (material instanceof MeshBasicMaterial) material.color.set(cell.open ? 0x3cde73 : 0xd64545)
+    }
+  }
+
   unitsInRect(
     x0: number,
     y0: number,
@@ -107,7 +135,7 @@ export class GameView {
     const bottom = Math.max(y0, y1)
     const hits: number[] = []
     for (const unit of units) {
-      if (unit.ownerId !== ownerId) continue
+      if (unit.ownerId !== ownerId || UNIT_TYPES[unit.typeId].topSpeed <= 0) continue
       const center = this.stage.project(unit.x, unit.z)
       const mesh = this.units.get(unit.id)
       const span = mesh ? unitSpan(mesh) : 0.7
@@ -143,18 +171,38 @@ export class GameView {
     this.pings.push({ mesh, age: 0 })
   }
 
-  render(units: readonly UnitSnapshot[], selected: readonly UnitSnapshot[], shots: readonly ShotEvent[] = []) {
-    const alive = new Set(units.map((unit) => unit.id))
+  render(
+    units: readonly UnitSnapshot[],
+    selected: readonly UnitSnapshot[],
+    shots: readonly ShotEvent[] = [],
+    playerId: number | null = null,
+  ) {
+    for (const unit of units) {
+      if (unit.health > 0) continue
+      const group = this.units.get(unit.id)
+      if (!group) continue
+      this.wreck(group)
+      this.units.delete(unit.id)
+    }
+    const living = units.filter((unit) => unit.health > 0)
+    const alive = new Set(living.map((unit) => unit.id))
     for (const [id, group] of this.units) {
       if (alive.has(id)) continue
-      this.wreck(group)
+      releaseMesh(group)
       this.units.delete(id)
     }
     this.advanceWrecks(this.shotDt)
     this.advancePings(this.shotDt)
     const selectedIds = new Set(selected.map((unit) => unit.id))
-    for (const unit of units) {
+    for (const unit of living) {
       let group = this.units.get(unit.id)
+      const stage = buildStage(unit.progress)
+      const built = UNIT_TYPES[unit.typeId].buildTime > 0
+      if (group && built && group.userData.stage !== stage) {
+        releaseMesh(group)
+        this.units.delete(unit.id)
+        group = undefined
+      }
       if (!group) {
         group = createUnitMesh(unit)
         this.units.set(unit.id, group)
@@ -181,7 +229,7 @@ export class GameView {
 
     const hovered = this.hoveredIds.flatMap((id) => {
       if (!this.boxPreview && selectedIds.has(id)) return []
-      const unit = units.find((candidate) => candidate.id === id)
+      const unit = living.find((candidate) => candidate.id === id)
       return unit ? [unit] : []
     })
     this.placeRings(this.hoverRings, this.stage.hover, hovered)
@@ -190,7 +238,17 @@ export class GameView {
     this.shots.spawn(shots, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
-    this.minimap?.draw(units, selectedIds, this.stage.groundViewport())
+    const friends: SightSource[] = []
+    if (playerId !== null) {
+      for (const unit of living) {
+        if (unit.ownerId !== playerId || unit.progress < 1) continue
+        const sight = UNIT_TYPES[unit.typeId].weapon.sight
+        if (sight <= 0) continue
+        friends.push({ x: unit.x, z: unit.z, sight })
+      }
+    }
+    this.fog?.update(this.shotDt, friends)
+    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask)
     this.stage.draw()
   }
 

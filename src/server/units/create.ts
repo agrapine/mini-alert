@@ -4,6 +4,7 @@ import { Artillery } from './artillery.ts'
 import { HeavyTank } from './heavy-tank.ts'
 import { MedTank } from './med-tank.ts'
 import { Scout } from './scout.ts'
+import { Structure } from './structure.ts'
 import type { Unit } from './unit.ts'
 
 export function createUnit(
@@ -22,5 +23,8 @@ export function createUnit(
       return new HeavyTank(id, ownerId, type, tile, facing)
     case UnitTypeId.Artillery:
       return new Artillery(id, ownerId, type, tile, facing)
+    case UnitTypeId.Factory:
+    case UnitTypeId.Turret:
+      return new Structure(id, ownerId, type, tile, facing)
   }
 }

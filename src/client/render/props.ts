@@ -14,34 +14,28 @@ import type { WorldSnapshot } from '../../shared/protocol.ts'
 import { Terrain } from '../../shared/tiles.ts'
 import { TILE_TOP } from './terrain.ts'
 
-const objUrls = import.meta.glob('../../../assets/kenney_mini-forest_1.0/Models/OBJ format/*.obj', {
-  query: '?url',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>
+import colormapUrl from '../../../assets/kenney/colormap.png?url'
+import patchGrassUrl from '../../../assets/kenney/patch-grass.obj?url'
+import plantUrl from '../../../assets/kenney/plant.obj?url'
+import rocksLowUrl from '../../../assets/kenney/rocks-low.obj?url'
+import stonesUrl from '../../../assets/kenney/stones.obj?url'
+import treeHighUrl from '../../../assets/kenney/tree-high.obj?url'
+import treeUrl from '../../../assets/kenney/tree.obj?url'
 
-const colormapUrls = import.meta.glob('../../../assets/kenney_mini-forest_1.0/**/colormap.png', {
-  query: '?url',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>
+const MODEL_URLS = {
+  tree: treeUrl,
+  'tree-high': treeHighUrl,
+  plant: plantUrl,
+  stones: stonesUrl,
+  'rocks-low': rocksLowUrl,
+} as const
 
-const NAMES = [
-  'tree',
-  'tree-high',
-  'plant',
-  'tent',
-  'building-structure',
-  'building-roof',
-  'flag',
-  'stones',
-  'rocks-low',
-] as const
+const NAMES = ['tree', 'tree-high', 'plant', 'stones', 'rocks-low'] as const
 
 type PropName = (typeof NAMES)[number]
 
 export async function loadProps(world: WorldSnapshot): Promise<Group> {
-  const texture = await loadTexture(colormapUrl())
+  const texture = await loadTexture(colormapUrl)
   const material = new MeshStandardMaterial({ map: texture, roughness: 0.86, metalness: 0 })
   const scale = await measureScale(material)
   const props = new Map<PropName, Group>()
@@ -52,7 +46,7 @@ export async function loadProps(world: WorldSnapshot): Promise<Group> {
 }
 
 async function measureScale(material: MeshStandardMaterial): Promise<number> {
-  const root = await loadObj(urlFor('patch-grass'))
+  const root = await loadObj(patchGrassUrl)
   paint(root, material)
   const span = new Box3().setFromObject(root).getSize(new Vector3())
   const footprint = Math.max(span.x, span.z)
@@ -125,22 +119,8 @@ function onCoast(world: WorldSnapshot, x: number, y: number): boolean {
   return false
 }
 
-function colormapUrl(): string {
-  const entries = Object.entries(colormapUrls)
-  const fbx = entries.find(([path]) => path.includes('FBX format'))
-  const url = fbx?.[1] ?? entries[0]?.[1]
-  if (!url) {
-    throw new Error(
-      'missing colormap at assets/kenney_mini-forest_1.0/Models/FBX format/Textures/colormap.png',
-    )
-  }
-  return url
-}
-
-function urlFor(name: string): string {
-  const found = Object.entries(objUrls).find(([path]) => path.endsWith(`/${name}.obj`))
-  if (!found) throw new Error(`missing OBJ ${name}`)
-  return found[1]
+function urlFor(name: PropName): string {
+  return MODEL_URLS[name]
 }
 
 function loadTexture(url: string): Promise<Texture> {

@@ -1,6 +1,9 @@
 import type { Commander } from '../commander.ts'
 import type { Replica } from '../replica.ts'
 import type { GameView } from '../render/view.ts'
+import { canPlaceFootprint } from '../../shared/footprint.ts'
+import type { Terrain } from '../../shared/tiles.ts'
+import { UNIT_TYPES } from '../../shared/unit-types.ts'
 import { cursorFor } from './cursor.ts'
 import { bindPanKeys } from './keys.ts'
 
@@ -31,7 +34,48 @@ export function bindInput(
   const refreshCursor = (clientX: number, clientY: number) => {
     if (panning) canvas.style.cursor = 'grabbing'
     else if (spaceDown) canvas.style.cursor = 'grab'
+    else if (player.placingType() !== null) canvas.style.cursor = 'crosshair'
     else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY)
+  }
+
+  const showGhost = (clientX: number, clientY: number) => {
+    const typeId = player.placingType()
+    const world = replica.world
+    if (typeId === null || !world) {
+      view.showPlacement(null)
+      return
+    }
+    const origin = view.pickTile(clientX, clientY)
+    if (!origin) {
+      view.showPlacement(null)
+      return
+    }
+    const footprint = UNIT_TYPES[typeId].footprint
+    const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
+    const cells: { x: number; y: number; open: boolean }[] = []
+    for (let dy = 0; dy < footprint; dy++) {
+      for (let dx = 0; dx < footprint; dx++) {
+        const tile = { x: origin.x + dx, y: origin.y + dy }
+        cells.push({
+          x: tile.x,
+          y: tile.y,
+          open: canPlaceFootprint(tile, 1, world.width, world.height, terrainAt, replica.units),
+        })
+      }
+    }
+    view.showPlacement(cells)
+  }
+
+  const commitPlace = (clientX: number, clientY: number) => {
+    const typeId = player.placingType()
+    const world = replica.world
+    const origin = view.pickTile(clientX, clientY)
+    if (typeId === null || !world || !origin) return
+    const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
+    const footprint = UNIT_TYPES[typeId].footprint
+    if (!canPlaceFootprint(origin, footprint, world.width, world.height, terrainAt, replica.units)) return
+    player.placeBuilding(origin)
+    view.showPlacement(null)
   }
 
   const beginPan = (event: PointerEvent) => {
@@ -62,6 +106,17 @@ export function bindInput(
       beginPan(event)
       return
     }
+    if (event.button === 2 && player.placingType() !== null) {
+      player.cancelPlace()
+      view.showPlacement(null)
+      refreshCursor(event.clientX, event.clientY)
+      event.preventDefault()
+      return
+    }
+    if (event.button === 0 && player.placingType() !== null) {
+      canvas.setPointerCapture(event.pointerId)
+      return
+    }
     if (event.button === 0) {
       selectArmed = true
       boxSelecting = false
@@ -78,6 +133,7 @@ export function bindInput(
   canvas.addEventListener('pointermove', (event) => {
     view.setZoomCursor(event.clientX, event.clientY)
     pointerX = event.clientX
+    if (player.placingType() !== null && !panning) showGhost(event.clientX, event.clientY)
     pointerY = event.clientY
     if (panning) {
       view.panByPixels(lastX, lastY, event.clientX, event.clientY)
@@ -113,6 +169,11 @@ export function bindInput(
       return
     }
     if (event.button !== 0) return
+    if (player.placingType() !== null) {
+      commitPlace(event.clientX, event.clientY)
+      refreshCursor(event.clientX, event.clientY)
+      return
+    }
     if (boxSelecting) {
       player.selectIds(boxIds(event.clientX, event.clientY))
       hideBox()

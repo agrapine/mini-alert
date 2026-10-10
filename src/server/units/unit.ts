@@ -22,6 +22,7 @@ export abstract class Unit {
   sinceShot = 0
   attackId: number | null = null
   path: TileCoord[] = []
+  progress = 1
 
   constructor(id: number, ownerId: number, type: UnitType, tile: TileCoord, facing: number) {
     this.id = id
@@ -34,11 +35,13 @@ export abstract class Unit {
     this.turretYaw = facing
     this.health = type.maxHealth
     this.rounds = type.weapon.magazine
+    this.progress = type.buildTime > 0 ? 0 : 1
   }
 
   abstract drive(dt: number): void
 
   orderMove(tile: TileCoord, paths: PathFinder): boolean {
+    if (this.type.topSpeed <= 0) return false
     const path = paths.findPath(this.tile, tile, this.id)
     if (path === null) return false
     this.path = path
@@ -46,6 +49,7 @@ export abstract class Unit {
   }
 
   step(dt: number, paths: PathFinder, units: readonly Unit[]) {
+    if (this.type.topSpeed <= 0) return
     this.pursue(dt, paths, units)
     if (this.path.length === 0) {
       this.speed = approach(this.speed, 0, this.type.acceleration * dt)

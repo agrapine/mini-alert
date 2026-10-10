@@ -15,7 +15,7 @@ export type Impact = {
 export function engage(units: readonly Unit[], dt: number, time: number, impacts: Impact[]): ShotEvent[] {
   const shots: ShotEvent[] = []
   for (const unit of units) {
-    if (unit.health <= 0) continue
+    if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
     const weapon = unit.type.weapon
     unit.sinceShot += dt
     unit.cooldown = Math.max(0, unit.cooldown - dt)
@@ -107,7 +107,9 @@ function strike(units: readonly Unit[], x: number, z: number, ownerId: number, d
 }
 
 function bodyReach(unit: Unit): number {
-  return Math.max(unit.type.hull.x, unit.type.hull.z) / 2
+  const hull = Math.max(unit.type.hull.x, unit.type.hull.z) / 2
+  if (unit.type.footprint <= 1) return hull
+  return Math.max(hull, (unit.type.footprint * Math.SQRT2) / 2)
 }
 
 const ATTACK_COMMIT = 1.5

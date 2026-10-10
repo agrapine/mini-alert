@@ -84,6 +84,14 @@ describe('island match', () => {
     for (const unit of game.units) {
       expect(isWalkableTerrain(game.world.terrainAt(unit.tile.x, unit.tile.y))).toBe(true)
     }
+    let placed = false
+    for (let y = 0; y < game.world.height && !placed; y++) {
+      for (let x = 0; x < game.world.width && !placed; x++) {
+        placed = game.placeBuilding(human.id, UnitTypeId.Factory, { x, y })
+      }
+    }
+    expect(placed).toBe(true)
+    game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
     const spawned = game.units[game.units.length - 1]
     expect(isWalkableTerrain(game.world.terrainAt(spawned.tile.x, spawned.tile.y))).toBe(true)

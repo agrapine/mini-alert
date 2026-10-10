@@ -8,6 +8,7 @@ import {
   type WorldSnapshot,
 } from '../shared/protocol.ts'
 import { type Terrain } from '../shared/tiles.ts'
+import { shotsForPlayer, unitsForPlayer } from '../shared/vision.ts'
 import type { AiPlayer } from './ai.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
@@ -32,16 +33,28 @@ export class ServerHost {
     if (!session) return
     session.send({ kind: ServerMessageKind.Welcome, playerId })
     session.send(this.worldSnapshot())
-    session.send({ kind: ServerMessageKind.Units, units: this.game.unitSnapshots() })
+    session.send({
+      kind: ServerMessageKind.Units,
+      units: this.unitsFor(playerId),
+      credits: this.creditsFor(playerId),
+    })
   }
 
   tick(dt: number) {
     this.ai.update(dt)
     const shots = this.game.tick(dt)
-    const units = { kind: ServerMessageKind.Units, units: this.game.unitSnapshots() } as const
+    const living = this.game.unitSnapshots()
+    const deaths = this.game.takeDeaths()
+    const all = deaths.length > 0 ? living.concat(deaths) : living
     for (const session of this.sessions) {
-      session.send(units)
-      if (shots.length > 0) session.send({ kind: ServerMessageKind.Shots, shots })
+      const units = unitsForPlayer(all, session.playerId)
+      session.send({
+        kind: ServerMessageKind.Units,
+        units,
+        credits: this.creditsFor(session.playerId),
+      })
+      const seen = shotsForPlayer(shots, living, session.playerId)
+      if (seen.length > 0) session.send({ kind: ServerMessageKind.Shots, shots: seen })
     }
   }
 
@@ -52,7 +65,17 @@ export class ServerHost {
       this.game.orderAttack(playerId, message.unitId, message.targetId)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
+    } else if (message.kind === ClientMessageKind.PlaceBuilding) {
+      this.game.placeBuilding(playerId, message.typeId, message.tile)
     }
+  }
+
+  private creditsFor(playerId: number): number {
+    return this.game.player(playerId)?.credits ?? 0
+  }
+
+  private unitsFor(playerId: number) {
+    return unitsForPlayer(this.game.unitSnapshots(), playerId)
   }
 
   private worldSnapshot(): WorldSnapshot {

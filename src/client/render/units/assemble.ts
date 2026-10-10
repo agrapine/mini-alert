@@ -11,6 +11,7 @@ export type Part = {
   y: number
   z: number
   shade?: number
+  tint?: number
   turret?: boolean
 }
 
@@ -25,15 +26,16 @@ export function assemble(
     roughness: 0.48,
     metalness: 0.22,
   })
-  const detail = panel.clone()
   const group = new Group()
   const turret = new Group()
   turret.name = 'turret'
   for (const part of parts) {
     const shade = part.shade ?? 1
-    const mesh = new Mesh(new BoxGeometry(part.w, part.h, part.d), shade === 1 ? panel : detail)
+    const material = part.tint !== undefined || shade !== 1 ? panel.clone() : panel
+    const mesh = new Mesh(new BoxGeometry(part.w, part.h, part.d), material)
     mesh.position.set(part.x, part.y - bodyHeight / 2, part.z)
-    if (shade !== 1) mesh.userData.shade = shade
+    if (part.tint !== undefined) mesh.userData.tint = part.tint
+    else if (shade !== 1) mesh.userData.shade = shade
     if (part.turret) turret.add(mesh)
     else group.add(mesh)
   }
