@@ -53,6 +53,7 @@ type Member = {
   name: string
   socket: LobbySocket
   gameId: number | null
+  admin: boolean
 }
 
 type Match = {
@@ -89,7 +90,7 @@ export class Lobby {
   private readonly hallChat: ChatLine[] = []
 
   connect(socket: LobbySocket): LobbyMember {
-    const member: Member = { id: this.nextId++, name: '', socket, gameId: null }
+    const member: Member = { id: this.nextId++, name: '', socket, gameId: null, admin: false }
     member.name = `Player ${member.id}`
     this.members.set(member.id, member)
     this.refreshWaiting()
@@ -120,6 +121,8 @@ export class Lobby {
     else if (message.kind === LobbyClientKind.ViewAs) this.viewAs(client, message.playerId)
     else if (message.kind === LobbyClientKind.Regenerate) this.regenerate(client)
     else if (message.kind === LobbyClientKind.SetAiPace) this.setAiPace(client, message.pace)
+    else if (message.kind === LobbyClientKind.ClaimAdmin) client.admin = true
+    else if (message.kind === LobbyClientKind.DestroyGame) this.destroyGame(client, message.gameId)
   }
 
   onGame(member: LobbyMember, message: ClientMessage) {
@@ -357,6 +360,30 @@ export class Lobby {
       const seat = owner === undefined ? undefined : match.seats.get(owner)
       seat?.setView(watch.playerId)
     }
+  }
+
+  private destroyGame(client: Member, gameId: unknown) {
+    if (!client.admin || typeof gameId !== 'number') return
+    const game = this.games.get(gameId)
+    if (!game) return
+    game.token += 1
+    game.generating = false
+    const memberIds = game.memberIds.slice()
+    const match = game.match
+    if (match) {
+      for (const seat of match.seats.values()) seat.close()
+      match.seats.clear()
+      match.host.dispose()
+      game.match = null
+    }
+    game.memberIds = []
+    this.games.delete(game.id)
+    for (const id of memberIds) {
+      const member = this.members.get(id)
+      if (!member) continue
+      member.gameId = null
+    }
+    this.refreshWaiting()
   }
 
   private dropFromGame(client: Member, tell: boolean) {

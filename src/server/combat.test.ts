@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { cityContains, layoutCities, lostStreets, projectCity, settledCity, StreetKind } from '../shared/cities.ts'
+import { Terrain } from '../shared/tiles.ts'
 import { WeaponKind, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { World } from './world.ts'
@@ -189,5 +191,178 @@ describe('combat', () => {
     expect(direct.health).toBe(before - 34)
     expect(nearby.health).toBeLessThan(before)
     expect(nearby.health).toBeGreaterThan(direct.health)
+  })
+
+  it('attacks a ground tile and keeps firing there', () => {
+    const { game, human } = battle()
+    const tank = game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
+    expect(game.orderAttackGround(human.id, tank.id, { x: 2, y: 18 })).toBe(true)
+    expect(tank.attackPoint).toEqual({ x: 2.5, z: 18.5 })
+    expect(tank.path.length).toBeGreaterThan(0)
+    const close = game.spawn(human, UnitTypeId.Artillery, { x: 8, y: 8 }, 0)
+    expect(game.orderAttackGround(human.id, close.id, { x: 8, y: 12 })).toBe(true)
+    expect(close.path).toEqual([])
+    const shots = game.tick(1 / 30)
+    expect(shots.some((shot) => shot.shooterId === close.id)).toBe(true)
+    expect(close.attackPoint).toEqual({ x: 8.5, z: 12.5 })
+    expect(game.orderMove(human.id, close.id, { x: 9, y: 8 })).toBe(true)
+    expect(close.attackPoint).toBeNull()
+  })
+
+  it('fells a tree with a shell and leaves it standing under bullets', () => {
+    const width = 24
+    const height = 24
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    tiles[10 * width + 10] = Terrain.Tree
+    const game = new Game(World.fromTiles(width, height, tiles))
+    const human = game.addPlayer()
+    const tank = game.spawn(human, UnitTypeId.MedTank, { x: 10, y: 8 }, 0)
+    expect(game.orderAttackGround(human.id, tank.id, { x: 10, y: 10 })).toBe(true)
+    const shots = game.tick(0.4)
+    expect(shots.some((shot) => shot.shooterId === tank.id)).toBe(true)
+    const flight = shots.find((shot) => shot.shooterId === tank.id)?.flight ?? 0
+    expect(game.world.terrainAt(10, 10)).toBe(Terrain.Tree)
+    game.tick(flight)
+    expect(game.world.terrainAt(10, 10)).toBe(Terrain.Land)
+    expect(game.clearedTiles()).toEqual([{ x: 10, y: 10 }])
+    expect(game.pathfinder.isWalkable(10, 10, -1)).toBe(true)
+
+    const bullets = new Game(World.fromTiles(width, height, tiles))
+    const owner = bullets.addPlayer()
+    const scout = bullets.spawn(owner, UnitTypeId.Scout, { x: 10, y: 8 }, 0)
+    expect(bullets.orderAttackGround(owner.id, scout.id, { x: 10, y: 10 })).toBe(true)
+    bullets.tick(1)
+    expect(bullets.world.terrainAt(10, 10)).toBe(Terrain.Tree)
+  })
+
+  it('destroys a city building under shellfire and drops it from the population', () => {
+    const width = 20
+    const height = 20
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 11 }
+    game.bindCities()
+    const human = game.addPlayer()
+    game.claimCity({ x: 8, y: 8 }, human.id)
+    const layout = layoutCities(game.scenery.towns, game.scenery.seed, tiles, width, height)[0]
+    const building = layout.buildings.find((block) => !block.keep)
+    expect(building).toBeDefined()
+    if (!building) return
+    const hall = layout.buildings.find((block) => block.keep)
+    const street = layout.streets.find(
+      (road) => road.kind < 6 && Math.abs(road.x - building.x) + Math.abs(road.y - building.y) === 1,
+    )
+    expect(street).toBeDefined()
+    if (!street) return
+    const before = game.creditIncome(human.id)
+    const tank = game.spawn(human, UnitTypeId.MedTank, { x: street.x, y: street.y }, 0)
+    expect(game.orderAttackGround(human.id, tank.id, { x: building.x, y: building.y })).toBe(true)
+    let guard = 0
+    while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y) && guard < 40) {
+      game.tick(0.5)
+      guard += 1
+    }
+    const state = game.cityStates()[0]
+    expect(state.ruins).toContainEqual({ x: building.x, y: building.y })
+    const full = projectCity(layout, state.grown, tiles, width, height)
+    const fallen = state.ruins.filter((ruin) => full.buildings.some((block) => block.x === ruin.x && block.y === ruin.y))
+    for (const street of lostStreets(full, fallen)) expect(state.ruins).toContainEqual(street)
+    expect(game.pathfinder.isWalkable(building.x, building.y, tank.id)).toBe(true)
+    expect(game.creditIncome(human.id)).toBeLessThan(before)
+    if (hall) expect(state.ruins).not.toContainEqual({ x: hall.x, y: hall.y })
+  })
+
+  it('shoots an enemy city on its own and turns the city neutral when only the hall remains', () => {
+    const width = 20
+    const height = 20
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 11 }
+    game.bindCities()
+    const human = game.addPlayer()
+    const enemy = game.addPlayer()
+    game.claimCity({ x: 8, y: 8 }, enemy.id)
+    const layout = layoutCities(game.scenery.towns, game.scenery.seed, tiles, width, height)[0]
+    const hall = layout.buildings.find((block) => block.keep)
+    const block = layout.buildings.find((building) => !building.keep)
+    expect(hall).toBeDefined()
+    expect(block).toBeDefined()
+    if (!hall || !block) return
+    const stand = { x: block.x + 2, y: block.y }
+    expect(stand.x).toBeLessThan(width)
+    expect(cityContains(layout, stand.x, stand.y)).toBe(false)
+    const tank = game.spawn(human, UnitTypeId.MedTank, stand, 0)
+    let guard = 0
+    while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === block.x && ruin.y === block.y) && guard < 40) {
+      game.tick(0.5)
+      guard += 1
+    }
+    expect(game.cityStates()[0].ruins).toContainEqual({ x: block.x, y: block.y })
+    expect(game.cityStates()[0].ruins).not.toContainEqual({ x: hall.x, y: hall.y })
+    for (const building of layout.buildings) {
+      if (building.keep) continue
+      if (game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y)) continue
+      expect(game.orderAttackGround(human.id, tank.id, { x: building.x, y: building.y })).toBe(true)
+      guard = 0
+      while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y) && guard < 40) {
+        game.tick(0.5)
+        guard += 1
+      }
+    }
+    expect(game.cityStates()[0].ownerId).toBe(0)
+    expect(game.orderAttackGround(human.id, tank.id, { x: hall.x, y: hall.y })).toBe(true)
+    for (let i = 0; i < 20; i++) game.tick(0.5)
+    expect(game.cityStates()[0].ruins).not.toContainEqual({ x: hall.x, y: hall.y })
+    expect(game.pathfinder.isWalkable(hall.x, hall.y, tank.id)).toBe(false)
+  })
+
+  it('does not shell a neutral city, even when ordered to', () => {
+    const width = 20
+    const height = 20
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 11 }
+    game.bindCities()
+    const human = game.addPlayer()
+    const layout = layoutCities(game.scenery.towns, game.scenery.seed, tiles, width, height)[0]
+    const block = layout.buildings.find((building) => !building.keep)
+    expect(block).toBeDefined()
+    if (!block) return
+    const stand = { x: block.x + 2, y: block.y }
+    expect(stand.x).toBeLessThan(width)
+    expect(cityContains(layout, stand.x, stand.y)).toBe(false)
+    const tank = game.spawn(human, UnitTypeId.MedTank, stand, 0)
+    for (let i = 0; i < 16; i++) game.tick(0.5)
+    expect(game.cityStates()[0].ruins).not.toContainEqual({ x: block.x, y: block.y })
+    expect(game.orderAttackGround(human.id, tank.id, { x: block.x, y: block.y })).toBe(true)
+    for (let i = 0; i < 16; i++) game.tick(0.5)
+    expect(game.cityStates()[0].ownerId).toBe(0)
+    expect(game.cityStates()[0].ruins).not.toContainEqual({ x: block.x, y: block.y })
+  })
+
+  it('destroys a shelled street', () => {
+    const width = 20
+    const height = 20
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 7 }
+    game.bindCities()
+    const human = game.addPlayer()
+    const layout = layoutCities(game.scenery.towns, game.scenery.seed, tiles, width, height)[0]
+    const roads = layout.streets.filter((street) => street.kind < StreetKind.Lamp)
+    const street = roads[0]
+    const stand = roads.find((road) => road.x !== street.x || road.y !== street.y) ?? street
+    const tank = game.spawn(human, UnitTypeId.MedTank, { x: stand.x, y: stand.y }, 0)
+    expect(game.orderAttackGround(human.id, tank.id, { x: street.x, y: street.y })).toBe(true)
+    let guard = 0
+    while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === street.x && ruin.y === street.y) && guard < 40) {
+      game.tick(0.5)
+      guard += 1
+    }
+    const state = game.cityStates()[0]
+    expect(state.ruins).toContainEqual({ x: street.x, y: street.y })
+    const full = projectCity(layout, state.grown, tiles, width, height)
+    const settled = settledCity(full, state.ruins)
+    expect(settled.streets.some((road) => road.kind < StreetKind.Lamp && road.x === street.x && road.y === street.y)).toBe(false)
   })
 })

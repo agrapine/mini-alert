@@ -21,6 +21,7 @@ export abstract class Unit {
   cooldown = 0
   sinceShot = 0
   attackId: number | null = null
+  attackPoint: { x: number; z: number } | null = null
   path: TileCoord[] = []
   progress = 1
 
@@ -68,6 +69,10 @@ export abstract class Unit {
   }
 
   private pursue(dt: number, paths: PathFinder, units: readonly Unit[]) {
+    if (this.attackPoint) {
+      this.pursuePoint(dt, paths)
+      return
+    }
     if (this.attackId === null) return
     const target = units.find((unit) => unit.id === this.attackId)
     if (!target || target.health <= 0 || target.ownerId === this.ownerId) {
@@ -90,6 +95,32 @@ export abstract class Unit {
     if (!tile) return
     if (goal && goal.x === tile.x && goal.y === tile.y) return
     this.orderMove(tile, paths)
+  }
+
+  private pursuePoint(dt: number, paths: PathFinder) {
+    const point = this.attackPoint
+    if (!point) return
+    const dist = Math.hypot(point.x - this.pos.x, point.z - this.pos.z)
+    const range = this.type.weapon.range
+    if (dist <= range || this.type.topSpeed <= 0) {
+      this.path = []
+      if (this.type.weapon.turretRate === 0) this.facePoint(point, dt)
+      return
+    }
+    const goal = this.path[this.path.length - 1]
+    const goalCenter = goal ? tileCenter(goal) : null
+    const goalHolds = goalCenter !== null && Math.hypot(goalCenter.x - point.x, goalCenter.z - point.z) <= range
+    if (goalHolds) return
+    const tile = approachPoint(this, point, paths)
+    if (!tile) return
+    if (goal && goal.x === tile.x && goal.y === tile.y) return
+    this.orderMove(tile, paths)
+  }
+
+  private facePoint(point: { x: number; z: number }, dt: number) {
+    const desired = Math.atan2(point.x - this.pos.x, point.z - this.pos.z)
+    const err = wrapAngle(desired - this.facing)
+    this.facing = wrapAngle(this.facing + clamp(err, -2.5 * dt, 2.5 * dt))
   }
 
   private face(target: Unit, dt: number) {
@@ -167,6 +198,29 @@ export abstract class Unit {
       break
     }
   }
+}
+
+function approachPoint(unit: Unit, point: { x: number; z: number }, paths: PathFinder): TileCoord | null {
+  const range = unit.type.weapon.range
+  const reach = Math.ceil(range) + 1
+  const tx = Math.floor(point.x)
+  const ty = Math.floor(point.z)
+  let best: TileCoord | null = null
+  let bestScore = Infinity
+  for (let dy = -reach; dy <= reach; dy++) {
+    for (let dx = -reach; dx <= reach; dx++) {
+      const tile = { x: tx + dx, y: ty + dy }
+      if (!paths.isWalkable(tile.x, tile.y, unit.id)) continue
+      const center = tileCenter(tile)
+      const toTarget = Math.hypot(center.x - point.x, center.z - point.z)
+      if (toTarget > range) continue
+      const toSelf = Math.hypot(center.x - unit.pos.x, center.z - unit.pos.z)
+      if (toSelf >= bestScore) continue
+      best = tile
+      bestScore = toSelf
+    }
+  }
+  return best
 }
 
 function approachTile(unit: Unit, target: Unit, paths: PathFinder): TileCoord | null {

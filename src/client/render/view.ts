@@ -1,6 +1,6 @@
 import { BoxGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
-import type { CityState, ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { citySightOrigin, layoutCities, projectCity, type CityLayout } from '../../shared/cities.ts'
+import type { CityState, MapPoint, ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import { citySightOrigin, layoutCities, projectCity, settledCity, type CityLayout } from '../../shared/cities.ts'
 import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
 import { friendsOf } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
@@ -41,6 +41,7 @@ export class GameView {
   private boxPreview = false
   private minimap: Minimap | null = null
   private cities: CityLayer | null = null
+  private props: Group | null = null
   private fog: Fog | null = null
   private world: WorldSnapshot | null = null
   private cityBases: CityLayout[] | null = null
@@ -52,6 +53,7 @@ export class GameView {
   private readonly primaryMark: Sprite
   private readonly rallyMark: Group
   private shotDt = 0
+  private pendingCleared: readonly TileCoord[] = []
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
     this.status = status
@@ -100,7 +102,11 @@ export class GameView {
       if (root && map && marks) {
         this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
       }
-      void loadProps(world).then((props) => this.stage.scene.add(props))
+      void loadProps(world).then((props) => {
+        this.props = props
+        this.stage.scene.add(props)
+        this.clearGround(this.pendingCleared, false)
+      })
       this.cities = new CityLayer()
       void this.cities.load(world).then(() => this.stage.scene.add(this.cities!.root))
       return
@@ -119,7 +125,10 @@ export class GameView {
     for (let index = 0; index < this.cityBases.length; index++) {
       const state = states[index]
       if (!state || state.ownerId !== playerId) continue
-      const layout = projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height)
+      const layout = settledCity(
+        projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height),
+        state.ruins,
+      )
       sights.push({ ownerId: playerId, ...citySightOrigin(layout) })
     }
     return sights
@@ -262,6 +271,8 @@ export class GameView {
     cities: readonly CityState[] = [],
     primaryFactoryId = 0,
     rally: TileCoord | null = null,
+    cleared: readonly TileCoord[] = [],
+    yields: readonly MapPoint[] = [],
   ) {
     for (const unit of units) {
       if (unit.health > 0) continue
@@ -299,7 +310,8 @@ export class GameView {
 
     const showSelection = !this.boxPreview
     this.placeRings(this.selectionRings, this.stage.selection, showSelection ? selected : [])
-    this.placeRanges(showSelection && this.showRanges ? selected : [])
+    const showRanges = showSelection && this.showRanges && selected.length === 1
+    this.placeRanges(showRanges ? selected : [])
     const goals = showSelection ? selected.filter((unit) => unit.goal !== null) : []
     this.placeOrders(goals)
     this.placePrimary(living, primaryFactoryId)
@@ -335,6 +347,7 @@ export class GameView {
     })
     this.placeRings(this.hoverRings, this.stage.hover, hovered)
 
+    for (const drop of yields) this.particles.collect(drop.x, drop.y)
     const impact = (x: number, z: number, kind: WeaponKind) => this.particles.hit(x, z, kind)
     this.shots.spawn(shots, impact)
     this.shots.advance(this.shotDt, impact)
@@ -343,8 +356,22 @@ export class GameView {
     this.fog?.update(this.shotDt, friends)
     this.fog?.setView(cameraYaw)
     this.cities?.sync(cities)
+    this.clearGround(cleared)
     this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, primaryFactoryId, rally)
     this.stage.draw()
+  }
+
+  private clearGround(tiles: readonly TileCoord[], burst = true) {
+    this.pendingCleared = tiles
+    const props = this.props
+    if (!props || tiles.length === 0) return
+    const gone = new Set(tiles.map((tile) => `${tile.x},${tile.y}`))
+    for (const child of [...props.children]) {
+      if (child.userData.tree !== true) continue
+      if (!gone.has(`${child.userData.tileX},${child.userData.tileY}`)) continue
+      if (burst) this.particles.fell(child.position.x, child.position.z)
+      props.remove(child)
+    }
   }
 
   private wreck(group: Group) {

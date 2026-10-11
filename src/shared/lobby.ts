@@ -41,6 +41,8 @@ export const enum LobbyClientKind {
   ViewAs = 11,
   Regenerate = 12,
   SetAiPace = 13,
+  ClaimAdmin = 14,
+  DestroyGame = 15,
 }
 
 export const enum LobbyServerKind {
@@ -154,6 +156,15 @@ export type SetAiPace = {
   pace: number
 }
 
+export type ClaimAdmin = {
+  kind: LobbyClientKind.ClaimAdmin
+}
+
+export type DestroyGame = {
+  kind: LobbyClientKind.DestroyGame
+  gameId: number
+}
+
 export const AI_PACE_MIN = 0.25
 export const AI_PACE_MAX = 3
 export const AI_PACE_DEFAULT = 1
@@ -178,6 +189,8 @@ export type LobbyClientMessage =
   | ViewAs
   | Regenerate
   | SetAiPace
+  | ClaimAdmin
+  | DestroyGame
 
 export type WaitingRoom = {
   kind: LobbyServerKind.Waiting

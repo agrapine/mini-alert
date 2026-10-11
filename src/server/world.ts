@@ -30,4 +30,9 @@ export class World {
     if (!this.inBounds(x, y)) throw new Error(`tile out of bounds: ${x},${y}`)
     return this.terrain[y * this.width + x] as Terrain
   }
+
+  setTerrain(x: number, y: number, terrain: Terrain) {
+    if (!this.inBounds(x, y)) return
+    this.terrain[y * this.width + x] = terrain
+  }
 }

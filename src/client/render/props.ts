@@ -91,6 +91,9 @@ function place(props: Map<PropName, Group>, name: PropName, x: number, y: number
   const mesh = source.clone(true)
   mesh.position.set(x + 0.5, TILE_TOP, y + 0.5)
   mesh.rotation.y = yaw
+  mesh.userData.tileX = x
+  mesh.userData.tileY = y
+  mesh.userData.tree = name === 'tree' || name === 'tree-high'
   return mesh
 }
 

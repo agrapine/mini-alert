@@ -45,6 +45,7 @@ export type UnitType = {
   footprint: number
   maxHealth: number
   cost: number
+  supply: number
   buildTime: number
   body: BodyKind
   hull: HullSize
@@ -69,6 +70,7 @@ export const SCOUT: UnitType = {
   footprint: 1,
   maxHealth: 60,
   cost: 200,
+  supply: 1,
   buildTime: 4,
   body: BodyKind.Mesh,
   hull: { x: 0.4, y: 0.28, z: 0.78 },
@@ -99,6 +101,7 @@ export const MED_TANK: UnitType = {
   footprint: 1,
   maxHealth: 120,
   cost: 450,
+  supply: 2,
   buildTime: 6,
   body: BodyKind.Mesh,
   hull: { x: 0.62, y: 0.4, z: 0.86 },
@@ -129,6 +132,7 @@ export const HEAVY_TANK: UnitType = {
   footprint: 1,
   maxHealth: 220,
   cost: 750,
+  supply: 4,
   buildTime: 9,
   body: BodyKind.Mesh,
   hull: { x: 0.9, y: 0.52, z: 1.02 },
@@ -159,6 +163,7 @@ export const ARTILLERY: UnitType = {
   footprint: 1,
   maxHealth: 40,
   cost: 550,
+  supply: 3,
   buildTime: 7,
   body: BodyKind.Mesh,
   hull: { x: 0.44, y: 0.3, z: 0.62 },
@@ -204,6 +209,7 @@ export const FACTORY: UnitType = {
   footprint: 2,
   maxHealth: 480,
   cost: 2500,
+  supply: 0,
   buildTime: 8,
   body: BodyKind.Mesh,
   hull: { x: 1.8, y: 0.9, z: 1.8 },
@@ -221,6 +227,7 @@ export const TURRET: UnitType = {
   footprint: 1,
   maxHealth: 100,
   cost: 800,
+  supply: 2,
   buildTime: 5,
   body: BodyKind.Mesh,
   hull: { x: 0.8, y: 0.5, z: 0.8 },

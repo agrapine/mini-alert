@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { captureDuration, captureSpeed, cityContains, cityHolds, CITY_GROW_SECONDS, layoutCities, STREET_REACH, StreetKind, type CityLayout } from '../shared/cities.ts'
+import { CAPTURE_DRAIN, captureDuration, captureFade, cityContains, cityHolds, CITY_GROW_SECONDS, layoutCities, lostStreets, populationOf, projectCity, settledCity, STREET_REACH, StreetKind, type CityLayout } from '../shared/cities.ts'
 import { Terrain } from '../shared/tiles.ts'
-import { UnitTypeId } from '../shared/unit-types.ts'
+import { HEAVY_TANK, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
-import { CREDIT_PER_CITY, CREDIT_PER_POPULATION } from './player.ts'
+import { CREDIT_PER_POPULATION } from './player.ts'
 import { World } from './world.ts'
 
 function cityGame() {
@@ -43,6 +43,7 @@ describe('cities', () => {
       expect(city.span === 2 || city.span === 3 || city.span === 4).toBe(true)
       expect(city.tiles.length).toBe(city.span * city.span)
       expect(city.buildings.length).toBeGreaterThan(0)
+      expect(city.buildings.filter((building) => building.keep)).toHaveLength(1)
       const roads = roadsOf(city)
       expect(roads.length).toBeGreaterThan(0)
       expect(connected(roads)).toBe(true)
@@ -60,35 +61,61 @@ describe('cities', () => {
         expect(nearestBuilding(road, city.buildings)).toBeLessThanOrEqual(STREET_REACH)
         expect(pieceMatches(road, roads)).toBe(true)
       }
+      expect(streetNeighbors(roads)).toBeLessThanOrEqual(3)
+      expect(packedStreets(roads)).toBe(false)
     }
   })
 
-  it('captures a neutral city faster than an owned one', () => {
+  it('pulls up streets left farther than reach from a standing building', () => {
+    const game = cityGame()
+    const terrain = terrainOf(game)
+    const base = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)[0]
+    const layout = projectCity(base, 14, terrain, game.world.width, game.world.height)
+    let dropped = 0
+    for (const building of layout.buildings) {
+      const ruins = [{ x: building.x, y: building.y }]
+      const settled = settledCity(layout, ruins)
+      const living = layout.buildings.filter((other) => other.x !== building.x || other.y !== building.y)
+      for (const street of roadsOf(settled)) {
+        expect(nearestBuilding(street, living)).toBeLessThanOrEqual(STREET_REACH)
+      }
+      const lost = lostStreets(layout, ruins)
+      for (const street of lost) {
+        dropped += 1
+        expect(nearestBuilding(street, living)).toBeGreaterThan(STREET_REACH)
+      }
+      expect(lostStreets(layout, ruins.concat(lost))).toEqual([])
+    }
+    expect(dropped).toBeGreaterThan(0)
+  })
+
+  it('captures a city in five seconds per building for one scout', () => {
     const game = cityGame()
     const human = game.addPlayer()
     const enemy = game.addPlayer()
     const layout = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)[0]
     const stand = streetTile(layout)
     game.spawn(human, UnitTypeId.Scout, { x: stand.x, y: stand.y }, 0)
-    const neutral = captureDuration(layout.span, true)
-    game.tick(neutral * 0.5)
+    const duration = captureDuration(populationOf(layout))
+    expect(duration).toBe(populationOf(layout) * 5)
+    game.tick(duration * 0.5)
     expect(game.cityStates()[0].ownerId).toBe(0)
     expect(game.cityStates()[0].progress).toBeCloseTo(0.5, 1)
     expect(game.creditIncome(human.id)).toBe(0)
-    game.tick(neutral * 0.5)
+    game.tick(duration * 0.5)
     expect(game.cityStates()[0].ownerId).toBe(human.id)
-    expect(game.creditIncome(human.id)).toBe(
-      CREDIT_PER_CITY + CREDIT_PER_POPULATION * (layout.tiles.length + game.cityStates()[0].grown),
-    )
+    const held = projectCity(layout, game.cityStates()[0].grown, terrainOf(game), game.world.width, game.world.height)
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * populationOf(held))
 
     game.claimCity(game.scenery.towns[0], enemy.id)
-    const owned = captureDuration(layout.span, false)
-    game.tick(neutral)
+    const owned = projectCity(layout, game.cityStates()[0].grown, terrainOf(game), game.world.width, game.world.height)
+    const ownedDuration = captureDuration(populationOf(owned, game.cityStates()[0].ruins))
+    game.tick(ownedDuration * 0.5)
     expect(game.cityStates()[0].ownerId).toBe(enemy.id)
-    expect(game.cityStates()[0].progress).toBeCloseTo(neutral / owned, 1)
+    expect(game.cityStates()[0].progress).toBeCloseTo(0.5, 1)
   })
 
-  it('captures faster with more units in the city, up to five', () => {
+  it('captures faster as the units supply adds up', () => {
     const game = cityGame()
     const human = game.addPlayer()
     const layout = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)[0]
@@ -96,49 +123,83 @@ describe('cities', () => {
     game.spawn(human, UnitTypeId.Scout, streets[0], 0)
     const extra = streets.find((street) => street.x !== streets[0].x || street.y !== streets[0].y) ?? streets[0]
     game.spawn(human, UnitTypeId.Scout, extra, 0)
-    const neutral = captureDuration(layout.span, true)
-    game.tick(neutral * 0.2)
-    expect(game.cityStates()[0].progress).toBeCloseTo(0.2 * captureSpeed(2), 1)
-    expect(captureSpeed(9)).toBe(5)
+    const duration = captureDuration(populationOf(layout))
+    game.tick(duration * 0.2)
+    expect(game.cityStates()[0].progress).toBeCloseTo(0.2 * SCOUT.supply * 2, 1)
+
+    const heavyGame = cityGame()
+    const commander = heavyGame.addPlayer()
+    const heavyLayout = layoutCities(heavyGame.scenery.towns, heavyGame.scenery.seed, terrainOf(heavyGame), heavyGame.world.width, heavyGame.world.height)[0]
+    heavyGame.spawn(commander, UnitTypeId.HeavyTank, streetTile(heavyLayout), 0)
+    const heavyDuration = captureDuration(populationOf(heavyLayout))
+    heavyGame.tick(heavyDuration * 0.2)
+    expect(heavyGame.cityStates()[0].progress).toBeCloseTo(0.2 * HEAVY_TANK.supply, 1)
   })
 
-  it('freezes while both players stand inside and drains when the holder leaves', () => {
+  it('freezes while both players stand inside', () => {
     const game = cityGame()
     const human = game.addPlayer()
     const enemy = game.addPlayer()
     const layout = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)[0]
     const stand = streetTile(layout, { x: 8, y: 8 })
-    const scout = game.spawn(human, UnitTypeId.Scout, { x: stand.x, y: stand.y }, 0)
-    game.tick(1)
+    game.spawn(human, UnitTypeId.Scout, { x: stand.x, y: stand.y }, 0)
+    const duration = captureDuration(populationOf(layout))
+    game.tick(duration * 0.2)
     const held = game.cityStates()[0].progress
     expect(held).toBeGreaterThan(0)
-    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 8, y: 8 }, 0)
+    game.spawn(enemy, UnitTypeId.Scout, { x: 8, y: 8 }, 0)
     game.tick(3)
     expect(game.cityStates()[0].progress).toBeCloseTo(held, 5)
-    scout.health = 0
-    foe.health = 0
-    game.tick(CAPTURE_WAIT)
-    expect(game.cityStates()[0].progress).toBe(0)
-    expect(game.cityStates()[0].challengerId).toBe(0)
   })
 
-  it('captures from any block of the city and the tiles beside it', () => {
+  it('keeps capture progress after leaving and lets other units clear it faster', () => {
+    const game = cityGame()
+    const human = game.addPlayer()
+    const enemy = game.addPlayer()
+    const layout = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)[0]
+    const roads = roadsOf(layout)
+    const scout = game.spawn(human, UnitTypeId.Scout, roads[0], 0)
+    const duration = captureDuration(populationOf(layout))
+    game.tick(duration * 0.5)
+    const held = game.cityStates()[0].progress
+    expect(held).toBeCloseTo(0.5, 1)
+    scout.health = 0
+    game.tick(4)
+    const faded = game.cityStates()[0].progress
+    expect(faded).toBeGreaterThan(0.2)
+    expect(faded).toBeCloseTo(held - 4 / CAPTURE_DRAIN, 2)
+    expect(game.cityStates()[0].challengerId).toBe(human.id)
+
+    const stand = roads.find((road) => road.x !== roads[0].x || road.y !== roads[0].y) ?? roads[0]
+    const extra = roads.find((road) => (road.x !== roads[0].x || road.y !== roads[0].y) && (road.x !== stand.x || road.y !== stand.y)) ?? stand
+    game.spawn(enemy, UnitTypeId.Scout, stand, 0)
+    game.spawn(enemy, UnitTypeId.Scout, extra, 0)
+    const before = game.cityStates()[0].progress
+    game.tick(1)
+    const people = populationOf(layout)
+    expect(game.cityStates()[0].progress).toBeCloseTo(before - 1 / captureFade(SCOUT.supply * 2, people), 2)
+    expect(captureFade(0, people)).toBe(CAPTURE_DRAIN)
+    expect(captureFade(SCOUT.supply * 2, people)).toBe(captureDuration(people) / (SCOUT.supply * 2))
+  })
+
+  it('captures from any city square, including streets', () => {
     const probe = cityGame()
     const layout = layoutCities(probe.scenery.towns, probe.scenery.seed, terrainOf(probe), probe.world.width, probe.world.height)[0]
-    const roads = roadsOf(layout)
-    const tiles = roads.map((road) => ({ x: road.x, y: road.y }))
-    const beside = neighborOutside(layout.tiles)
-    if (beside && probe.world.terrainAt(beside.x, beside.y) !== Terrain.Water) tiles.push(beside)
-    for (const tile of tiles) {
-      if (tile.x < 0 || tile.y < 0) continue
-      if (probe.world.terrainAt(tile.x, tile.y) === Terrain.Water) continue
+    for (const building of layout.buildings) {
+      expect(cityHolds(layout, building.x + 0.5, building.y + 0.5)).toBe(true)
+    }
+    for (const road of roadsOf(layout)) {
+      if (probe.world.terrainAt(road.x, road.y) === Terrain.Water) continue
       const game = cityGame()
       const human = game.addPlayer()
-      const unit = game.spawn(human, UnitTypeId.Scout, tile, 0)
+      const unit = game.spawn(human, UnitTypeId.Scout, road, 0)
       expect(cityHolds(layout, unit.pos.x, unit.pos.z)).toBe(true)
       game.tick(1)
       expect(game.cityStates()[0].progress).toBeGreaterThan(0)
     }
+    const beside = neighborOutside(layout.tiles)
+    expect(beside).not.toBeNull()
+    if (beside) expect(cityHolds(layout, beside.x + 0.5, beside.y + 0.5)).toBe(false)
   })
 
   it('points spare units at the nearest city they do not own', () => {
@@ -161,7 +222,6 @@ describe('cities', () => {
     for (const building of layout.buildings) expect(game.pathfinder.isWalkable(building.x, building.y, -1)).toBe(false)
     const street = streetTile(layout)
     expect(game.pathfinder.isWalkable(street.x, street.y, -1)).toBe(true)
-    const population = layout.tiles.length
     game.tick(CITY_GROW_SECONDS)
     expect(game.cityStates()[0].grown).toBe(0)
     const blocked = layout.buildings[0]
@@ -173,7 +233,10 @@ describe('cities', () => {
     expect(game.cityStates()[0].grown).toBe(0)
     game.tick(CITY_GROW_SECONDS)
     expect(game.cityStates()[0].grown).toBe(1)
-    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_CITY + CREDIT_PER_POPULATION * (population + 1))
+    const grownLayout = projectCity(layout, 1, terrainOf(game), game.world.width, game.world.height)
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * populationOf(grownLayout))
+    expect(packedStreets(roadsOf(grownLayout))).toBe(false)
+    expect(streetNeighbors(roadsOf(grownLayout))).toBeLessThanOrEqual(3)
 
     const neutral = cityGame()
     const visitor = neutral.addPlayer()
@@ -183,6 +246,14 @@ describe('cities', () => {
     neutral.tick(CITY_GROW_SECONDS)
     expect(neutral.cityStates()[0].grown).toBe(0)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 0, y: 19 })).toBe(false)
+    let guard = 0
+    while (game.creditIncome(human.id) < TURRET.supply && guard < 12) {
+      game.tick(CITY_GROW_SECONDS)
+      guard += 1
+    }
+    shifted.health = 0
+    for (const unit of game.units) if (unit.ownerId === human.id) unit.health = 0
+    game.tick(0)
     const beside = roadsOf(layout).find(
       (road) =>
         (road.x !== street.x || road.y !== street.y) &&
@@ -192,8 +263,6 @@ describe('cities', () => {
     if (beside) expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: beside.x, y: beside.y })).toBe(true)
   })
 })
-
-const CAPTURE_WAIT = 3
 
 function terrainOf(game: Game): number[] {
   const terrain: number[] = []
@@ -296,6 +365,28 @@ function pop(mask: number): number {
   let count = 0
   for (let dir = 0; dir < 4; dir++) if (mask & (1 << dir)) count += 1
   return count
+}
+
+function streetNeighbors(roads: readonly { x: number; y: number }[]): number {
+  const present = new Set(roads.map((road) => `${road.x},${road.y}`))
+  let widest = 0
+  for (const road of roads) {
+    let count = 0
+    for (const [dx, dy] of DIRS) if (present.has(`${road.x + dx},${road.y + dy}`)) count += 1
+    if (count > widest) widest = count
+  }
+  return widest
+}
+
+function packedStreets(roads: readonly { x: number; y: number }[]): boolean {
+  const present = new Set(roads.map((road) => `${road.x},${road.y}`))
+  for (const road of roads) {
+    const east = present.has(`${road.x + 1},${road.y}`)
+    const south = present.has(`${road.x},${road.y + 1}`)
+    const corner = present.has(`${road.x + 1},${road.y + 1}`)
+    if (east && south && corner) return true
+  }
+  return false
 }
 
 function streetTile(layout: CityLayout, avoid?: { x: number; y: number }) {

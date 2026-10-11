@@ -1,8 +1,8 @@
 import { playerColor } from '../shared/players.ts'
 
 export const STARTING_CREDITS = 10_000
-export const CREDIT_PER_CITY = 6
 export const CREDIT_PER_POPULATION = 1
+export const INCOME_SECONDS = 10
 
 export class Player {
   readonly id: number

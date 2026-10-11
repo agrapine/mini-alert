@@ -12,6 +12,7 @@ export function cursorFor(
   view: GameView,
   clientX: number,
   clientY: number,
+  groundAttack = false,
 ): string {
   if (dragging) return 'grabbing'
   const hovered = view.pickUnit(clientX, clientY)
@@ -22,6 +23,7 @@ export function cursorFor(
     if (unit && player.commanding()) return ATTACK_CURSOR
   }
   const tile = selected.length > 0 ? view.pickTile(clientX, clientY) : null
+  if (groundAttack && player.commanding() && tile) return ATTACK_CURSOR
   if (player.factorySelected()) {
     if (!tile) return 'default'
     return replica.isOpen(tile, []) ? MOVE_CURSOR : 'not-allowed'

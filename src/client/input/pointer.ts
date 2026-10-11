@@ -30,12 +30,13 @@ export function bindInput(
   let lastY = 0
   let pointerX = 0
   let pointerY = 0
+  let groundAttack = false
 
   const refreshCursor = (clientX: number, clientY: number) => {
     if (panning) canvas.style.cursor = 'grabbing'
     else if (spaceDown) canvas.style.cursor = 'grab'
     else if (player.placingType() !== null) canvas.style.cursor = 'crosshair'
-    else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY)
+    else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY, groundAttack)
   }
 
   const showGhost = (clientX: number, clientY: number) => {
@@ -189,7 +190,12 @@ export function bindInput(
     const picked = unitId === null ? undefined : replica.unit(unitId)
     const tile = view.pickTile(event.clientX, event.clientY)
     const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
-    if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
+    const shellGround = (event.ctrlKey || event.metaKey) && player.commanding() && tile !== null
+    const ownUnit = picked !== undefined && picked.ownerId === replica.playerId
+    if (shellGround && !ownUnit) {
+      player.orderAttackGround(tile)
+      view.ping(tile.x + 0.5, tile.y + 0.5, true)
+    } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
       player.orderAttack(standing.id)
       view.ping(standing.x, standing.z, true)
     } else if (picked && picked.ownerId === replica.playerId) {
@@ -226,7 +232,9 @@ export function bindInput(
   const syncRanges = (event: KeyboardEvent) => {
     const ctrl = event.key === 'Control' && event.type === 'keyup' ? false : event.ctrlKey
     const meta = event.key === 'Meta' && event.type === 'keyup' ? false : event.metaKey
-    view.setShowRanges(ctrl || meta)
+    groundAttack = ctrl || meta
+    view.setShowRanges(groundAttack)
+    refreshCursor(pointerX, pointerY)
   }
 
   window.addEventListener('keydown', (event) => {
@@ -255,6 +263,7 @@ export function bindInput(
   window.addEventListener('blur', () => {
     panning = false
     spaceDown = false
+    groundAttack = false
     view.setShowRanges(false)
     hideBox()
     view.setHovered([])

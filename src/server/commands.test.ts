@@ -7,7 +7,7 @@ import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
 
 function seat(game: Game, playerId: number, x: number, y: number) {
-  game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 4 }
+  game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 11 }
   game.bindCities()
   game.claimCity({ x: x + 0.5, y: y + 0.5 }, playerId)
 }

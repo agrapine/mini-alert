@@ -16,7 +16,7 @@ import {
   Vector3,
 } from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { layoutCities, NEUTRAL_CITY, projectCity, StreetKind, type CityLayout } from '../../shared/cities.ts'
+import { layoutCities, NEUTRAL_CITY, projectCity, settledCity, StreetKind, type CityLayout } from '../../shared/cities.ts'
 import type { CityState, WorldSnapshot } from '../../shared/protocol.ts'
 import { TILE_TOP } from './terrain.ts'
 
@@ -68,19 +68,24 @@ type Fit = 'building' | 'road' | 'prop'
 
 type CityView = {
   base: CityLayout
+  projected: CityLayout
   layout: CityLayout
   grown: number
   owner: { value: number }
   team: Vector3
   buildingMaterial: MeshStandardMaterial
   cluster: Group
+  track: Mesh
+  trackMaterial: MeshBasicMaterial
   ring: Mesh
   ringMaterial: MeshBasicMaterial
   shown: number
+  ruinKey: string
 }
 
 type Kit = {
   streetsMaterial: MeshStandardMaterial
+  neutralMaterial: MeshStandardMaterial
   buildings: Group[]
   streets: Group[]
 }
@@ -102,25 +107,52 @@ export class CityLayer {
     const swatches = swatchTexture()
     const buildings = await Promise.all(BUILDING_URLS.map((url) => loadFitted(url, 'building')))
     const streets = await Promise.all(STREET_URLS.map((url, index) => loadFitted(url, index >= StreetKind.Lamp ? 'prop' : 'road')))
-    this.kit = { streetsMaterial, buildings, streets }
+    const neutralMaterial = teamMaterial(texture, swatches, { value: 0 }, new Vector3(1, 1, 1))
+    this.kit = { streetsMaterial, neutralMaterial, buildings, streets }
     for (const layout of layouts) {
       const owner = { value: 0 }
       const team = new Vector3(1, 1, 1)
       const buildingMaterial = teamMaterial(texture, swatches, owner, team)
       const cluster = new Group()
-      const ringMaterial = new MeshBasicMaterial({
+      const trackMaterial = new MeshBasicMaterial({
         color: NEUTRAL_CITY,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.22,
         depthTest: false,
         depthWrite: false,
       })
-      const ring = new Mesh(ringGeometry(layout.span, 0.001), ringMaterial)
+      const ringMaterial = new MeshBasicMaterial({
+        color: NEUTRAL_CITY,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false,
+      })
+      const track = new Mesh(ringGeometry(layout.span, 1, TRACK_BAND), trackMaterial)
+      track.rotation.x = -Math.PI / 2
+      track.visible = false
+      track.renderOrder = 12
+      const ring = new Mesh(ringGeometry(layout.span, 0.001, ARC_BAND), ringMaterial)
       ring.rotation.x = -Math.PI / 2
       ring.visible = false
-      ring.renderOrder = 12
-      cluster.add(ring)
-      const view: CityView = { base: layout, layout, grown: 0, owner, team, cluster, ring, ringMaterial, shown: 0, buildingMaterial }
+      ring.renderOrder = 13
+      cluster.add(track, ring)
+      const view: CityView = {
+        base: layout,
+        projected: layout,
+        layout,
+        grown: 0,
+        owner,
+        team,
+        cluster,
+        track,
+        trackMaterial,
+        ring,
+        ringMaterial,
+        shown: 0,
+        buildingMaterial,
+        ruinKey: '',
+      }
       this.fill(view)
       this.root.add(cluster)
       this.views.push(view)
@@ -135,9 +167,15 @@ export class CityLayer {
     for (let index = 0; index < this.views.length; index++) {
       const view = this.views[index]
       const grown = states[index]?.grown ?? 0
-      if (grown === view.grown) continue
-      view.layout = projectCity(view.base, grown, world.terrain, world.width, world.height)
-      view.grown = grown
+      const ruins = states[index]?.ruins ?? []
+      const ruinKey = ruins.map((tile) => `${tile.x},${tile.y}`).join('|')
+      if (grown === view.grown && ruinKey === view.ruinKey) continue
+      if (grown !== view.grown) {
+        view.projected = projectCity(view.base, grown, world.terrain, world.width, world.height)
+        view.grown = grown
+      }
+      view.ruinKey = ruinKey
+      view.layout = settledCity(view.projected, ruins)
       this.fill(view)
     }
     this.apply(states)
@@ -148,7 +186,7 @@ export class CityLayer {
     if (!kit) return
     const pooled = new Map<string, (typeof view.cluster.children)[number]>()
     for (const child of [...view.cluster.children]) {
-      if (child === view.ring) continue
+      if (child === view.ring || child === view.track) continue
       const stamp = child.userData.stamp as string | undefined
       view.cluster.remove(child)
       if (stamp) pooled.set(stamp, child)
@@ -179,12 +217,12 @@ export class CityLayer {
       })
     }
     for (const building of view.layout.buildings) {
-      const stamp = `b${building.x},${building.y},${building.model},${building.yaw}`
+      const stamp = `b${building.x},${building.y},${building.model},${building.yaw},${building.keep ? 1 : 0}`
       adopt(stamp, () => {
         const model = kit.buildings[building.model] ?? kit.buildings[0]
         const mesh = model.clone(true)
         mesh.traverse((child) => {
-          if (child instanceof Mesh) child.material = view.buildingMaterial
+          if (child instanceof Mesh) child.material = building.keep ? kit.neutralMaterial : view.buildingMaterial
         })
         mesh.rotation.y = building.yaw * (Math.PI / 2)
         mesh.position.set(building.x + 0.5, TILE_TOP + 0.06, building.y + 0.5)
@@ -194,11 +232,14 @@ export class CityLayer {
     const center = blobCenter(view.layout)
     const reach = Math.max(view.layout.span, Math.ceil(Math.sqrt(view.layout.tiles.length)))
     if (view.ring.userData.reach !== reach) {
+      view.track.geometry.dispose()
+      view.track.geometry = ringGeometry(reach, 1, TRACK_BAND)
       view.ring.geometry.dispose()
-      view.ring.geometry = ringGeometry(reach, view.shown > 0 ? view.shown : 0.001)
+      view.ring.geometry = ringGeometry(reach, view.shown > 0 ? view.shown : 0.001, ARC_BAND)
       view.ring.userData.reach = reach
     }
-    view.ring.position.set(center.x, TILE_TOP + 1.4, center.z)
+    view.track.position.set(center.x, TILE_TOP + 1.4, center.z)
+    view.ring.position.set(center.x, TILE_TOP + 1.42, center.z)
   }
 
   private apply(states: readonly CityState[]) {
@@ -209,21 +250,27 @@ export class CityLayer {
       view.owner.value = state.color > 0 ? 1 : 0
       if (state.color > 0) view.team.set((state.color >> 16) / 255, ((state.color >> 8) & 255) / 255, (state.color & 255) / 255)
       const active = state.progress > 0.001 && state.challengerId > 0
+      view.track.visible = active
       view.ring.visible = active
       if (!active) continue
-      view.ringMaterial.color.setHex(state.challengerColor > 0 ? state.challengerColor : NEUTRAL_CITY)
+      const color = state.challengerColor > 0 ? state.challengerColor : NEUTRAL_CITY
+      view.trackMaterial.color.setHex(color)
+      view.ringMaterial.color.setHex(color)
       if (Math.abs(view.shown - state.progress) < 0.01) continue
       view.shown = state.progress
       view.ring.geometry.dispose()
       const reach = Math.max(view.layout.span, Math.ceil(Math.sqrt(view.layout.tiles.length)))
-      view.ring.geometry = ringGeometry(reach, state.progress)
+      view.ring.geometry = ringGeometry(reach, state.progress, ARC_BAND)
     }
   }
 }
 
-function ringGeometry(span: number, progress: number): RingGeometry {
-  const outer = Math.max(1.05, span * 0.46)
-  return new RingGeometry(outer - 0.16, outer, 48, 1, 0, Math.max(0.001, progress) * Math.PI * 2)
+const TRACK_BAND = 0.1
+const ARC_BAND = 0.28
+
+function ringGeometry(span: number, progress: number, thickness: number): RingGeometry {
+  const mid = Math.max(1.05, span * 0.46) - 0.14
+  return new RingGeometry(mid - thickness / 2, mid + thickness / 2, 64, 1, 0, Math.max(0.001, progress) * Math.PI * 2)
 }
 
 function blobCenter(layout: CityLayout): { x: number; z: number } {

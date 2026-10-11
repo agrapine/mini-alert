@@ -1,13 +1,13 @@
-import { captureDuration, captureSpeed, CAPTURE_DRAIN, CITY_GROW_SECONDS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, layoutCities, type CityLayout } from '../shared/cities.ts'
+import { BUILDING_HP, captureDuration, captureFade, CITY_GROW_SECONDS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
 import type { CityState, MapPoint, ShotEvent, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
-import type { TileCoord } from '../shared/tiles.ts'
+import { Terrain, type TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
-import { CREDIT_PER_CITY, CREDIT_PER_POPULATION, Player } from './player.ts'
+import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player } from './player.ts'
 import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
-import { applyImpacts, engage, type Impact } from './sim/combat.ts'
+import { applyImpacts, engage, type Blast, type Impact } from './sim/combat.ts'
 import type { World } from './world.ts'
 
 export type Scenery = {
@@ -26,6 +26,8 @@ type CityRuntime = {
   progress: number
   challengerId: number
   grown: number
+  ruins: TileCoord[]
+  integrity: Map<string, number>
 }
 const SPAWN_STEPS: TileCoord[] = [
   { x: 0, y: 0 },
@@ -77,7 +79,10 @@ export class Game {
   scenery: Scenery = EMPTY_SCENERY
   private readonly cities: CityRuntime[] = []
   private growClock = 0
+  private incomeClock = 0
+  private yields: MapPoint[] = []
   private growthTerrain: number[] | null = null
+  private readonly fallen: TileCoord[] = []
 
   constructor(world: World) {
     this.world = world
@@ -102,7 +107,7 @@ export class Game {
     const terrain = this.terrainTable()
     this.cities.length = 0
     for (const layout of layoutCities(this.scenery.towns, this.scenery.seed, terrain, this.world.width, this.world.height)) {
-      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0 })
+      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, ruins: [], integrity: new Map() })
     }
     this.syncBlocks()
   }
@@ -122,11 +127,16 @@ export class Game {
       challengerId: city.challengerId,
       challengerColor: city.challengerId > 0 ? (this.player(city.challengerId)?.color ?? 0) : 0,
       grown: city.grown,
+      ruins: city.ruins.map((tile) => ({ x: tile.x, y: tile.y })),
     }))
   }
 
+  clearedTiles(): TileCoord[] {
+    return this.fallen.map((tile) => ({ x: tile.x, y: tile.y }))
+  }
+
   citySights(): CitySight[] {
-    return this.cities.map((city) => ({ ownerId: city.ownerId, ...citySightOrigin(city.layout) }))
+    return this.cities.map((city) => ({ ownerId: city.ownerId, ...citySightOrigin(this.live(city)) }))
   }
 
   nearestUnownedCityTile(playerId: number, from: TileCoord): TileCoord | null {
@@ -134,7 +144,9 @@ export class Game {
     let bestDist = Infinity
     for (const city of this.cities) {
       if (city.ownerId === playerId) continue
-      const center = cityCenter(city.layout)
+      const layout = this.live(city)
+      if (layout.tiles.length === 0) continue
+      const center = cityCenter(layout)
       const dist = (center.x - from.x) ** 2 + (center.y - from.y) ** 2
       if (dist >= bestDist) continue
       bestDist = dist
@@ -144,14 +156,18 @@ export class Game {
   }
 
   creditIncome(playerId: number): number {
-    let cities = 0
     let population = 0
     for (const city of this.cities) {
-      if (city.ownerId !== playerId) continue
-      cities += 1
-      population += city.layout.tiles.length
+      if (city.ownerId !== playerId || this.besieged(city)) continue
+      population += populationOf(city.layout, city.ruins)
     }
-    return CREDIT_PER_CITY * cities + CREDIT_PER_POPULATION * population
+    return CREDIT_PER_POPULATION * population
+  }
+
+  takeYields(): MapPoint[] {
+    const yields = this.yields
+    this.yields = []
+    return yields
   }
 
   hasFinishedFactory(playerId: number): boolean {
@@ -168,8 +184,9 @@ export class Game {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
     if (!owner || type.topSpeed > 0) return false
+    if (type.supply > 0 && this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
     if (!this.footprintFree(tile, type.footprint)) return false
-    const owned = this.cities.filter((city) => city.ownerId === playerId).map((city) => city.layout)
+    const owned = this.cities.filter((city) => city.ownerId === playerId).map((city) => this.live(city))
     if (!footprintNearCity(owned, tile, type.footprint)) return false
     const unit = this.spawn(owner, typeId, tile, 0)
     unit.progress = 0
@@ -262,6 +279,7 @@ export class Game {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
     if (!owner || type.topSpeed <= 0 || !this.hasFinishedFactory(playerId)) return false
+    if (this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
     const queue = this.training.get(playerId) ?? []
     queue.push({ typeId, progress: 0 })
     this.training.set(playerId, queue)
@@ -299,6 +317,7 @@ export class Game {
     const unit = this.owned(playerId, unitId)
     if (!unit) return false
     unit.attackId = null
+    unit.attackPoint = null
     return unit.orderMove(tile, this.pathfinder)
   }
 
@@ -308,21 +327,38 @@ export class Game {
     if (!unit || !target || target.id === unit.id || target.ownerId === unit.ownerId || target.health <= 0) {
       return false
     }
+    unit.attackPoint = null
     unit.attackId = target.id
     unit.step(0, this.pathfinder, this.units)
     return true
   }
 
+  orderAttackGround(playerId: number, unitId: number, tile: TileCoord): boolean {
+    const unit = this.owned(playerId, unitId)
+    if (!unit || unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) return false
+    if (!this.world.inBounds(tile.x, tile.y)) return false
+    const point = { x: tile.x + 0.5, z: tile.y + 0.5 }
+    if (unit.type.topSpeed <= 0 && Math.hypot(point.x - unit.pos.x, point.z - unit.pos.z) > unit.type.weapon.range) {
+      return false
+    }
+    unit.attackId = null
+    unit.attackPoint = point
+    unit.step(0, this.pathfinder, this.units)
+    return true
+  }
+
   tick(dt: number): ShotEvent[] {
-    for (const player of this.players.values()) player.credits += this.creditIncome(player.id) * dt
+    this.advanceIncome(dt)
     this.advanceBuilds(dt)
     for (const unit of this.units) {
       if (unit.health <= 0) continue
       unit.step(dt, this.pathfinder, this.units)
     }
     this.time += dt
-    const shots = engage(this.units, dt, this.time, this.impacts, this.citySights())
-    applyImpacts(this.units, this.impacts, this.time)
+    const blasts: Blast[] = []
+    const shots = engage(this.units, dt, this.time, this.impacts, this.citySights(), blasts, this.buildingTargets())
+    applyImpacts(this.units, this.impacts, this.time, blasts)
+    this.blast(blasts)
     this.removeDead()
     this.advanceCaptures(dt)
     this.advanceGrowth(dt)
@@ -386,6 +422,56 @@ export class Game {
     return terrain
   }
 
+  private supplyUsed(playerId: number): number {
+    let used = 0
+    for (const unit of this.units) {
+      if (unit.ownerId !== playerId || unit.health <= 0) continue
+      used += unit.type.supply
+    }
+    for (const job of this.training.get(playerId) ?? []) used += UNIT_TYPES[job.typeId].supply
+    return used
+  }
+
+  private population(playerId: number): number {
+    let people = 0
+    for (const city of this.cities) {
+      if (city.ownerId !== playerId) continue
+      people += populationOf(city.layout, city.ruins)
+    }
+    return people
+  }
+
+  private besieged(city: CityRuntime): boolean {
+    const layout = this.live(city)
+    const reach = SIEGE_RANGE * SIEGE_RANGE
+    for (const unit of this.units) {
+      if (unit.health <= 0 || unit.ownerId === 0 || unit.ownerId === city.ownerId) continue
+      for (const tile of layout.tiles) {
+        const dx = unit.pos.x - (tile.x + 0.5)
+        const dz = unit.pos.z - (tile.y + 0.5)
+        if (dx * dx + dz * dz <= reach) return true
+      }
+    }
+    return false
+  }
+
+  private advanceIncome(dt: number) {
+    this.incomeClock += dt
+    while (this.incomeClock >= INCOME_SECONDS) {
+      this.incomeClock -= INCOME_SECONDS
+      for (const player of this.players.values()) {
+        for (const city of this.cities) {
+          if (city.ownerId !== player.id || this.besieged(city)) continue
+          const people = populationOf(city.layout, city.ruins)
+          if (people <= 0) continue
+          player.credits += CREDIT_PER_POPULATION * people
+          const origin = citySightOrigin(this.live(city))
+          this.yields.push({ x: origin.x, y: origin.z })
+        }
+      }
+    }
+  }
+
   private advanceGrowth(dt: number) {
     this.growClock += dt
     if (this.growClock < CITY_GROW_SECONDS) return
@@ -412,45 +498,167 @@ export class Game {
   private ownerPresent(city: CityRuntime): boolean {
     for (const unit of this.units) {
       if (unit.health <= 0 || unit.type.topSpeed <= 0 || unit.ownerId !== city.ownerId) continue
-      if (cityHolds(city.layout, unit.pos.x, unit.pos.z)) return true
+      if (cityHolds(this.live(city), unit.pos.x, unit.pos.z)) return true
     }
+    return false
+  }
+
+  private blast(blasts: readonly Blast[]) {
+    if (blasts.length === 0) return
+    let blocks = false
+    for (const blast of blasts) {
+      if (this.damageBuildings(blast)) blocks = true
+      this.damageStreets(blast)
+      this.fellTrees(blast)
+    }
+    if (blocks) this.syncBlocks()
+  }
+
+  private damageBuildings(blast: Blast): boolean {
+    let fell = false
+    for (const city of this.cities) {
+      if (city.ownerId === 0) continue
+      for (const building of city.layout.buildings) {
+        if (building.keep || this.isRuin(city, building.x, building.y)) continue
+        const dist = Math.hypot(building.x + 0.5 - blast.x, building.y + 0.5 - blast.z)
+        const dealt = blast.splash > 0 ? blast.damage * Math.max(0, 1 - dist / blast.splash) : 0
+        if (dealt <= 0) continue
+        const id = `${building.x},${building.y}`
+        const hp = (city.integrity.get(id) ?? BUILDING_HP) - dealt
+        if (hp > 0) {
+          city.integrity.set(id, hp)
+          continue
+        }
+        city.integrity.delete(id)
+        city.ruins.push({ x: building.x, y: building.y })
+        for (const street of lostStreets(city.layout, city.ruins)) city.ruins.push(street)
+        if (!this.hasDistrict(city)) {
+          city.ownerId = 0
+          city.progress = 0
+          city.challengerId = 0
+        }
+        fell = true
+      }
+    }
+    return fell
+  }
+
+  private damageStreets(blast: Blast) {
+    for (const city of this.cities) {
+      if (city.ownerId === 0) continue
+      const seen = new Set<string>()
+      for (const street of city.layout.streets) {
+        if (street.kind >= StreetKind.Lamp) continue
+        const id = `${street.x},${street.y}`
+        if (seen.has(id) || this.isRuin(city, street.x, street.y)) continue
+        seen.add(id)
+        const dist = Math.hypot(street.x + 0.5 - blast.x, street.y + 0.5 - blast.z)
+        const dealt = blast.splash > 0 ? blast.damage * Math.max(0, 1 - dist / blast.splash) : 0
+        if (dealt <= 0) continue
+        const hp = (city.integrity.get(id) ?? STREET_HP) - dealt
+        if (hp > 0) {
+          city.integrity.set(id, hp)
+          continue
+        }
+        city.integrity.delete(id)
+        city.ruins.push({ x: street.x, y: street.y })
+        for (const extra of lostStreets(city.layout, city.ruins)) city.ruins.push(extra)
+      }
+    }
+  }
+
+  private fellTrees(blast: Blast) {
+    if (blast.splash <= 0) return
+    const reach = Math.ceil(blast.splash)
+    const cx = Math.floor(blast.x)
+    const cy = Math.floor(blast.z)
+    for (let y = cy - reach; y <= cy + reach; y++) {
+      for (let x = cx - reach; x <= cx + reach; x++) {
+        if (!this.world.inBounds(x, y) || this.world.terrainAt(x, y) !== Terrain.Tree) continue
+        if (Math.hypot(x + 0.5 - blast.x, y + 0.5 - blast.z) > blast.splash) continue
+        this.world.setTerrain(x, y, Terrain.Land)
+        this.fallen.push({ x, y })
+      }
+    }
+  }
+
+  private live(city: CityRuntime): CityLayout {
+    return settledCity(city.layout, city.ruins)
+  }
+
+  private buildingTargets() {
+    const targets: { x: number; z: number; ownerId: number }[] = []
+    for (const city of this.cities) {
+      for (const building of city.layout.buildings) {
+        if (city.ownerId === 0 || building.keep || this.isRuin(city, building.x, building.y)) continue
+        targets.push({ x: building.x + 0.5, z: building.y + 0.5, ownerId: city.ownerId })
+      }
+    }
+    return targets
+  }
+
+  private hasDistrict(city: CityRuntime): boolean {
+    for (const building of city.layout.buildings) {
+      if (building.keep || this.isRuin(city, building.x, building.y)) continue
+      return true
+    }
+    return false
+  }
+
+  private isRuin(city: CityRuntime, x: number, y: number): boolean {
+    for (const ruin of city.ruins) if (ruin.x === x && ruin.y === y) return true
     return false
   }
 
   private syncBlocks() {
     this.pathfinder.clearBlocked()
     for (const city of this.cities) {
-      for (const building of city.layout.buildings) this.pathfinder.setBlocked(building.x, building.y, true)
+      for (const building of this.live(city).buildings) {
+        this.pathfinder.setBlocked(building.x, building.y, true)
+      }
     }
   }
 
   private advanceCaptures(dt: number) {
     for (const city of this.cities) {
-      const counts = new Map<number, number>()
+      const weight = new Map<number, number>()
       for (const unit of this.units) {
-        if (unit.health <= 0 || unit.type.topSpeed <= 0) continue
-        if (!cityHolds(city.layout, unit.pos.x, unit.pos.z)) continue
-        counts.set(unit.ownerId, (counts.get(unit.ownerId) ?? 0) + 1)
+        if (unit.health <= 0 || unit.progress < 1 || unit.type.supply <= 0) continue
+        if (!cityHolds(this.live(city), unit.pos.x, unit.pos.z)) continue
+        weight.set(unit.ownerId, (weight.get(unit.ownerId) ?? 0) + unit.type.supply)
       }
-      if (counts.size > 1) continue
-      if (counts.size === 0 || counts.has(city.ownerId)) {
-        city.progress = Math.max(0, city.progress - dt / CAPTURE_DRAIN)
-        if (city.progress === 0) city.challengerId = 0
+      const people = populationOf(this.live(city), city.ruins)
+      const challengerPresent = city.challengerId > 0 && (weight.get(city.challengerId) ?? 0) > 0
+      if (challengerPresent) {
+        if (weight.size > 1) continue
+        this.pressCapture(city, city.challengerId, weight.get(city.challengerId) ?? 1, people, dt)
         continue
       }
-      const holder = counts.keys().next().value
-      if (holder === undefined) continue
-      if (city.challengerId !== holder) {
-        city.challengerId = holder
-        city.progress = 0
+      if (city.progress > 0) {
+        let pressure = 0
+        for (const supply of weight.values()) pressure += supply
+        city.progress = Math.max(0, city.progress - dt / captureFade(pressure, people))
+        if (city.progress > 0) continue
+        city.challengerId = 0
       }
-      const duration = captureDuration(city.layout.span, city.ownerId === 0)
-      city.progress += (dt * captureSpeed(counts.get(holder) ?? 1)) / duration
-      if (city.progress < 1) continue
-      city.ownerId = holder
-      city.progress = 0
-      city.challengerId = 0
+      if (weight.size !== 1) continue
+      const holder = weight.keys().next().value
+      if (holder === undefined || holder === city.ownerId) continue
+      this.pressCapture(city, holder, weight.get(holder) ?? 1, people, dt)
     }
+  }
+
+  private pressCapture(city: CityRuntime, holder: number, supply: number, population: number, dt: number) {
+    if (city.challengerId !== holder) {
+      city.challengerId = holder
+      city.progress = 0
+    }
+    const duration = captureDuration(population)
+    city.progress += (dt * supply) / duration
+    if (city.progress < 1) return
+    city.ownerId = holder
+    city.progress = 0
+    city.challengerId = 0
   }
 
   private advanceBuilds(dt: number) {

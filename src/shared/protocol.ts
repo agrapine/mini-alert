@@ -10,6 +10,7 @@ export const enum ClientMessageKind {
   CancelBuilding = 6,
   SetPrimary = 7,
   SetRally = 8,
+  OrderAttackGround = 9,
 }
 
 export const enum ServerMessageKind {
@@ -34,6 +35,12 @@ export type OrderAttack = {
   kind: ClientMessageKind.OrderAttack
   unitId: number
   targetId: number
+}
+
+export type OrderAttackGround = {
+  kind: ClientMessageKind.OrderAttackGround
+  unitId: number
+  tile: TileCoord
 }
 
 export type PlaceBuilding = {
@@ -62,7 +69,16 @@ export type SetRally = {
   tile: TileCoord
 }
 
-export type ClientMessage = OrderMove | OrderSpawn | OrderAttack | PlaceBuilding | CancelSpawn | CancelBuilding | SetPrimary | SetRally
+export type ClientMessage =
+  | OrderMove
+  | OrderSpawn
+  | OrderAttack
+  | OrderAttackGround
+  | PlaceBuilding
+  | CancelSpawn
+  | CancelBuilding
+  | SetPrimary
+  | SetRally
 
 export type Welcome = {
   kind: ServerMessageKind.Welcome
@@ -126,6 +142,7 @@ export type CityState = {
   challengerId: number
   challengerColor: number
   grown: number
+  ruins: TileCoord[]
 }
 
 export type UnitsSnapshot = {
@@ -134,6 +151,8 @@ export type UnitsSnapshot = {
   credits: number
   training: TrainJob[]
   cities: CityState[]
+  cleared: TileCoord[]
+  yields: MapPoint[]
   primaryFactoryId: number
   rally: TileCoord | null
 }

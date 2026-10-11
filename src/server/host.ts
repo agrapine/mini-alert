@@ -4,6 +4,7 @@ import {
   ServerMessageKind,
   type ClientMessage,
   type ClientPort,
+  type MapPoint,
   type ServerMessage,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
@@ -31,6 +32,7 @@ export type RemotePlay = {
 export class ServerHost {
   private readonly sessions: Session[] = []
   private ais: AiPlayer[]
+  private stopped = false
 
   constructor(
     readonly game: Game,
@@ -84,6 +86,12 @@ export class ServerHost {
     for (const ai of this.ais) ai.setPace(pace)
   }
 
+  dispose() {
+    this.stopped = true
+    this.ais = []
+    this.sessions.length = 0
+  }
+
   silence(playerId: number) {
     this.ais = this.ais.filter((ai) => ai.playerId !== playerId)
   }
@@ -94,15 +102,17 @@ export class ServerHost {
   }
 
   tick(dt: number) {
+    if (this.stopped) return
     for (const ai of this.ais) ai.update(dt)
     const shots = this.game.tick(dt)
+    const yields = this.game.takeYields()
     const sights = this.game.citySights()
     const living = this.game.unitSnapshots()
     const deaths = this.game.takeDeaths()
     const all = deaths.length > 0 ? living.concat(deaths) : living
     for (const session of this.sessions) {
       const units = unitsForPlayer(all, session.playerId, sights)
-      session.send(this.unitsMessage(session, units))
+      session.send(this.unitsMessage(session, units, yields))
       const seen = shotsForPlayer(shots, living, session.playerId, sights)
       if (seen.length > 0) session.send({ kind: ServerMessageKind.Shots, shots: seen })
     }
@@ -115,6 +125,8 @@ export class ServerHost {
       this.game.orderMove(playerId, message.unitId, message.tile)
     } else if (message.kind === ClientMessageKind.OrderAttack) {
       this.game.orderAttack(playerId, message.unitId, message.targetId)
+    } else if (message.kind === ClientMessageKind.OrderAttackGround) {
+      this.game.orderAttackGround(playerId, message.unitId, message.tile)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.CancelSpawn) {
@@ -145,13 +157,15 @@ export class ServerHost {
     session.send(this.unitsMessage(session, units))
   }
 
-  private unitsMessage(session: Session, units: ReturnType<Game['unitSnapshots']>) {
+  private unitsMessage(session: Session, units: ReturnType<Game['unitSnapshots']>, yields: MapPoint[] = []) {
     return {
       kind: ServerMessageKind.Units as const,
       units,
       credits: this.creditsFor(session.playerId),
       training: this.game.trainingFor(session.playerId),
       cities: this.game.cityStates(),
+      cleared: this.game.clearedTiles(),
+      yields,
       primaryFactoryId: this.game.primaryFactory(session.playerId),
       rally: this.game.rally(session.playerId),
     }

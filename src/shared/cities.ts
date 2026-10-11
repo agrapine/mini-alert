@@ -2,12 +2,15 @@ import type { MapPoint } from './protocol.ts'
 import { isWalkableTerrain, type TileCoord } from './tiles.ts'
 
 export const NEUTRAL_CITY = 0xffffff
-export const CAPTURE_DRAIN = 2
+export const CAPTURE_DRAIN = 60
+export const CAPTURE_PER_POP = 5
 export const CITY_GROW_SECONDS = 4
 export const STREET_REACH = 4
 export const STRUCTURE_RANGE = 8
-export const CAPTURE_SPEED_CAP = 5
 export const CITY_SIGHT = 10
+export const SIEGE_RANGE = 6
+export const BUILDING_HP = 120
+export const STREET_HP = 60
 
 export const enum StreetKind {
   Straight = 0,
@@ -27,6 +30,7 @@ export type CityBuilding = {
   y: number
   model: number
   yaw: number
+  keep: boolean
 }
 
 export type CityStreet = {
@@ -48,13 +52,13 @@ export type CityLayout = {
   streets: CityStreet[]
 }
 
-export function captureDuration(span: number, neutral: boolean): number {
-  const base = (4 + 2 * span) * 10
-  return neutral ? base : base * 2.5
+export function captureDuration(population: number): number {
+  return Math.max(1, population) * CAPTURE_PER_POP
 }
 
-export function captureSpeed(units: number): number {
-  return Math.min(CAPTURE_SPEED_CAP, Math.max(1, units))
+export function captureFade(supply: number, population: number): number {
+  if (supply <= 0) return CAPTURE_DRAIN
+  return captureDuration(population) / supply
 }
 
 export function footprintNearCity(
@@ -82,6 +86,52 @@ export function footprintNearCity(
   return footprint > 0
 }
 
+export function settledCity(layout: CityLayout, ruins: readonly TileCoord[] = []): CityLayout {
+  if (ruins.length === 0) return layout
+  const gone = new Set(ruins.map((tile) => key(tile.x, tile.y)))
+  const buildings = layout.buildings.filter((building) => !gone.has(key(building.x, building.y)))
+  const living = buildings.map((building) => ({ x: building.x, y: building.y, keep: building.keep }))
+  const roads = roadTiles(layout).filter((road) => {
+    if (gone.has(key(road.x, road.y))) return false
+    return distanceToBuilding(road, living) <= STREET_REACH
+  })
+  return compose(roads, buildings, layout.span, layout.seed)
+}
+
+export function lostStreets(layout: CityLayout, ruins: readonly TileCoord[]): TileCoord[] {
+  const kept = new Set<number>()
+  for (const street of settledCity(layout, ruins).streets) {
+    if (street.kind >= StreetKind.Lamp) continue
+    kept.add(key(street.x, street.y))
+  }
+  const gone = new Set(ruins.map((tile) => key(tile.x, tile.y)))
+  const lost: TileCoord[] = []
+  const seen = new Set<number>()
+  for (const street of layout.streets) {
+    if (street.kind >= StreetKind.Lamp) continue
+    const id = key(street.x, street.y)
+    if (seen.has(id) || kept.has(id) || gone.has(id)) continue
+    seen.add(id)
+    lost.push({ x: street.x, y: street.y })
+  }
+  return lost
+}
+
+export function populationOf(city: CityLayout, ruins: readonly TileCoord[] = []): number {
+  let count = 0
+  for (const building of city.buildings) {
+    let ruined = false
+    for (const ruin of ruins) {
+      if (ruin.x === building.x && ruin.y === building.y) {
+        ruined = true
+        break
+      }
+    }
+    if (!ruined) count += 1
+  }
+  return count
+}
+
 export function cityContains(city: CityLayout, x: number, y: number): boolean {
   const ix = Math.floor(x)
   const iy = Math.floor(y)
@@ -91,19 +141,13 @@ export function cityContains(city: CityLayout, x: number, y: number): boolean {
   return false
 }
 
-const CAPTURE_PAD = 1
-
 export function cityHolds(city: CityLayout, x: number, z: number): boolean {
-  const tx = Math.floor(x)
-  const tz = Math.floor(z)
-  for (const tile of city.tiles) {
-    if (Math.max(Math.abs(tile.x - tx), Math.abs(tile.y - tz)) <= CAPTURE_PAD) return true
-  }
-  return false
+  return cityContains(city, x, z)
 }
 
 export function cityCenter(city: CityLayout): TileCoord {
   const pool = city.streets.length > 0 ? city.streets : city.tiles
+  if (pool.length === 0) return { x: city.x, y: city.y }
   let sx = 0
   let sy = 0
   for (const tile of pool) {
@@ -161,7 +205,7 @@ export function growCity(
   height: number,
 ): CityLayout | null {
   const roads = roadTiles(city)
-  const buildings = city.buildings.map((building) => ({ x: building.x, y: building.y }))
+  const buildings = city.buildings.map((building) => ({ x: building.x, y: building.y, keep: building.keep }))
   const roadSet = new Set<number>()
   const buildingSet = new Set<number>()
   for (const road of roads) roadSet.add(key(road.x, road.y))
@@ -230,6 +274,7 @@ function addStreet(
       const x = road.x + DIR_X[dir]
       const y = road.y + DIR_Y[dir]
       if (!openLand(x, y, roadSet, buildingSet, terrain, width, height)) continue
+      if (!canPlaceStreet(x, y, roadSet)) continue
       const id = key(x, y)
       roadSet.add(id)
       const hits = opensOntoBuilding(x, y, roadSet, buildingSet, city.seed)
@@ -238,7 +283,7 @@ function addStreet(
       if (Math.max(reach, distanceToBuilding({ x, y }, buildings)) > STREET_REACH) continue
       const extend = (openings & (1 << dir)) !== 0
       const noise = (hash(x, y, salt) % 1000) / 1000
-      const score = noise + (extend ? 0.4 : 0)
+      const score = noise + (extend ? 2 : 0)
       if (score <= bestScore) continue
       bestScore = score
       best = { x, y }
@@ -293,7 +338,12 @@ function addBuilding(
   return compose(roads, buildings.concat(best), city.span, city.seed)
 }
 
-function compose(roads: readonly TileCoord[], buildings: readonly TileCoord[], span: number, seed: number): CityLayout {
+function compose(
+  roads: readonly TileCoord[],
+  buildings: readonly { x: number; y: number; keep?: boolean }[],
+  span: number,
+  seed: number,
+): CityLayout {
   const roadSet = new Set<number>()
   for (const road of roads) roadSet.add(key(road.x, road.y))
   const streets: CityStreet[] = []
@@ -323,12 +373,19 @@ function compose(roads: readonly TileCoord[], buildings: readonly TileCoord[], s
       signaled = true
     }
   }
-  const built = buildings.map((tile) => ({
-    x: tile.x,
-    y: tile.y,
-    model: hash(tile.x, tile.y, seed + 3) % 8,
-    yaw: hash(tile.x, tile.y, seed + 9) % 4,
-  }))
+  let marked = false
+  const built = buildings.map((tile) => {
+    const keep = tile.keep === true
+    if (keep) marked = true
+    return {
+      x: tile.x,
+      y: tile.y,
+      model: hash(tile.x, tile.y, seed + 3) % 8,
+      yaw: hash(tile.x, tile.y, seed + 9) % 4,
+      keep,
+    }
+  })
+  if (!marked && built.length > 0) built[0].keep = true
   let minX = roads[0]?.x ?? 0
   let minY = roads[0]?.y ?? 0
   for (const tile of roads.concat(buildings)) {
@@ -425,6 +482,34 @@ function distanceToBuilding(road: TileCoord, buildings: readonly TileCoord[]): n
     if (dist < best) best = dist
   }
   return best
+}
+
+function canPlaceStreet(x: number, y: number, roadSet: Set<number>): boolean {
+  const touch = orthogonalStreets(x, y, roadSet)
+  if (touch.length !== 1) return false
+  const parent = touch[0]
+  if (orthogonalStreets(parent.x, parent.y, roadSet).length >= 3) return false
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue
+      const nx = x + dx
+      const ny = y + dy
+      if (!roadSet.has(key(nx, ny))) continue
+      if (nx === parent.x && ny === parent.y) continue
+      if (Math.abs(nx - parent.x) + Math.abs(ny - parent.y) !== 1) return false
+    }
+  }
+  return true
+}
+
+function orthogonalStreets(x: number, y: number, roadSet: Set<number>): TileCoord[] {
+  const found: TileCoord[] = []
+  for (let dir = 0; dir < 4; dir++) {
+    const nx = x + DIR_X[dir]
+    const ny = y + DIR_Y[dir]
+    if (roadSet.has(key(nx, ny))) found.push({ x: nx, y: ny })
+  }
+  return found
 }
 
 function neighborMask(x: number, y: number, roadSet: Set<number>): number {

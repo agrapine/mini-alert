@@ -2,17 +2,18 @@ import changelog from '../../changelog.md?raw'
 import { version } from '../../package.json'
 
 const SEEN_VERSION = 'rts.seen-version'
+const MUSIC_KEY = 'rts.music'
 
 const HELP = `# Shortcuts
 
 - **Select** — click one of your units
 - **Select several** — drag a box around them
 - **Move** — with units selected, click open ground
-- **Attack** — click an enemy. Units also fire at enemies they can see
+- **Attack** — click an enemy. Hold Ctrl or ⌘ and click the ground to shell that spot. Units also fire at enemies they can see
 - **Build** — choose Factory or Turret, then click open ground beside a city you own. Right-click cancels
 - **Primary factory** — select a factory, then click it again. New units come out of that one. A star marks it
 - **Waypoint** — with a factory selected, click the ground. Finished units move there
-- **Ranges** — hold Ctrl or ⌘ to show attack range and sight
+- **Ranges** — hold Ctrl or ⌘ with one unit selected to show its attack range and sight
 - **Pan** — \`WASD\`, arrow keys, middle-drag, or hold Space and drag
 - **Turn** — \`Q\` and \`E\` rotate the camera 45°
 - **Zoom** — mouse wheel
@@ -22,19 +23,19 @@ const HELP = `# Shortcuts
 
 ## Credits
 
-You start with 10,000. Income is **6** per city you hold, plus **1** per population tile, paid continuously.
+You start with 10,000. Every 10 seconds, each city you hold pays **1** per building. A city pays nothing while an enemy unit is nearby.
 
 ## Cities
 
-Move a unit onto a city and hold it to capture. A ring shows progress. Neutral cities fall faster than ones another commander already holds. If both sides stand on a city, the capture pauses. Leave, and the progress drains away.
+Move a unit onto any city tile, including a street, and hold it to capture. A ring shows progress. A city resists for five seconds per building. Each unit wears that down by its unit count each second, so a scout takes five seconds on a one-building city and a heavy tank takes a quarter of that. If both sides stand on a city, the capture pauses. Leave, and the progress fades slowly until it is gone. The owner or another commander standing there pushes it back at the same rate they would capture.
 
-Cities grow on their own, adding streets and buildings. Population is the number of tiles in the city, and a larger city pays more.
+Cities grow on their own, adding streets and buildings. Each city has a hall that stays neutral and cannot be destroyed. Population is the number of buildings still standing, including the hall. Your army cannot grow past that population. Scouts count as 1, medium tanks and turrets as 2, artillery as 3, and heavy tanks as 4. The unit count turns red when it is over, and training stops. Guns and shells bring down the other buildings. When the last of those falls, the city is neutral again. A street more than four tiles from a standing building comes up with it.
 
 ## Building
 
 Factories and turrets take time to finish, and they can only be placed beside a city you own. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Each finished factory adds 25% to that training speed. Credits are spent while that unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
 
-Vehicles and turrets shoot enemies in sight. Shells splash. Artillery reaches farther and is easy to lose. Scouts are fast and light.
+Vehicles and turrets shoot enemies and buildings of a city another commander holds. They leave neutral cities alone. Shells splash, knock down trees, and bring down those buildings and streets. Artillery reaches farther and is easy to lose. Scouts are fast and light.
 
 ## Sight
 
@@ -48,6 +49,12 @@ export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
   const title = document.querySelector<HTMLElement>('#sheet-title')
   const body = document.querySelector<HTMLElement>('#sheet-body')
   if (!bar || !menu || !sheet || !title || !body) return
+
+  const musicToggle = bar.querySelector<HTMLElement>('[data-toggle="music"]')
+  if (musicToggle && !musicOn()) {
+    setPressed(musicToggle, false)
+    actions.onMusic?.(false)
+  }
 
   const closeMenu = () => menu.classList.remove('open')
 
@@ -83,10 +90,11 @@ export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
     const toggle = target.closest<HTMLElement>('[data-toggle]')
     if (!toggle) return
     const on = toggle.getAttribute('aria-pressed') !== 'true'
-    toggle.setAttribute('aria-pressed', on ? 'true' : 'false')
-    const mark = toggle.querySelector('.mark')
-    if (mark) mark.textContent = on ? 'On' : 'Off'
-    if (toggle.dataset.toggle === 'music') actions.onMusic?.(on)
+    setPressed(toggle, on)
+    if (toggle.dataset.toggle === 'music') {
+      rememberMusic(on)
+      actions.onMusic?.(on)
+    }
   })
 
   sheet.addEventListener('click', (event) => {
@@ -108,6 +116,28 @@ export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
   })
 
   if (seenVersion() !== version) openSheet('Changelog', changelog)
+}
+
+export function musicOn(store: Storage = localStorage): boolean {
+  try {
+    return store.getItem(MUSIC_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+
+export function rememberMusic(on: boolean, store: Storage = localStorage) {
+  try {
+    store.setItem(MUSIC_KEY, on ? 'on' : 'off')
+  } catch {
+    // Storage can be blocked. The toggle still applies for this visit.
+  }
+}
+
+function setPressed(toggle: HTMLElement, on: boolean) {
+  toggle.setAttribute('aria-pressed', on ? 'true' : 'false')
+  const mark = toggle.querySelector('.mark')
+  if (mark) mark.textContent = on ? 'On' : 'Off'
 }
 
 function seenVersion(): string | null {

@@ -32,6 +32,7 @@ export type LobbyActions = {
   start(): void
   setAiPace(pace: number): void
   chat(text: string): void
+  destroyGame(id: number): void
 }
 
 export class LobbyView {
@@ -62,6 +63,7 @@ export class LobbyView {
   constructor(
     root: HTMLElement,
     private readonly actions: LobbyActions,
+    private readonly admin = false,
   ) {
     root.className = 'lobby-screen'
     this.status = document.createElement('p')
@@ -71,13 +73,22 @@ export class LobbyView {
     const head = document.createElement('header')
     head.className = 'lobby-head'
     this.title = document.createElement('h1')
+    const titleRow = document.createElement('div')
+    titleRow.className = 'lobby-title'
+    titleRow.append(this.title)
+    if (admin) {
+      const mark = document.createElement('span')
+      mark.className = 'admin-mark'
+      mark.textContent = 'Admin'
+      titleRow.append(mark)
+    }
     this.nameInput = document.createElement('input')
     this.nameInput.type = 'text'
     this.nameInput.maxLength = 16
     this.nameInput.spellcheck = false
     this.nameInput.ariaLabel = 'Name'
     this.nameInput.addEventListener('change', () => this.actions.setName(this.nameInput.value))
-    head.append(this.title, this.nameInput)
+    head.append(titleRow, this.nameInput)
 
     const columns = document.createElement('div')
     columns.className = 'lobby-columns'
@@ -268,27 +279,78 @@ export class LobbyView {
       this.main.append(empty)
       return
     }
+    const unstarted: GameCard[] = []
+    const pending: GameCard[] = []
+    const playing: GameCard[] = []
     for (const game of games) {
-      const row = document.createElement('article')
-      row.className = 'game-row'
-      const heading = document.createElement('h3')
-      const state = game.status === RoomStatus.Playing ? 'in play' : 'open'
-      heading.textContent = `Game ${game.id} · ${game.mapSize} · ${state}`
-      const slots = document.createElement('p')
-      slots.textContent = game.slots.map(slotLabel).join(' · ')
-      row.append(heading, slots)
-      if (game.waiting.length > 0) {
-        const waiting = document.createElement('p')
-        waiting.textContent = `Waiting: ${game.waiting.join(', ')}`
-        row.append(waiting)
-      }
-      const join = document.createElement('button')
-      join.type = 'button'
-      join.textContent = game.status === RoomStatus.Playing ? 'Spectate' : 'Join'
-      join.addEventListener('click', () => this.actions.joinGame(game.id))
-      row.append(join)
-      this.main.append(row)
+      const phase = gamePhase(game)
+      if (phase === 'live') playing.push(game)
+      else if (phase === 'pending') pending.push(game)
+      else unstarted.push(game)
     }
+    this.appendGameSection('Unstarted', 'Nobody seated yet', unstarted)
+    this.appendGameSection('Pending', 'Seated, waiting to start', pending)
+    this.appendGameSection('In play', 'Already going', playing)
+  }
+
+  private appendGameSection(title: string, hint: string, games: readonly GameCard[]) {
+    if (games.length === 0) return
+    const section = document.createElement('section')
+    section.className = 'game-section'
+    const heading = document.createElement('h2')
+    heading.textContent = `${title} · ${games.length}`
+    const note = document.createElement('p')
+    note.className = 'game-section-note'
+    note.textContent = hint
+    section.append(heading, note)
+    for (const game of games) section.append(this.gameRow(game))
+    this.main.append(section)
+  }
+
+  private gameRow(game: GameCard): HTMLElement {
+    const phase = gamePhase(game)
+    const row = document.createElement('article')
+    row.className = `game-row ${phase}`
+    const head = document.createElement('header')
+    head.className = 'game-row-head'
+    const heading = document.createElement('h3')
+    heading.textContent = `Game ${game.id}`
+    const badge = document.createElement('span')
+    badge.className = 'game-badge'
+    badge.textContent = phaseLabel(phase)
+    head.append(heading, badge)
+    const meta = document.createElement('p')
+    meta.className = 'game-meta'
+    meta.textContent = occupancy(game)
+    const slots = document.createElement('p')
+    slots.textContent = game.slots.map(slotLabel).join(' · ')
+    row.append(head, meta, slots)
+    if (game.waiting.length > 0) {
+      const waiting = document.createElement('p')
+      waiting.textContent = `Waiting: ${game.waiting.join(', ')}`
+      row.append(waiting)
+    }
+    const actions = document.createElement('div')
+    actions.className = 'game-actions'
+    const join = document.createElement('button')
+    join.type = 'button'
+    join.textContent = phase === 'live' ? 'Spectate' : 'Join'
+    join.addEventListener('click', () => this.actions.joinGame(game.id))
+    actions.append(join)
+    if (this.admin) {
+      const destroy = document.createElement('button')
+      destroy.type = 'button'
+      destroy.className = 'lobby-destroy'
+      destroy.textContent = 'Destroy'
+      destroy.addEventListener('click', () => {
+        const ok = window.confirm(`Destroy game ${game.id}? Everyone in it returns to the waiting room.`)
+        if (!ok) return
+        this.actions.destroyGame(game.id)
+      })
+      actions.append(destroy)
+    }
+    row.append(actions)
+    return row
   }
 
   private fillSlots(state: GameLobbyState, host: boolean) {
@@ -323,13 +385,16 @@ export class LobbyView {
     state.slots.forEach((slot, index) => {
       const row = document.createElement('div')
       row.className = 'slot-row'
+      const number = document.createElement('span')
+      number.className = 'slot-index'
+      number.textContent = String(index + 1)
       const swatch = document.createElement('span')
       swatch.className = 'swatch'
       swatch.style.background = cssColor(slot.color)
       const label = document.createElement('span')
       label.className = 'slot-name'
       label.textContent = slot.kind === SlotKind.Open ? 'Open' : slot.name
-      row.append(swatch, label)
+      row.append(number, swatch, label)
       if (slot.kind === SlotKind.Open) {
         row.append(slotButton('Sit', () => this.actions.takeSlot(index)))
         row.append(slotButton('AI', () => this.actions.setSlotAi(index)))
@@ -351,6 +416,7 @@ export class LobbyView {
     if (host) {
       const start = document.createElement('button')
       start.type = 'button'
+      start.className = 'lobby-start'
       start.textContent = 'Start'
       start.disabled = !state.slots.some((slot) => slot.kind === SlotKind.Human)
       start.addEventListener('click', () => this.actions.start())
@@ -391,6 +457,38 @@ function slotButton(label: string, onClick: () => void): HTMLButtonElement {
   return button
 }
 
+type GamePhase = 'unstarted' | 'pending' | 'live'
+
+function gamePhase(game: GameCard): GamePhase {
+  if (game.status === RoomStatus.Playing) return 'live'
+  for (const slot of game.slots) {
+    if (slot.kind === SlotKind.Human) return 'pending'
+  }
+  return 'unstarted'
+}
+
+function phaseLabel(phase: GamePhase): string {
+  if (phase === 'live') return 'In play'
+  if (phase === 'pending') return 'Pending'
+  return 'Unstarted'
+}
+
+function occupancy(game: GameCard): string {
+  let humans = 0
+  let ais = 0
+  let open = 0
+  for (const slot of game.slots) {
+    if (slot.kind === SlotKind.Human) humans += 1
+    else if (slot.kind === SlotKind.Ai) ais += 1
+    else open += 1
+  }
+  const parts = [String(game.mapSize)]
+  if (humans > 0) parts.push(humans === 1 ? '1 seated' : `${humans} seated`)
+  if (ais > 0) parts.push(ais === 1 ? '1 AI' : `${ais} AI`)
+  if (open > 0) parts.push(open === 1 ? '1 open' : `${open} open`)
+  return parts.join(' · ')
+}
+
 function slotLabel(slot: SlotView): string {
   if (slot.kind === SlotKind.Ai) return 'AI'
   if (slot.kind === SlotKind.Human) return slot.name
@@ -405,8 +503,9 @@ function drawStarts(svg: SVGSVGElement, width: number, height: number, starts: r
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.replaceChildren()
   if (width <= 0 || height <= 0) return
-  const radius = Math.max(width, height) * 0.018
-  const ring = Math.max(width, height) * 0.004
+  const span = Math.max(width, height)
+  const radius = span * 0.032
+  const ring = span * 0.004
   for (let i = 0; i < starts.length; i++) {
     const start = starts[i]
     const slot = slots[i]
@@ -419,10 +518,23 @@ function drawStarts(svg: SVGSVGElement, width: number, height: number, starts: r
       circle.setAttribute('fill', cssColor(slot.color))
       circle.setAttribute('stroke', '#14160f')
     } else {
-      circle.setAttribute('fill', 'rgba(20, 22, 15, 0.45)')
+      circle.setAttribute('fill', 'rgba(20, 22, 15, 0.72)')
       circle.setAttribute('stroke', '#f6f1dc')
     }
-    svg.append(circle)
+    const number = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    number.setAttribute('x', String(start.x))
+    number.setAttribute('y', String(start.y))
+    number.setAttribute('text-anchor', 'middle')
+    number.setAttribute('dominant-baseline', 'central')
+    number.setAttribute('fill', '#f6f1dc')
+    number.setAttribute('stroke', '#14160f')
+    number.setAttribute('stroke-width', String(ring * 0.7))
+    number.setAttribute('paint-order', 'stroke')
+    number.setAttribute('font-size', String(radius * 1.15))
+    number.setAttribute('font-family', 'ui-sans-serif, system-ui, sans-serif')
+    number.setAttribute('font-weight', '700')
+    number.textContent = String(i + 1)
+    svg.append(circle, number)
   }
 }
 

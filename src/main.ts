@@ -1,4 +1,5 @@
 import './style.css'
+import { adminEnabled } from './client/admin.ts'
 import { Commander } from './client/commander.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
@@ -8,7 +9,7 @@ import { Net } from './client/net.ts'
 import { bindInput } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
-import { layoutCities, projectCity, type CityLayout } from './shared/cities.ts'
+import { layoutCities, populationOf, projectCity, type CityLayout } from './shared/cities.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
 import { ServerMessageKind, type ClientPort, type WorldSnapshot } from './shared/protocol.ts'
 import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UNIT_TYPES, UnitTypeId } from './shared/unit-types.ts'
@@ -77,6 +78,7 @@ document.body.classList.add('lobby')
 window.addEventListener('pointerdown', () => music.resume())
 
 let claimedName: string | null = null
+const admin = adminEnabled(location.search)
 
 const lobby = new LobbyView(lobbyRoot, {
   setName(name) {
@@ -123,9 +125,15 @@ const lobby = new LobbyView(lobbyRoot, {
   chat(text) {
     net.sendLobby({ kind: LobbyClientKind.Chat, text })
   },
-})
+  destroyGame(id) {
+    net.sendLobby({ kind: LobbyClientKind.DestroyGame, gameId: id })
+  },
+}, admin)
 
-net.onOpen = () => lobby.setConnected(true)
+net.onOpen = () => {
+  lobby.setConnected(true)
+  if (admin) net.sendLobby({ kind: LobbyClientKind.ClaimAdmin })
+}
 net.onClose = () => {
   claimedName = null
   lobby.setConnected(false)
@@ -307,6 +315,7 @@ function cssColor(color: number): string {
 }
 
 const credits = document.querySelector<HTMLElement>('#credits')
+const forces = document.querySelector<HTMLElement>('#forces')
 const realm = document.querySelector<HTMLElement>('#realm')
 const spawnBar = document.querySelector<HTMLElement>('#spawn')
 const buildBar = document.querySelector<HTMLElement>('#build')
@@ -350,7 +359,7 @@ function heldCities(): { cities: number; population: number } {
     }
     if (replica.cities[i]?.ownerId !== playerId) continue
     cities += 1
-    population += evolvedCities[i].tiles.length
+    population += populationOf(evolvedCities[i], replica.cities[i]?.ruins ?? [])
   }
   return { cities, population }
 }
@@ -366,24 +375,34 @@ const refreshHud = (dt: number) => {
     credits.classList.toggle('up', gap > 30)
     credits.classList.toggle('down', gap < -30)
   }
+  const held = heldCities()
+  const own = replica.units.filter((unit) => unit.ownerId === replica.playerId && unit.health > 0)
+  let army = 0
+  for (const unit of own) army += UNIT_TYPES[unit.typeId].supply
+  let queued = 0
+  for (const job of replica.training) queued += UNIT_TYPES[job.typeId].supply
+  if (forces) {
+    forces.textContent = `units: ${army}`
+    forces.classList.toggle('over', army > held.population)
+  }
   if (realm) {
-    const held = heldCities()
     const label = held.cities === 1 ? 'city' : 'cities'
     realm.textContent = `${held.cities} ${label} · pop ${held.population}`
   }
-  const own = replica.units.filter((unit) => unit.ownerId === replica.playerId && unit.health > 0)
   const factoryReady = own.some((unit) => unit.typeId === UnitTypeId.Factory && unit.progress >= 1)
   const head = replica.training[0]
   for (const entry of spawnButtons) {
     let count = 0
     for (const job of replica.training) if (job.typeId === entry.id) count += 1
     const progress = head?.typeId === entry.id ? head.progress : 0
-    paintUnit(entry, count, progress, factoryReady)
+    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    paintUnit(entry, count, progress, factoryReady && room)
   }
   const armed = player.placingType()
   const pending = structureProgress()
   for (const entry of buildButtons) {
-    paintBuild(entry, pending.get(entry.id) ?? 0, armed === entry.id)
+    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    paintBuild(entry, pending.get(entry.id) ?? 0, armed === entry.id, room)
   }
 }
 
@@ -477,9 +496,10 @@ function paintUnit(entry: UnitOrder, count: number, progress: number, enabled: b
   entry.minus.classList.toggle('on', count > 0)
 }
 
-function paintBuild(entry: BuildButton, progress: number, armed: boolean) {
+function paintBuild(entry: BuildButton, progress: number, armed: boolean, enabled: boolean) {
   entry.fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`
   entry.button.classList.toggle('armed', armed)
+  entry.button.disabled = !enabled
 }
 
 function structureProgress(): Map<UnitTypeId, number> {
@@ -510,6 +530,8 @@ const frame = (now: number) => {
       replica.cities,
       replica.primaryFactoryId,
       replica.rally,
+      replica.cleared,
+      replica.takeYields(),
     )
   }
   requestAnimationFrame(frame)

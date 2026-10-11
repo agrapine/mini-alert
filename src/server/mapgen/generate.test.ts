@@ -121,6 +121,8 @@ describe('island match', () => {
     }
     expect(placed).toBe(true)
     game.finishBuild(human.id)
+    for (const unit of humans) unit.health = 0
+    game.tick(0)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
     game.tick(SCOUT.buildTime)
     const spawned = game.units[game.units.length - 1]

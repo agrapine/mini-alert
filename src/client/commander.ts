@@ -100,6 +100,17 @@ export class Commander {
     }
   }
 
+  orderAttackGround(tile: TileCoord) {
+    if (this.spectating) return
+    for (const unit of this.selected()) {
+      this.port.send({
+        kind: ClientMessageKind.OrderAttackGround,
+        unitId: unit.id,
+        tile,
+      })
+    }
+  }
+
   spawn(typeId: UnitTypeId) {
     if (this.spectating) return
     this.port.send({ kind: ClientMessageKind.Spawn, typeId })

@@ -12,6 +12,20 @@ export type Impact = {
   ownerId: number
   damage: number
   splash: number
+  shell: boolean
+}
+
+export type Blast = {
+  x: number
+  z: number
+  damage: number
+  splash: number
+}
+
+export type StructureTarget = {
+  x: number
+  z: number
+  ownerId: number
 }
 
 export function engage(
@@ -20,6 +34,8 @@ export function engage(
   time: number,
   impacts: Impact[],
   cities: readonly CitySight[] = [],
+  blasts: Blast[] = [],
+  structures: readonly StructureTarget[] = [],
 ): ShotEvent[] {
   const vision = teamVision(units, cities)
   const shots: ShotEvent[] = []
@@ -32,12 +48,15 @@ export function engage(
       unit.rounds = weapon.magazine
     }
 
-    const target = pickTarget(unit, units, vision.get(unit.ownerId) ?? [])
+    const ordered = unit.attackPoint
+    const friends = vision.get(unit.ownerId) ?? []
+    const target = ordered ? null : pickTarget(unit, units, friends)
+    const structure = ordered || target ? null : pickStructure(unit, structures, friends)
     const aim = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
-    if (!target) continue
-    const predicted = weapon.kind === WeaponKind.Shell ? lead(unit, target) : null
-    const aimX = predicted?.x ?? target.pos.x
-    const aimZ = predicted?.z ?? target.pos.z
+    if (!ordered && !target && !structure) continue
+    const predicted = target && weapon.kind === WeaponKind.Shell ? lead(unit, target) : null
+    const aimX = ordered?.x ?? predicted?.x ?? target?.pos.x ?? structure?.x ?? unit.pos.x
+    const aimZ = ordered?.z ?? predicted?.z ?? target?.pos.z ?? structure?.z ?? unit.pos.z
     const desired = Math.atan2(aimX - unit.pos.x, aimZ - unit.pos.z)
     if (weapon.turretRate > 0) {
       const err = wrapAngle(desired - unit.turretYaw)
@@ -45,16 +64,29 @@ export function engage(
       unit.turretYaw = wrapAngle(unit.turretYaw + step)
     }
     const gun = weapon.turretRate > 0 ? unit.turretYaw : aim
-    const dist = distance(unit, target)
+    const dist = target ? distance(unit, target) : Math.hypot(aimX - unit.pos.x, aimZ - unit.pos.z)
     const aligned = Math.abs(wrapAngle(desired - gun)) <= weapon.aimTolerance
     if (dist > weapon.range || !aligned || unit.rounds <= 0 || unit.cooldown > 0) continue
 
     unit.rounds -= 1
     unit.cooldown = weapon.fireInterval
     unit.sinceShot = 0
-    const flight = predicted?.flight ?? 0
-    if (flight === 0) strike(units, aimX, aimZ, unit.ownerId, weapon.damage, weapon.splash)
-    else impacts.push({ time: time + flight, x: aimX, z: aimZ, ownerId: unit.ownerId, damage: weapon.damage, splash: weapon.splash })
+    const shell = weapon.kind === WeaponKind.Shell
+    const flight = predicted?.flight ?? (shell && weapon.shellSpeed > 0 ? dist / weapon.shellSpeed : 0)
+    if (flight === 0) {
+      strike(units, aimX, aimZ, unit.ownerId, weapon.damage, weapon.splash)
+      if (shell) blasts.push({ x: aimX, z: aimZ, damage: weapon.damage, splash: weapon.splash })
+    } else {
+      impacts.push({
+        time: time + flight,
+        x: aimX,
+        z: aimZ,
+        ownerId: unit.ownerId,
+        damage: weapon.damage,
+        splash: weapon.splash,
+        shell,
+      })
+    }
     shots.push({
       kind: weapon.kind,
       shooterId: unit.id,
@@ -68,12 +100,13 @@ export function engage(
   return shots
 }
 
-export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: number) {
+export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: number, blasts: Blast[] = []) {
   for (let i = impacts.length - 1; i >= 0; i--) {
     const impact = impacts[i]
     if (impact.time > time) continue
     impacts.splice(i, 1)
     strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash)
+    if (impact.shell) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
   }
 }
 
@@ -166,6 +199,34 @@ function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightS
     const err = Math.abs(wrapAngle(bearing(unit, other) - gun))
     if (err <= weapon.lockAngle && dist < lockedDist) {
       locked = other
+      lockedDist = dist
+    }
+  }
+  return locked ?? closest
+}
+
+function pickStructure(unit: Unit, structures: readonly StructureTarget[], friends: readonly SightSource[]): StructureTarget | null {
+  const weapon = unit.type.weapon
+  if (weapon.kind !== WeaponKind.Shell || weapon.splash <= 0) return null
+  const reach = Math.max(weapon.sight, weapon.range)
+  const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
+  let closest: StructureTarget | null = null
+  let closestDist = Infinity
+  let locked: StructureTarget | null = null
+  let lockedDist = Infinity
+  for (const building of structures) {
+    if (building.ownerId === 0 || building.ownerId === unit.ownerId) continue
+    if (!seesPoint(friends, building.x, building.z)) continue
+    const dist = Math.hypot(building.x - unit.pos.x, building.z - unit.pos.z)
+    if (dist > reach) continue
+    if (dist < closestDist) {
+      closest = building
+      closestDist = dist
+    }
+    if (weapon.turretRate <= 0) continue
+    const err = Math.abs(wrapAngle(Math.atan2(building.x - unit.pos.x, building.z - unit.pos.z) - gun))
+    if (err <= weapon.lockAngle && dist < lockedDist) {
+      locked = building
       lockedDist = dist
     }
   }

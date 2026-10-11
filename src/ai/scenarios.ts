@@ -1,4 +1,4 @@
-import { cityCenter, footprintNearCity, layoutCities, projectCity, type CityLayout } from '../shared/cities.ts'
+import { cityCenter, footprintNearCity, layoutCities, populationOf, projectCity, type CityLayout } from '../shared/cities.ts'
 import { canPlaceFootprint } from '../shared/footprint.ts'
 import {
   ClientMessageKind,
@@ -22,7 +22,6 @@ export const enum Scenario {
 const CONTACT = 14
 const ZONE = 16
 const CALL_IN = 20
-const ARMY_CAP = 12
 const COMFORT = 8
 
 export type Brain = {
@@ -71,7 +70,7 @@ function choose(brain: Brain, layouts: readonly CityLayout[]): Choice | null {
     const center = cityCenter(home)
     choices.push({ score: 90, zone: { x: center.x, y: center.y, radius: ZONE, scenario: Scenario.Build } })
   }
-  if (finishedFactory(brain) && mobileCount(brain) < COMFORT && brain.credits >= SCOUT.cost) {
+  if (finishedFactory(brain) && supplyUsed(brain) < COMFORT && supplyUsed(brain) < population(brain) && brain.credits >= SCOUT.cost) {
     const pad = home ? cityCenter(home) : average(ownMobile(brain))
     if (pad) choices.push({ score: 80, zone: { x: pad.x, y: pad.y, radius: ZONE, scenario: Scenario.Train } })
   }
@@ -82,7 +81,7 @@ function choose(brain: Brain, layouts: readonly CityLayout[]): Choice | null {
       zone: { x: assault.tileX, y: assault.tileY, radius: ZONE, scenario: Scenario.Assault },
     })
   }
-  if (finishedFactory(brain) && mobileCount(brain) < ARMY_CAP && brain.credits >= SCOUT.cost) {
+  if (finishedFactory(brain) && supplyUsed(brain) < population(brain) && brain.credits >= SCOUT.cost) {
     const pad = home ? cityCenter(home) : average(ownMobile(brain))
     if (pad) choices.push({ score: 55, zone: { x: pad.x, y: pad.y, radius: ZONE, scenario: Scenario.Train } })
   }
@@ -142,15 +141,16 @@ function build(brain: Brain, layouts: readonly CityLayout[], zone: Zone): Client
   }
   if (standing.progress < 1 || brain.credits < TURRET.cost) return []
   if (own(brain).some((unit) => unit.typeId === UnitTypeId.Turret && unit.health > 0)) return []
+  if (supplyUsed(brain) + TURRET.supply > population(brain)) return []
   const spot = siteNear(brain, layouts, { x: zone.x, y: zone.y }, TURRET.footprint)
   if (!spot) return []
   return [{ kind: ClientMessageKind.PlaceBuilding, typeId: UnitTypeId.Turret, tile: spot }]
 }
 
 function train(brain: Brain): ClientMessage[] {
-  if (!finishedFactory(brain) || mobileCount(brain) + brain.training.length >= ARMY_CAP) return []
+  if (!finishedFactory(brain)) return []
   const typeId = nextTrain(brain)
-  if (!typeId) return []
+  if (!typeId || supplyUsed(brain) + UNIT_TYPES[typeId].supply > population(brain)) return []
   return [{ kind: ClientMessageKind.Spawn, typeId }]
 }
 
@@ -344,6 +344,24 @@ function hostiles(brain: Brain): UnitSnapshot[] {
 
 function mobileCount(brain: Brain): number {
   return ownMobile(brain).length + brain.training.length
+}
+
+function supplyUsed(brain: Brain): number {
+  let used = 0
+  for (const unit of own(brain)) used += UNIT_TYPES[unit.typeId].supply
+  for (const job of brain.training) used += UNIT_TYPES[job.typeId].supply
+  return used
+}
+
+function population(brain: Brain): number {
+  const layouts = layoutCities(brain.towns, brain.seed, brain.terrain, brain.width, brain.height)
+  let people = 0
+  for (let i = 0; i < layouts.length; i++) {
+    const city = brain.cities[i]
+    if (!city || city.ownerId !== brain.playerId) continue
+    people += populationOf(projectCity(layouts[i], city.grown, brain.terrain, brain.width, brain.height), city.ruins)
+  }
+  return people
 }
 
 function average(units: readonly UnitSnapshot[]): TileCoord | null {

@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.1.1
+## 0.3
+
+- Cities and trees can be destroyed. 
+- Armies require populations to sustain and build.
+
+## 0.2
 
 - Conquer cities and hold them to earn credits. Leave units in a city and it grows.
 - Improved fog of war.
