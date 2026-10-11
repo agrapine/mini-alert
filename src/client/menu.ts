@@ -39,7 +39,7 @@ Vehicles and turrets shoot enemies in sight. Shells splash. Artillery reaches fa
 Fog covers ground you have not seen. Finished units reveal a circle around them, and a city you own reveals ten tiles around its center. Enemies outside that sight stay hidden. Ground you have already walked stays dim after you look away.
 `
 
-export function bindMenu(): void {
+export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
   const bar = document.querySelector<HTMLElement>('#menubar')
   const menu = document.querySelector<HTMLElement>('#menu')
   const sheet = document.querySelector<HTMLElement>('#sheet')
@@ -84,6 +84,7 @@ export function bindMenu(): void {
     toggle.setAttribute('aria-pressed', on ? 'true' : 'false')
     const mark = toggle.querySelector('.mark')
     if (mark) mark.textContent = on ? 'On' : 'Off'
+    if (toggle.dataset.toggle === 'music') actions.onMusic?.(on)
   })
 
   sheet.addEventListener('click', (event) => {

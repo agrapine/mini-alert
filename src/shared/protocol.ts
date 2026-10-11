@@ -109,8 +109,10 @@ export type TrainJob = {
 
 export type CityState = {
   ownerId: number
+  color: number
   progress: number
   challengerId: number
+  challengerColor: number
   grown: number
 }
 

@@ -1,0 +1,231 @@
+import type { ClientMessage, ServerMessage } from './protocol.ts'
+
+export const enum Channel {
+  Lobby = 1,
+  Game = 2,
+}
+
+export const enum MapSize {
+  Tiny = 64,
+  Small = 128,
+  Medium = 192,
+  Large = 256,
+}
+
+export const MAP_SIZES = [MapSize.Tiny, MapSize.Small, MapSize.Medium, MapSize.Large] as const
+
+export const DEFAULT_MAP_SIZE = MapSize.Small
+
+export function slotsForSize(size: MapSize): number {
+  if (size === MapSize.Tiny) return 2
+  if (size === MapSize.Small) return 4
+  if (size === MapSize.Medium) return 6
+  return 8
+}
+
+export function isMapSize(value: number): value is MapSize {
+  return value === MapSize.Tiny || value === MapSize.Small || value === MapSize.Medium || value === MapSize.Large
+}
+
+export const enum LobbyClientKind {
+  SetName = 1,
+  CreateGame = 2,
+  JoinGame = 3,
+  LeaveRoom = 4,
+  TakeSlot = 5,
+  SetSlotAi = 6,
+  ClearSlot = 7,
+  SetMapSize = 8,
+  StartGame = 9,
+  Chat = 10,
+  ViewAs = 11,
+  Regenerate = 12,
+  SetAiPace = 13,
+}
+
+export const enum LobbyServerKind {
+  Waiting = 1,
+  GameLobby = 2,
+  Preview = 3,
+}
+
+export const enum SlotKind {
+  Open = 0,
+  Human = 1,
+  Ai = 2,
+}
+
+export const enum RoomStatus {
+  Waiting = 1,
+  Playing = 2,
+}
+
+export type Person = {
+  id: number
+  name: string
+}
+
+export type ChatLine = {
+  name: string
+  text: string
+}
+
+export type SlotView = {
+  kind: SlotKind
+  name: string
+  clientId: number
+  color: number
+}
+
+export type GameCard = {
+  id: number
+  status: RoomStatus
+  mapSize: MapSize
+  slots: SlotView[]
+  waiting: string[]
+}
+
+export type Faction = {
+  playerId: number
+  name: string
+  color: number
+  ai: boolean
+  defeated: boolean
+}
+
+export type SetName = {
+  kind: LobbyClientKind.SetName
+  name: string
+}
+
+export type CreateGame = {
+  kind: LobbyClientKind.CreateGame
+}
+
+export type JoinGame = {
+  kind: LobbyClientKind.JoinGame
+  gameId: number
+}
+
+export type LeaveRoom = {
+  kind: LobbyClientKind.LeaveRoom
+}
+
+export type TakeSlot = {
+  kind: LobbyClientKind.TakeSlot
+  index: number
+}
+
+export type SetSlotAi = {
+  kind: LobbyClientKind.SetSlotAi
+  index: number
+}
+
+export type ClearSlot = {
+  kind: LobbyClientKind.ClearSlot
+  index: number
+}
+
+export type SetMapSize = {
+  kind: LobbyClientKind.SetMapSize
+  size: MapSize
+}
+
+export type StartGame = {
+  kind: LobbyClientKind.StartGame
+}
+
+export type Chat = {
+  kind: LobbyClientKind.Chat
+  text: string
+}
+
+export type ViewAs = {
+  kind: LobbyClientKind.ViewAs
+  playerId: number
+}
+
+export type Regenerate = {
+  kind: LobbyClientKind.Regenerate
+}
+
+export type SetAiPace = {
+  kind: LobbyClientKind.SetAiPace
+  pace: number
+}
+
+export const AI_PACE_MIN = 0.25
+export const AI_PACE_MAX = 3
+export const AI_PACE_DEFAULT = 1
+
+export function clampAiPace(value: number): number {
+  if (!Number.isFinite(value)) return AI_PACE_DEFAULT
+  const stepped = Math.round(value / 0.25) * 0.25
+  return Math.min(AI_PACE_MAX, Math.max(AI_PACE_MIN, stepped))
+}
+
+export type LobbyClientMessage =
+  | SetName
+  | CreateGame
+  | JoinGame
+  | LeaveRoom
+  | TakeSlot
+  | SetSlotAi
+  | ClearSlot
+  | SetMapSize
+  | StartGame
+  | Chat
+  | ViewAs
+  | Regenerate
+  | SetAiPace
+
+export type WaitingRoom = {
+  kind: LobbyServerKind.Waiting
+  you: Person
+  people: Person[]
+  games: GameCard[]
+  chat: ChatLine[]
+}
+
+export type GameLobbyState = {
+  kind: LobbyServerKind.GameLobby
+  you: Person
+  gameId: number
+  hostId: number
+  status: RoomStatus
+  mapSize: MapSize
+  slots: SlotView[]
+  waiting: Person[]
+  chat: ChatLine[]
+  spectating: boolean
+  factions: Faction[]
+  generating: boolean
+  seatId: number
+  aiPace: number
+}
+
+export type MapPreview = {
+  kind: LobbyServerKind.Preview
+  gameId: number
+  width: number
+  height: number
+  terrain: string
+  starts: StartPoint[]
+}
+
+export type StartPoint = {
+  x: number
+  y: number
+}
+
+export type LobbyServerMessage = WaitingRoom | GameLobbyState | MapPreview
+
+export type WireToServer = {
+  channel: Channel
+  message: LobbyClientMessage | ClientMessage
+}
+
+export type WireToClient = {
+  channel: Channel
+  message: LobbyServerMessage | ServerMessage
+}

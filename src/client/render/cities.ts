@@ -16,7 +16,7 @@ import {
   Vector3,
 } from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { cityColor, layoutCities, projectCity, StreetKind, type CityLayout } from '../../shared/cities.ts'
+import { layoutCities, NEUTRAL_CITY, projectCity, StreetKind, type CityLayout } from '../../shared/cities.ts'
 import type { CityState, WorldSnapshot } from '../../shared/protocol.ts'
 import { TILE_TOP } from './terrain.ts'
 
@@ -71,6 +71,7 @@ type CityView = {
   layout: CityLayout
   grown: number
   owner: { value: number }
+  team: Vector3
   buildingMaterial: MeshStandardMaterial
   cluster: Group
   ring: Mesh
@@ -104,10 +105,11 @@ export class CityLayer {
     this.kit = { streetsMaterial, buildings, streets }
     for (const layout of layouts) {
       const owner = { value: 0 }
-      const buildingMaterial = teamMaterial(texture, swatches, owner)
+      const team = new Vector3(1, 1, 1)
+      const buildingMaterial = teamMaterial(texture, swatches, owner, team)
       const cluster = new Group()
       const ringMaterial = new MeshBasicMaterial({
-        color: cityColor(0),
+        color: NEUTRAL_CITY,
         transparent: true,
         opacity: 0.9,
         depthTest: false,
@@ -118,7 +120,7 @@ export class CityLayer {
       ring.visible = false
       ring.renderOrder = 12
       cluster.add(ring)
-      const view: CityView = { base: layout, layout, grown: 0, owner, cluster, ring, ringMaterial, shown: 0, buildingMaterial }
+      const view: CityView = { base: layout, layout, grown: 0, owner, team, cluster, ring, ringMaterial, shown: 0, buildingMaterial }
       this.fill(view)
       this.root.add(cluster)
       this.views.push(view)
@@ -204,11 +206,12 @@ export class CityLayer {
       const view = this.views[i]
       const state = states[i]
       if (!state) continue
-      view.owner.value = state.ownerId <= 0 ? 0 : ((state.ownerId - 1) % 2) + 1
+      view.owner.value = state.color > 0 ? 1 : 0
+      if (state.color > 0) view.team.set((state.color >> 16) / 255, ((state.color >> 8) & 255) / 255, (state.color & 255) / 255)
       const active = state.progress > 0.001 && state.challengerId > 0
       view.ring.visible = active
       if (!active) continue
-      view.ringMaterial.color.setHex(cityColor(state.challengerId))
+      view.ringMaterial.color.setHex(state.challengerColor > 0 ? state.challengerColor : NEUTRAL_CITY)
       if (Math.abs(view.shown - state.progress) < 0.01) continue
       view.shown = state.progress
       view.ring.geometry.dispose()
@@ -236,30 +239,39 @@ function blobCenter(layout: CityLayout): { x: number; z: number } {
 
 const SWATCH_COUNT = 32
 
-function teamMaterial(map: MeshStandardMaterial['map'], swatches: DataTexture, owner: { value: number }): MeshStandardMaterial {
+function teamMaterial(
+  map: MeshStandardMaterial['map'],
+  swatches: DataTexture,
+  owner: { value: number },
+  team: Vector3,
+): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ map, roughness: 0.82, metalness: 0 })
   material.onBeforeCompile = (shader) => {
     shader.uniforms.cityOwner = owner
+    shader.uniforms.teamColor = { value: team }
     shader.uniforms.swatchMap = { value: swatches }
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
         uniform float cityOwner;
-        uniform sampler2D swatchMap;
-        vec2 cityUv(vec2 uv) {
-          float col = clamp(floor(uv.x * 8.0), 0.0, 7.0);
-          float row = clamp(floor(uv.y * 4.0), 0.0, 3.0);
-          float cell = col + row * 8.0;
-          vec2 local = fract(vec2(uv.x * 8.0, uv.y * 4.0));
-          float dest = floor(texture2D(swatchMap, vec2((cell + 0.5) / 32.0, (cityOwner + 0.5) / 3.0)).r * 255.0 + 0.5);
-          return (vec2(mod(dest, 8.0), floor(dest / 8.0)) + local) / vec2(8.0, 4.0);
-        }`,
+        uniform vec3 teamColor;
+        uniform sampler2D swatchMap;`,
       )
       .replace(
         '#include <map_fragment>',
         `#ifdef USE_MAP
-          vec4 sampledDiffuseColor = texture2D(map, cityUv(vMapUv));
+          float col = clamp(floor(vMapUv.x * 8.0), 0.0, 7.0);
+          float row = clamp(floor(vMapUv.y * 4.0), 0.0, 3.0);
+          float cell = col + row * 8.0;
+          vec2 local = fract(vec2(vMapUv.x * 8.0, vMapUv.y * 4.0));
+          float dest = floor(texture2D(swatchMap, vec2((cell + 0.5) / 32.0, (cityOwner + 0.5) / 2.0)).r * 255.0 + 0.5);
+          vec2 sampleUv = (vec2(mod(dest, 8.0), floor(dest / 8.0)) + local) / vec2(8.0, 4.0);
+          vec4 sampledDiffuseColor = texture2D(map, sampleUv);
+          if (cityOwner > 0.5 && abs(dest - cell) > 0.5) {
+            float shade = max(sampledDiffuseColor.r, max(sampledDiffuseColor.g, sampledDiffuseColor.b));
+            sampledDiffuseColor.rgb = teamColor * shade;
+          }
           diffuseColor *= sampledDiffuseColor;
         #endif`,
       )
@@ -268,11 +280,10 @@ function teamMaterial(map: MeshStandardMaterial['map'], swatches: DataTexture, o
 }
 
 function swatchTexture(): DataTexture {
-  const data = new Uint8Array(SWATCH_COUNT * 3)
+  const data = new Uint8Array(SWATCH_COUNT * 2)
   writePalette(data, 0, [cell(1, 3)])
-  writePalette(data, 1, [cell(0, 2), cell(1, 2), cell(2, 2)])
-  writePalette(data, 2, [cell(4, 2), cell(7, 1), cell(6, 1), cell(7, 3)])
-  const texture = new DataTexture(data, SWATCH_COUNT, 3, RedFormat, UnsignedByteType)
+  writePalette(data, 1, [cell(1, 3), cell(2, 3), cell(3, 3), cell(4, 3)])
+  const texture = new DataTexture(data, SWATCH_COUNT, 2, RedFormat, UnsignedByteType)
   texture.colorSpace = NoColorSpace
   texture.magFilter = NearestFilter
   texture.minFilter = NearestFilter

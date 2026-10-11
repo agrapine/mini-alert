@@ -25,6 +25,7 @@ export function bindPanKeys(view: GameView): { release(): void } {
   }
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (typing(event)) return
     const key = event.key.toLowerCase()
     if (key === 'q' || key === 'e') {
       if (event.repeat) return
@@ -39,6 +40,7 @@ export function bindPanKeys(view: GameView): { release(): void } {
   }
 
   const onKeyUp = (event: KeyboardEvent) => {
+    if (typing(event)) return
     const key = event.key.toLowerCase()
     if (!PAN_KEYS.has(key)) return
     down.delete(key)
@@ -54,4 +56,11 @@ export function bindPanKeys(view: GameView): { release(): void } {
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('blur', release)
   return { release }
+}
+
+function typing(event: KeyboardEvent): boolean {
+  if (document.body.classList.contains('lobby')) return true
+  const target = event.target
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true
+  return target instanceof HTMLElement && target.isContentEditable
 }

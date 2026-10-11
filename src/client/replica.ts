@@ -25,8 +25,25 @@ export class Replica {
   private blockedBuildings = new Set<string>()
   private blockKey = ''
 
+  reset() {
+    this.playerId = null
+    this.world = null
+    this.units = []
+    this.credits = 0
+    this.training = []
+    this.cities = []
+    this.pendingShots = []
+    this.bases = null
+    this.evolved = []
+    this.blockedBuildings.clear()
+    this.blockKey = ''
+  }
+
   apply(message: ServerMessage) {
-    if (message.kind === ServerMessageKind.Welcome) this.playerId = message.playerId
+    if (message.kind === ServerMessageKind.Welcome) {
+      this.playerId = message.playerId
+      this.pendingShots = []
+    }
     else if (message.kind === ServerMessageKind.World) {
       this.world = message
       this.bases = null

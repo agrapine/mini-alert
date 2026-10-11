@@ -2,7 +2,6 @@ import type { MapPoint } from './protocol.ts'
 import { isWalkableTerrain, type TileCoord } from './tiles.ts'
 
 export const NEUTRAL_CITY = 0xffffff
-export const PLAYER_CITY_COLORS = [0x2f7edb, 0xd64545] as const
 export const CAPTURE_DRAIN = 2
 export const CITY_GROW_SECONDS = 4
 export const STREET_REACH = 4
@@ -47,11 +46,6 @@ export type CityLayout = {
   tiles: TileCoord[]
   buildings: CityBuilding[]
   streets: CityStreet[]
-}
-
-export function cityColor(ownerId: number): number {
-  if (ownerId <= 0) return NEUTRAL_CITY
-  return PLAYER_CITY_COLORS[(ownerId - 1) % PLAYER_CITY_COLORS.length]
 }
 
 export function captureDuration(span: number, neutral: boolean): number {

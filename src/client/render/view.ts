@@ -123,6 +123,18 @@ export class GameView {
     this.stage.focus(x, z)
   }
 
+  resize() {
+    this.stage.resize()
+  }
+
+  forgetVision() {
+    this.fog?.reset()
+  }
+
+  dispose() {
+    this.stage.dispose()
+  }
+
   setPanAxis(x: number, z: number) {
     this.stage.setPanAxis(x, z)
   }

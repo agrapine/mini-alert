@@ -8,6 +8,7 @@ import type { Replica } from './replica.ts'
 export class Commander {
   private selectedIds: number[] = []
   private placing: UnitTypeId | null = null
+  private spectating = false
   private readonly replica: Replica
   private readonly port: ClientPort
 
@@ -16,7 +17,18 @@ export class Commander {
     this.port = port
   }
 
+  setSpectating(on: boolean) {
+    this.spectating = on
+    if (!on) return
+    this.selectedIds = []
+    this.placing = null
+  }
+
   select(id: number | null) {
+    if (this.spectating) {
+      this.selectedIds = []
+      return
+    }
     if (id === null) {
       this.selectedIds = []
       return
@@ -47,6 +59,7 @@ export class Commander {
   }
 
   orderMove(tile: TileCoord) {
+    if (this.spectating) return
     for (const unit of this.selected()) {
       this.port.send({
         kind: ClientMessageKind.OrderMove,
@@ -57,6 +70,7 @@ export class Commander {
   }
 
   orderAttack(targetId: number) {
+    if (this.spectating) return
     for (const unit of this.selected()) {
       this.port.send({
         kind: ClientMessageKind.OrderAttack,
@@ -67,10 +81,12 @@ export class Commander {
   }
 
   spawn(typeId: UnitTypeId) {
+    if (this.spectating) return
     this.port.send({ kind: ClientMessageKind.Spawn, typeId })
   }
 
   cancelSpawn(typeId: UnitTypeId) {
+    if (this.spectating) return
     this.port.send({ kind: ClientMessageKind.CancelSpawn, typeId })
   }
 
@@ -79,6 +95,7 @@ export class Commander {
   }
 
   armBuilding(typeId: UnitTypeId) {
+    if (this.spectating) return
     this.placing = this.placing === typeId ? null : typeId
   }
 
@@ -87,7 +104,7 @@ export class Commander {
   }
 
   placeBuilding(tile: TileCoord) {
-    if (this.placing === null) return
+    if (this.spectating || this.placing === null) return
     this.port.send({ kind: ClientMessageKind.PlaceBuilding, typeId: this.placing, tile })
     this.placing = null
   }

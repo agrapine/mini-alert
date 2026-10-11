@@ -49,6 +49,7 @@ export class Stage {
   private bearingTarget = YAW_STEP
   private zoomTarget = 1
   private zoomCursor: { x: number; y: number } | null = null
+  private readonly onResize = () => this.resize()
 
   constructor(canvas: HTMLCanvasElement, mapWidth: number, mapHeight: number) {
     this.canvas = canvas
@@ -90,7 +91,22 @@ export class Stage {
     this.scene.add(this.orderMark)
 
     this.resize()
-    window.addEventListener('resize', () => this.resize())
+    window.addEventListener('resize', this.onResize)
+  }
+
+  dispose() {
+    window.removeEventListener('resize', this.onResize)
+    this.scene.traverse((obj) => {
+      if (!(obj instanceof Mesh)) return
+      obj.geometry.dispose()
+      const material = obj.material
+      if (Array.isArray(material)) {
+        for (const item of material) item.dispose()
+      } else {
+        material.dispose()
+      }
+    })
+    this.renderer.dispose()
   }
 
   groundViewport(): { x: number; z: number }[] {

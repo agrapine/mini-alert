@@ -1,5 +1,5 @@
 import type { CityState, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { cityColor, layoutCities, projectCity, type CityLayout } from '../../shared/cities.ts'
+import { layoutCities, NEUTRAL_CITY, projectCity, type CityLayout } from '../../shared/cities.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain } from '../../shared/tiles.ts'
 
@@ -117,7 +117,7 @@ export class Minimap {
         this.shownGrown[i] = grown
       }
       const layout = this.evolved[i]
-      const color = cityColor(state.ownerId)
+      const color = state.color > 0 ? state.color : NEUTRAL_CITY
       const r = (color >> 16) & 255
       const g = (color >> 8) & 255
       const b = color & 255

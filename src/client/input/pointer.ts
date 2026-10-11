@@ -229,6 +229,10 @@ export function bindInput(
   window.addEventListener('keydown', (event) => {
     syncRanges(event)
     if (event.code !== 'Space') return
+    if (document.body.classList.contains('lobby')) return
+    const target = event.target
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+    if (target instanceof HTMLElement && target.isContentEditable) return
     event.preventDefault()
     if (spaceDown) return
     spaceDown = true

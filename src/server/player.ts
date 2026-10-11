@@ -1,4 +1,4 @@
-const PLAYER_COLORS = [0x2f7edb, 0xd64545]
+import { playerColor } from '../shared/players.ts'
 
 export const STARTING_CREDITS = 10_000
 export const CREDIT_PER_CITY = 6
@@ -10,9 +10,9 @@ export class Player {
   readonly unitIds: number[] = []
   credits = STARTING_CREDITS
 
-  constructor(id: number) {
+  constructor(id: number, color = playerColor(id)) {
     this.id = id
-    this.color = PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length]
+    this.color = color
   }
 
   owns(unitId: number): boolean {

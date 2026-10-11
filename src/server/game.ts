@@ -81,8 +81,8 @@ export class Game {
     this.pathfinder = new PathFinder(world)
   }
 
-  addPlayer(): Player {
-    const player = new Player(this.nextPlayerId++)
+  addPlayer(color?: number): Player {
+    const player = new Player(this.nextPlayerId++, color)
     this.players.set(player.id, player)
     return player
   }
@@ -114,8 +114,10 @@ export class Game {
   cityStates(): CityState[] {
     return this.cities.map((city) => ({
       ownerId: city.ownerId,
+      color: city.ownerId > 0 ? (this.player(city.ownerId)?.color ?? 0) : 0,
       progress: city.progress,
       challengerId: city.challengerId,
+      challengerColor: city.challengerId > 0 ? (this.player(city.challengerId)?.color ?? 0) : 0,
       grown: city.grown,
     }))
   }

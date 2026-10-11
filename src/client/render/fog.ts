@@ -107,6 +107,18 @@ export class Fog {
   setView(yaw: number) {
     this.viewShift.set(Math.sin(yaw) * FOG_OVERHANG, Math.cos(yaw) * FOG_OVERHANG)
   }
+
+  reset() {
+    this.exploredTiles.fill(0)
+    this.visible.fill(0)
+    this.mask.fill(1)
+    this.exploredField.fill(FOG_FEATHER)
+    this.exploredPixels.fill(255)
+    this.friendData.fill(0)
+    this.friendCount.value = 0
+    this.exploredTexture.needsUpdate = true
+    this.friendTexture.needsUpdate = true
+  }
 }
 
 function encodeExplored(field: Float32Array, pixels: Uint8Array) {

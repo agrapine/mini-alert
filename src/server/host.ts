@@ -4,46 +4,97 @@ import {
   ServerMessageKind,
   type ClientMessage,
   type ClientPort,
-  type ServerPort,
+  type ServerMessage,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
 import { type Terrain } from '../shared/tiles.ts'
 import { shotsForPlayer, unitsForPlayer } from '../shared/vision.ts'
-import type { AiPlayer } from './ai.ts'
+import type { AiPlayer } from '../ai/player.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
 
+type Session = {
+  playerId: number
+  playing: boolean
+  send(message: ServerMessage): void
+}
+
+export type RemotePlay = {
+  readonly playing: boolean
+  retire(): void
+  command(message: ClientMessage): void
+  setView(playerId: number): void
+  sync(): void
+  close(): void
+}
+
 export class ServerHost {
-  private readonly sessions: ServerPort[] = []
+  private readonly sessions: Session[] = []
+  private ais: AiPlayer[]
 
   constructor(
     readonly game: Game,
-    private readonly ai: AiPlayer,
-  ) {}
+    ai: AiPlayer | readonly AiPlayer[] = [],
+  ) {
+    this.ais = Array.isArray(ai) ? ai : [ai]
+  }
 
   join(player: Player): ClientPort {
     const link = createLocalLink(player.id)
-    link.server.onClient((message) => this.onCommand(link.server.playerId, message))
-    this.sessions.push(link.server)
+    const session: Session = {
+      playerId: player.id,
+      playing: true,
+      send: (message) => link.server.send(message),
+    }
+    link.server.onClient((message) => this.onCommand(session, message))
+    this.sessions.push(session)
     return link.client
+  }
+
+  attach(playerId: number, playing: boolean, send: (message: ServerMessage) => void): RemotePlay {
+    const session: Session = { playerId, playing, send }
+    this.sessions.push(session)
+    return {
+      get playing() {
+        return session.playing
+      },
+      retire() {
+        session.playing = false
+      },
+      command: (message) => this.onCommand(session, message),
+      setView: (next) => {
+        if (session.playing) return
+        session.playerId = next
+        this.pushWelcome(session)
+        this.pushUnits(session)
+      },
+      sync: () => this.pushSync(session),
+      close: () => {
+        const index = this.sessions.indexOf(session)
+        if (index >= 0) this.sessions.splice(index, 1)
+      },
+    }
+  }
+
+  addAi(ai: AiPlayer) {
+    this.ais.push(ai)
+  }
+
+  setAiPace(pace: number) {
+    for (const ai of this.ais) ai.setPace(pace)
+  }
+
+  silence(playerId: number) {
+    this.ais = this.ais.filter((ai) => ai.playerId !== playerId)
   }
 
   sync(playerId: number) {
     const session = this.sessions.find((port) => port.playerId === playerId)
-    if (!session) return
-    session.send({ kind: ServerMessageKind.Welcome, playerId })
-    session.send(this.worldSnapshot())
-    session.send({
-      kind: ServerMessageKind.Units,
-      units: this.unitsFor(playerId),
-      credits: this.creditsFor(playerId),
-      training: this.game.trainingFor(playerId),
-      cities: this.game.cityStates(),
-    })
+    if (session) this.pushSync(session)
   }
 
   tick(dt: number) {
-    this.ai.update(dt)
+    for (const ai of this.ais) ai.update(dt)
     const shots = this.game.tick(dt)
     const sights = this.game.citySights()
     const living = this.game.unitSnapshots()
@@ -63,7 +114,9 @@ export class ServerHost {
     }
   }
 
-  private onCommand(playerId: number, message: ClientMessage) {
+  private onCommand(session: Session, message: ClientMessage) {
+    if (!session.playing) return
+    const playerId = session.playerId
     if (message.kind === ClientMessageKind.OrderMove) {
       this.game.orderMove(playerId, message.unitId, message.tile)
     } else if (message.kind === ClientMessageKind.OrderAttack) {
@@ -79,12 +132,28 @@ export class ServerHost {
     }
   }
 
-  private creditsFor(playerId: number): number {
-    return this.game.player(playerId)?.credits ?? 0
+  private pushSync(session: Session) {
+    this.pushWelcome(session)
+    session.send(this.worldSnapshot())
+    this.pushUnits(session)
   }
 
-  private unitsFor(playerId: number) {
-    return unitsForPlayer(this.game.unitSnapshots(), playerId, this.game.citySights())
+  private pushWelcome(session: Session) {
+    session.send({ kind: ServerMessageKind.Welcome, playerId: session.playerId })
+  }
+
+  private pushUnits(session: Session) {
+    session.send({
+      kind: ServerMessageKind.Units,
+      units: unitsForPlayer(this.game.unitSnapshots(), session.playerId, this.game.citySights()),
+      credits: this.creditsFor(session.playerId),
+      training: this.game.trainingFor(session.playerId),
+      cities: this.game.cityStates(),
+    })
+  }
+
+  private creditsFor(playerId: number): number {
+    return this.game.player(playerId)?.credits ?? 0
   }
 
   private worldSnapshot(): WorldSnapshot {
