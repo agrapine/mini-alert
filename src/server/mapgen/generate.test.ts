@@ -108,8 +108,10 @@ describe('island match', () => {
     const { game, human, ai } = createIslandMatch()
     const humans = game.units.filter((unit) => unit.ownerId === human.id)
     const bots = game.units.filter((unit) => unit.ownerId === ai.id)
-    expect(humans.length).toBe(4)
-    expect(bots.length).toBe(4)
+    expect(humans.length).toBe(1)
+    expect(bots.length).toBe(1)
+    expect(humans[0]?.typeId).toBe(UnitTypeId.Scout)
+    expect(bots[0]?.typeId).toBe(UnitTypeId.Scout)
     for (const unit of game.units) {
       expect(isWalkableTerrain(game.world.terrainAt(unit.tile.x, unit.tile.y))).toBe(true)
     }

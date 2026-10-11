@@ -25,10 +25,9 @@ describe('combat', () => {
       expect.objectContaining({
         kind: WeaponKind.Bullet,
         flight: 0,
-        aimX: foe.pos.x,
-        aimZ: foe.pos.z,
       }),
     ])
+    expect(Math.hypot(shots[0].aimX - foe.pos.x, shots[0].aimZ - foe.pos.z)).toBeLessThanOrEqual(0.14)
   })
 
   it('does not fire when the hull is aimed away', () => {
@@ -89,7 +88,8 @@ describe('combat', () => {
     game.tick(flight - 1 / 30 - 0.02)
     expect(foe.health).toBe(before)
     game.tick(0.06)
-    expect(foe.health).toBe(before - 34)
+    expect(foe.health).toBeLessThan(before)
+    expect(foe.health).toBeGreaterThanOrEqual(before - 34)
   })
 
   it('aims a shell ahead of a moving target', () => {
@@ -188,7 +188,8 @@ describe('combat', () => {
     game.tick(flight - 1 / 30 - 0.02)
     expect(direct.health).toBe(before)
     game.tick(0.06)
-    expect(direct.health).toBe(before - 34)
+    expect(direct.health).toBeLessThan(before)
+    expect(direct.health).toBeGreaterThanOrEqual(before - 34)
     expect(nearby.health).toBeLessThan(before)
     expect(nearby.health).toBeGreaterThan(direct.health)
   })

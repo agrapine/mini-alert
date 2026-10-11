@@ -4,6 +4,8 @@ export type PathGrid = {
   readonly width: number
   inBounds(x: number, y: number): boolean
   isWalkable(x: number, y: number, ignoreUnitId: number): boolean
+  isPassable(x: number, y: number, ignoreUnitId: number): boolean
+  stepCost(x: number, y: number, ignoreUnitId: number): number
 }
 
 const DIRS = [
@@ -64,14 +66,14 @@ export function findPath(
     for (const dir of DIRS) {
       const nx = current.x + dir.x
       const ny = current.y + dir.y
-      if (!grid.isWalkable(nx, ny, ignoreUnitId)) continue
+      if (!grid.isPassable(nx, ny, ignoreUnitId)) continue
       if (dir.x !== 0 && dir.y !== 0) {
         if (!grid.isWalkable(current.x + dir.x, current.y, ignoreUnitId)) continue
         if (!grid.isWalkable(current.x, current.y + dir.y, ignoreUnitId)) continue
       }
 
       const nextKey = key(nx, ny, width)
-      const nextG = current.g + dir.cost
+      const nextG = current.g + dir.cost * grid.stepCost(nx, ny, ignoreUnitId)
       const previous = gScore.get(nextKey)
       if (previous !== undefined && nextG >= previous) continue
       gScore.set(nextKey, nextG)

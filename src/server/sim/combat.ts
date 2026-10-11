@@ -71,16 +71,17 @@ export function engage(
     unit.rounds -= 1
     unit.cooldown = weapon.fireInterval
     unit.sinceShot = 0
+    const landed = scatterPoint(aimX, aimZ, shotScatter(dist, unit.speed, unit.type.topSpeed))
     const shell = weapon.kind === WeaponKind.Shell
     const flight = predicted?.flight ?? (shell && weapon.shellSpeed > 0 ? dist / weapon.shellSpeed : 0)
     if (flight === 0) {
-      strike(units, aimX, aimZ, unit.ownerId, weapon.damage, weapon.splash)
-      if (shell) blasts.push({ x: aimX, z: aimZ, damage: weapon.damage, splash: weapon.splash })
+      strike(units, landed.x, landed.z, unit.ownerId, weapon.damage, weapon.splash)
+      if (shell) blasts.push({ x: landed.x, z: landed.z, damage: weapon.damage, splash: weapon.splash })
     } else {
       impacts.push({
         time: time + flight,
-        x: aimX,
-        z: aimZ,
+        x: landed.x,
+        z: landed.z,
         ownerId: unit.ownerId,
         damage: weapon.damage,
         splash: weapon.splash,
@@ -92,8 +93,8 @@ export function engage(
       shooterId: unit.id,
       x: unit.pos.x,
       z: unit.pos.z,
-      aimX,
-      aimZ,
+      aimX: landed.x,
+      aimZ: landed.z,
       flight,
     })
   }
@@ -108,6 +109,22 @@ export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: nu
     strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash)
     if (impact.shell) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
   }
+}
+
+const RANGE_SCATTER = 0.035
+const MOVE_SCATTER = 0.14
+
+export function shotScatter(distance: number, speed: number, topSpeed: number): number {
+  if (distance <= 0) return 0
+  const moving = topSpeed > 0 ? Math.min(1, Math.abs(speed) / topSpeed) : 0
+  return distance * (RANGE_SCATTER + MOVE_SCATTER * moving)
+}
+
+function scatterPoint(x: number, z: number, radius: number): { x: number; z: number } {
+  if (radius <= 0) return { x, z }
+  const angle = Math.random() * Math.PI * 2
+  const reach = Math.sqrt(Math.random()) * radius
+  return { x: x + Math.sin(angle) * reach, z: z + Math.cos(angle) * reach }
 }
 
 function lead(shooter: Unit, target: Unit): { x: number; z: number; flight: number } {

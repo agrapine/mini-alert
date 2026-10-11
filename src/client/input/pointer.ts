@@ -2,7 +2,8 @@ import type { Commander } from '../commander.ts'
 import type { Replica } from '../replica.ts'
 import type { GameView } from '../render/view.ts'
 import { canPlaceFootprint } from '../../shared/footprint.ts'
-import type { Terrain } from '../../shared/tiles.ts'
+import type { UnitSnapshot } from '../../shared/protocol.ts'
+import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 import { UNIT_TYPES } from '../../shared/unit-types.ts'
 import { cursorFor } from './cursor.ts'
 import { bindPanKeys } from './keys.ts'
@@ -35,13 +36,24 @@ export function bindInput(
   const refreshCursor = (clientX: number, clientY: number) => {
     if (panning) canvas.style.cursor = 'grabbing'
     else if (spaceDown) canvas.style.cursor = 'grab'
-    else if (player.placingType() !== null) canvas.style.cursor = 'crosshair'
+    else if (player.placingType() !== null || player.raisingCity()) canvas.style.cursor = 'crosshair'
     else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY, groundAttack)
   }
 
   const showGhost = (clientX: number, clientY: number) => {
     const typeId = player.placingType()
     const world = replica.world
+    if (player.raisingCity()) {
+      const origin = view.pickTile(clientX, clientY)
+      player.setAim(origin)
+      if (!origin) {
+        view.showPlacement(null)
+        return
+      }
+      view.showPlacement([{ x: origin.x, y: origin.y, open: replica.canRaise(origin) }])
+      return
+    }
+    player.setAim(null)
     if (typeId === null || !world) {
       view.showPlacement(null)
       return
@@ -69,16 +81,9 @@ export function bindInput(
   }
 
   const commitPlace = (clientX: number, clientY: number) => {
-    const typeId = player.placingType()
-    const world = replica.world
     const origin = view.pickTile(clientX, clientY)
-    if (typeId === null || !world || !origin) return
-    const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
-    const footprint = UNIT_TYPES[typeId].footprint
-    if (!canPlaceFootprint(origin, footprint, world.width, world.height, terrainAt, replica.units)) return
-    if (!replica.nearCity(origin, footprint)) return
-    player.placeBuilding(origin)
-    view.showPlacement(null)
+    if (!origin) return
+    placeAt(origin, replica, player, view)
   }
 
   const beginPan = (event: PointerEvent) => {
@@ -109,14 +114,14 @@ export function bindInput(
       beginPan(event)
       return
     }
-    if (event.button === 2 && player.placingType() !== null) {
+    if (event.button === 2 && (player.placingType() !== null || player.raisingCity())) {
       player.cancelPlace()
       view.showPlacement(null)
       refreshCursor(event.clientX, event.clientY)
       event.preventDefault()
       return
     }
-    if (event.button === 0 && player.placingType() !== null) {
+    if (event.button === 0 && (player.placingType() !== null || player.raisingCity())) {
       canvas.setPointerCapture(event.pointerId)
       return
     }
@@ -136,7 +141,7 @@ export function bindInput(
   canvas.addEventListener('pointermove', (event) => {
     view.setZoomCursor(event.clientX, event.clientY)
     pointerX = event.clientX
-    if (player.placingType() !== null && !panning) showGhost(event.clientX, event.clientY)
+    if ((player.placingType() !== null || player.raisingCity()) && !panning) showGhost(event.clientX, event.clientY)
     pointerY = event.clientY
     if (panning) {
       view.panByPixels(lastX, lastY, event.clientX, event.clientY)
@@ -172,7 +177,7 @@ export function bindInput(
       return
     }
     if (event.button !== 0) return
-    if (player.placingType() !== null) {
+    if (player.placingType() !== null || player.raisingCity()) {
       commitPlace(event.clientX, event.clientY)
       refreshCursor(event.clientX, event.clientY)
       return
@@ -189,24 +194,7 @@ export function bindInput(
     const unitId = view.pickUnit(event.clientX, event.clientY)
     const picked = unitId === null ? undefined : replica.unit(unitId)
     const tile = view.pickTile(event.clientX, event.clientY)
-    const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
-    const shellGround = (event.ctrlKey || event.metaKey) && player.commanding() && tile !== null
-    const ownUnit = picked !== undefined && picked.ownerId === replica.playerId
-    if (shellGround && !ownUnit) {
-      player.orderAttackGround(tile)
-      view.ping(tile.x + 0.5, tile.y + 0.5, true)
-    } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
-      player.orderAttack(standing.id)
-      view.ping(standing.x, standing.z, true)
-    } else if (picked && picked.ownerId === replica.playerId) {
-      player.select(picked.id)
-    } else if (tile && player.factorySelected() && replica.isOpen(tile, [])) {
-      player.setRally(tile)
-      view.ping(tile.x + 0.5, tile.y + 0.5, false)
-    } else if (tile && player.commanding() && replica.isOpen(tile, player.selected().map((unit) => unit.id))) {
-      player.orderMove(tile)
-      view.ping(tile.x + 0.5, tile.y + 0.5, false)
-    }
+    applyClick(tile, picked, replica, player, view, event)
     refreshCursor(event.clientX, event.clientY)
   })
 
@@ -269,6 +257,69 @@ export function bindInput(
     view.setHovered([])
     keys.release()
   })
+}
+
+export function commandAt(
+  tile: TileCoord,
+  replica: Replica,
+  player: Commander,
+  view: GameView,
+  mods: { ctrlKey: boolean; metaKey: boolean },
+): boolean {
+  if (player.placingType() !== null || player.raisingCity()) {
+    placeAt(tile, replica, player, view)
+    return true
+  }
+  if (!player.commanding() && !player.factorySelected()) return false
+  applyClick(tile, replica.occupant(tile), replica, player, view, mods)
+  return true
+}
+
+function placeAt(tile: TileCoord, replica: Replica, player: Commander, view: GameView) {
+  if (player.raisingCity()) {
+    player.setAim(tile)
+    if (!replica.canRaise(tile)) return
+    player.placeCity(tile)
+    view.showPlacement(null)
+    return
+  }
+  const typeId = player.placingType()
+  const world = replica.world
+  if (typeId === null || !world) return
+  const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
+  const footprint = UNIT_TYPES[typeId].footprint
+  if (!canPlaceFootprint(tile, footprint, world.width, world.height, terrainAt, replica.units)) return
+  if (!replica.nearCity(tile, footprint)) return
+  player.placeBuilding(tile)
+  view.showPlacement(null)
+}
+
+function applyClick(
+  tile: TileCoord | null,
+  picked: UnitSnapshot | undefined,
+  replica: Replica,
+  player: Commander,
+  view: GameView,
+  mods: { ctrlKey: boolean; metaKey: boolean },
+) {
+  const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
+  const shellGround = (mods.ctrlKey || mods.metaKey) && player.commanding() && tile !== null
+  const ownUnit = picked !== undefined && picked.ownerId === replica.playerId
+  if (shellGround && tile && !ownUnit) {
+    player.orderAttackGround(tile)
+    view.ping(tile.x + 0.5, tile.y + 0.5, true)
+  } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
+    player.orderAttack(standing.id)
+    view.ping(standing.x, standing.z, true)
+  } else if (picked && picked.ownerId === replica.playerId) {
+    player.select(picked.id)
+  } else if (tile && player.factorySelected() && replica.isOpen(tile, [])) {
+    player.setRally(tile)
+    view.ping(tile.x + 0.5, tile.y + 0.5, false)
+  } else if (tile && player.commanding() && replica.isOpen(tile, player.selected().map((unit) => unit.id))) {
+    player.orderMove(tile)
+    view.ping(tile.x + 0.5, tile.y + 0.5, false)
+  }
 }
 
 function placeMarquee(marquee: HTMLElement, x0: number, y0: number, x1: number, y1: number) {

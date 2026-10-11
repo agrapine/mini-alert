@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CITY_GROW_SECONDS, layoutCities, populationOf } from '../shared/cities.ts'
+import { CITY_GROW_SECONDS, CITY_MODELS, buildingCost, canPlaceCityBuilding, layoutCities, populationOf, projectCity } from '../shared/cities.ts'
 import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS } from './player.ts'
@@ -276,6 +276,81 @@ describe('buildings', () => {
     expect(game.primaryFactory(human.id)).toBe(0)
   })
 
+  it('prices a city building from that city and uses a grown building', () => {
+    expect(buildingCost(1)).toBe(100)
+    expect(buildingCost(5)).toBe(100)
+    expect(buildingCost(6)).toBe(100)
+    expect(buildingCost(7)).toBe(200)
+    expect(buildingCost(8)).toBe(300)
+    const game = new Game(new World(64, 32))
+    const human = game.addPlayer()
+    game.scenery = {
+      coast: [],
+      holes: [],
+      roads: [],
+      towns: [
+        { x: 8.5, y: 8.5 },
+        { x: 40.5, y: 8.5 },
+      ],
+      seed: 11,
+    }
+    game.bindCities()
+    game.claimCity(game.scenery.towns[0], human.id)
+    game.claimCity(game.scenery.towns[1], human.id)
+    const terrain = terrainOf(game)
+    const bases = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)
+    const openStreet = (index: number) => bases[index].streets.find((road) => road.kind < 6)
+    const smallStreet = openStreet(1)
+    const largeStreet = openStreet(0)
+    expect(smallStreet).toBeDefined()
+    expect(largeStreet).toBeDefined()
+    if (!smallStreet || !largeStreet) return
+    const dweller = game.spawn(human, UnitTypeId.Scout, { x: smallStreet.x, y: smallStreet.y }, 0)
+    let guard = 0
+    while (legalPlot(game, 1) === null && guard < 20) {
+      game.tick(CITY_GROW_SECONDS)
+      guard += 1
+    }
+    dweller.health = 0
+    game.tick(0)
+    game.spawn(human, UnitTypeId.Scout, { x: largeStreet.x, y: largeStreet.y }, 0)
+    while (cityPop(game, 0) <= 6 && guard < 50) {
+      game.tick(CITY_GROW_SECONDS)
+      guard += 1
+    }
+    const large = cityPop(game, 0)
+    const small = cityPop(game, 1)
+    expect(large).toBeGreaterThan(6)
+    expect(buildingCost(large)).toBeGreaterThan(buildingCost(small))
+    const wide = legalPlot(game, 0)
+    const narrow = legalPlot(game, 1)
+    expect(wide).not.toBeNull()
+    expect(narrow).not.toBeNull()
+    if (!wide || !narrow) return
+    const income = game.creditIncome(human.id)
+    const purse = human.credits
+    human.credits = buildingCost(large) - 1
+    expect(game.placeCityBuilding(human.id, wide)).toBe(false)
+    human.credits = purse
+    expect(game.placeCityBuilding(human.id, { x: 63, y: 31 })).toBe(false)
+    expect(game.placeCityBuilding(human.id, wide)).toBe(true)
+    expect(human.credits).toBeCloseTo(purse - buildingCost(large))
+    expect(game.creditIncome(human.id)).toBe(income + CREDIT_PER_POPULATION)
+    expect(game.placeCityBuilding(human.id, narrow)).toBe(true)
+    expect(human.credits).toBeCloseTo(purse - buildingCost(large) - buildingCost(small))
+    expect(game.creditIncome(human.id)).toBe(income + CREDIT_PER_POPULATION * 2)
+    expect(game.units.filter((unit) => unit.health > 0)).toHaveLength(1)
+    const largeSite = game.cityStates()[0].sites[0]
+    expect(largeSite.model).toBeGreaterThanOrEqual(0)
+    expect(largeSite.model).toBeLessThan(CITY_MODELS)
+    const replay = projectCity(bases[0], game.cityStates()[0].grown, terrain, game.world.width, game.world.height, game.cityStates()[0].sites)
+    const built = replay.buildings.find((building) => building.x === wide.x && building.y === wide.y)
+    expect(built?.model).toBe(largeSite.model)
+    expect(built?.yaw).toBe(largeSite.yaw)
+    expect(built?.keep).toBe(false)
+    expect(game.pathfinder.isWalkable(wide.x, wide.y, -1)).toBe(false)
+  })
+
   it('holds a finished turret in place while it fires', () => {
     const game = new Game(new World(24, 24))
     const human = game.addPlayer()
@@ -297,6 +372,31 @@ describe('buildings', () => {
     expect(turret.path).toEqual([])
   })
 })
+
+function cityPop(game: Game, index: number): number {
+  const terrain = terrainOf(game)
+  const bases = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)
+  const state = game.cityStates()[index]
+  return populationOf(
+    projectCity(bases[index], state.grown, terrain, game.world.width, game.world.height, state.sites),
+    state.ruins,
+  )
+}
+
+function legalPlot(game: Game, index: number): { x: number; y: number } | null {
+  const terrain = terrainOf(game)
+  const bases = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)
+  const state = game.cityStates()[index]
+  const layout = projectCity(bases[index], state.grown, terrain, game.world.width, game.world.height, state.sites)
+  for (let y = 0; y < game.world.height; y++) {
+    for (let x = 0; x < game.world.width; x++) {
+      if (!canPlaceCityBuilding(layout, x, y, terrain, game.world.width, game.world.height)) continue
+      if (!game.pathfinder.isWalkable(x, y, -1)) continue
+      return { x, y }
+    }
+  }
+  return null
+}
 
 function quiet(game: Game, x: number, y: number) {
   game.claimCity({ x: x + 0.5, y: y + 0.5 }, 0)

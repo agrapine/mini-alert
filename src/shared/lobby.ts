@@ -195,6 +195,7 @@ export type LobbyClientMessage =
 export type WaitingRoom = {
   kind: LobbyServerKind.Waiting
   you: Person
+  token: string
   people: Person[]
   games: GameCard[]
   chat: ChatLine[]
@@ -203,6 +204,7 @@ export type WaitingRoom = {
 export type GameLobbyState = {
   kind: LobbyServerKind.GameLobby
   you: Person
+  token: string
   gameId: number
   hostId: number
   status: RoomStatus

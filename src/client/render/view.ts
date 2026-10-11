@@ -7,7 +7,7 @@ import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
 import { buildIsland } from './island.ts'
-import { Minimap } from './minimap.ts'
+import { Minimap, type MinimapCommand } from './minimap.ts'
 import { loadProps } from './props.ts'
 import { Stage, cameraYaw } from './stage.ts'
 import { Particles } from './particles.ts'
@@ -126,7 +126,7 @@ export class GameView {
       const state = states[index]
       if (!state || state.ownerId !== playerId) continue
       const layout = settledCity(
-        projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height),
+        projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height, state.sites ?? []),
         state.ruins,
       )
       sights.push({ ownerId: playerId, ...citySightOrigin(layout) })
@@ -146,7 +146,16 @@ export class GameView {
     this.fog?.reset()
   }
 
+  setMinimapCommand(command: MinimapCommand) {
+    this.minimap?.setCommand(command)
+  }
+
+  setMinimapHover(hover: (tile: TileCoord | null) => void) {
+    this.minimap?.setHover(hover)
+  }
+
   dispose() {
+    this.minimap?.dispose()
     const material = this.primaryMark.material
     material.map?.dispose()
     material.dispose()

@@ -133,6 +133,8 @@ export class ServerHost {
       this.game.cancelTraining(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.PlaceBuilding) {
       this.game.placeBuilding(playerId, message.typeId, message.tile)
+    } else if (message.kind === ClientMessageKind.PlaceCity) {
+      this.game.placeCityBuilding(playerId, message.tile)
     } else if (message.kind === ClientMessageKind.CancelBuilding) {
       this.game.cancelBuild(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.SetPrimary) {

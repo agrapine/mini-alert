@@ -1,12 +1,13 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
+import { holdSeatToken } from './client/seat.ts'
 import { Commander } from './client/commander.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
 import { rememberedName, rememberName } from './client/player-name.ts'
 import { bindMenu } from './client/menu.ts'
 import { Net } from './client/net.ts'
-import { bindInput } from './client/input/pointer.ts'
+import { bindInput, commandAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
 import { layoutCities, populationOf, projectCity, type CityLayout } from './shared/cities.ts'
@@ -145,6 +146,7 @@ net.onLobby = (message) => {
     return
   }
   if (message.kind === LobbyServerKind.Waiting) {
+    holdSeatToken(message.token)
     leaveMatch()
     music.silent()
     preview = null
@@ -152,6 +154,7 @@ net.onLobby = (message) => {
     claimName(message.you.name)
     return
   }
+  holdSeatToken(message.token)
   factions = message.factions
   seatId = message.seatId
   if (message.spectating !== spectating) {
@@ -229,6 +232,10 @@ function mountWorld() {
   const view = new GameView(viewCanvas, viewStatus, world.width, world.height)
   live.view = view
   view.mountTerrain(world)
+  view.setMinimapCommand((tile, mods) => commandAt(tile, replica, player, view, mods))
+  view.setMinimapHover((tile) => {
+    if (player.raisingCity()) player.setAim(tile)
+  })
   view.resize()
   aimed = false
   shownCredits = replica.credits
@@ -328,15 +335,16 @@ if (spawnBar) {
 }
 if (buildBar) {
   for (const type of [FACTORY, TURRET]) {
-    buildButtons.push(createBuild(buildBar, type.id, type.label, type.cost, () => player.armBuilding(type.id)))
+    buildButtons.push(createBuild(buildBar, type.id, `${type.label} ${type.cost}`, () => player.armBuilding(type.id)))
   }
+  buildButtons.push(createBuild(buildBar, null, 'Building', () => player.armCity()))
 }
 
 const COUNT_SECONDS = 0.15
 let shownCredits = replica.credits
 let cityLayouts: CityLayout[] = []
 let evolvedCities: CityLayout[] = []
-let shownGrown: number[] = []
+let shownStamp: string[] = []
 let laidOut: WorldSnapshot | null = null
 
 function heldCities(): { cities: number; population: number } {
@@ -347,19 +355,22 @@ function heldCities(): { cities: number; population: number } {
     laidOut = world
     cityLayouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
     evolvedCities = cityLayouts.slice()
-    shownGrown = cityLayouts.map(() => -1)
+    shownStamp = cityLayouts.map(() => '')
   }
   let cities = 0
   let population = 0
   for (let i = 0; i < cityLayouts.length; i++) {
-    const grown = replica.cities[i]?.grown ?? 0
-    if (shownGrown[i] !== grown) {
-      evolvedCities[i] = projectCity(cityLayouts[i], grown, world.terrain, world.width, world.height)
-      shownGrown[i] = grown
+    const state = replica.cities[i]
+    const grown = state?.grown ?? 0
+    const sites = state?.sites ?? []
+    const stamp = `${grown}:${sites.map((site) => `${site.at},${site.x},${site.y},${site.model},${site.yaw}`).join('.')}`
+    if (shownStamp[i] !== stamp) {
+      evolvedCities[i] = projectCity(cityLayouts[i], grown, world.terrain, world.width, world.height, sites)
+      shownStamp[i] = stamp
     }
-    if (replica.cities[i]?.ownerId !== playerId) continue
+    if (state?.ownerId !== playerId) continue
     cities += 1
-    population += populationOf(evolvedCities[i], replica.cities[i]?.ruins ?? [])
+    population += populationOf(evolvedCities[i], state.ruins)
   }
   return { cities, population }
 }
@@ -400,8 +411,15 @@ const refreshHud = (dt: number) => {
   }
   const armed = player.placingType()
   const pending = structureProgress()
+  const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
   for (const entry of buildButtons) {
-    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    if (entry.id === null) {
+      entry.label.textContent = quoted === null ? 'Building' : `Building ${quoted.toLocaleString('en-US')}`
+      paintBuild(entry, 0, player.raisingCity(), true)
+      continue
+    }
+    const supply = UNIT_TYPES[entry.id].supply
+    const room = army + queued + supply <= held.population
     paintBuild(entry, pending.get(entry.id) ?? 0, armed === entry.id, room)
   }
 }
@@ -416,9 +434,10 @@ type UnitOrder = {
 }
 
 type BuildButton = {
-  id: UnitTypeId
+  id: UnitTypeId | null
   button: HTMLButtonElement
   fill: HTMLElement
+  label: HTMLElement
 }
 
 function createUnitOrder(
@@ -470,7 +489,7 @@ function createUnitOrder(
   return { id, main, fill, count, minus, plus }
 }
 
-function createBuild(bar: HTMLElement, id: UnitTypeId, name: string, cost: number, onAdd: () => void): BuildButton {
+function createBuild(bar: HTMLElement, id: UnitTypeId | null, name: string, onAdd: () => void): BuildButton {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'meter'
@@ -478,14 +497,14 @@ function createBuild(bar: HTMLElement, id: UnitTypeId, name: string, cost: numbe
   fill.className = 'fill'
   const label = document.createElement('span')
   label.className = 'label'
-  label.textContent = `${name} ${cost}`
+  label.textContent = name
   button.append(fill, label)
   button.addEventListener('click', () => {
     if (button.disabled) return
     onAdd()
   })
   bar.append(button)
-  return { id, button, fill }
+  return { id, button, fill, label }
 }
 
 function paintUnit(entry: UnitOrder, count: number, progress: number, enabled: boolean) {

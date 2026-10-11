@@ -8,6 +8,8 @@ import type { Replica } from './replica.ts'
 export class Commander {
   private selectedIds: number[] = []
   private placing: UnitTypeId | null = null
+  private raising = false
+  private aim: TileCoord | null = null
   private spectating = false
   private readonly replica: Replica
   private readonly port: ClientPort
@@ -22,6 +24,8 @@ export class Commander {
     if (!on) return
     this.selectedIds = []
     this.placing = null
+    this.raising = false
+    this.aim = null
   }
 
   select(id: number | null) {
@@ -125,18 +129,48 @@ export class Commander {
     return this.placing
   }
 
+  raisingCity(): boolean {
+    return this.raising
+  }
+
+  aimedTile(): TileCoord | null {
+    return this.aim
+  }
+
+  setAim(tile: TileCoord | null) {
+    this.aim = tile
+  }
+
   armBuilding(typeId: UnitTypeId) {
     if (this.spectating) return
+    this.raising = false
+    this.aim = null
     this.placing = this.placing === typeId ? null : typeId
+  }
+
+  armCity() {
+    if (this.spectating) return
+    this.placing = null
+    this.raising = !this.raising
+    if (!this.raising) this.aim = null
   }
 
   cancelPlace() {
     this.placing = null
+    this.raising = false
+    this.aim = null
   }
 
   placeBuilding(tile: TileCoord) {
     if (this.spectating || this.placing === null) return
     this.port.send({ kind: ClientMessageKind.PlaceBuilding, typeId: this.placing, tile })
     this.placing = null
+  }
+
+  placeCity(tile: TileCoord) {
+    if (this.spectating || !this.raising) return
+    this.port.send({ kind: ClientMessageKind.PlaceCity, tile })
+    this.raising = false
+    this.aim = null
   }
 }

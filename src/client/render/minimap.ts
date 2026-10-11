@@ -4,6 +4,12 @@ import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
 const DOT = 3.25
+const DRAG_PX = 8
+
+export type MinimapCommand = (
+  tile: TileCoord,
+  mods: { ctrlKey: boolean; metaKey: boolean },
+) => boolean
 
 export class Minimap {
   private readonly world: WorldSnapshot
@@ -12,10 +18,16 @@ export class Minimap {
   private readonly layouts: CityLayout[]
   private evolved: CityLayout[]
   private shownGrown: number[]
+  private shownSites: string[]
+  private hover: ((tile: TileCoord | null) => void) | null = null
   private cityStates: readonly CityState[] = []
   private readonly image: ImageData
   private readonly ctx: CanvasRenderingContext2D
-  private dragging = false
+  private tracking = false
+  private dragged = false
+  private downX = 0
+  private downY = 0
+  private command: MinimapCommand | null = null
 
   constructor(
     private readonly root: HTMLElement,
@@ -35,25 +47,73 @@ export class Minimap {
     this.layouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
     this.evolved = this.layouts.slice()
     this.shownGrown = this.layouts.map(() => 0)
-    this.root.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return
-      this.dragging = true
-      this.jump(event.clientX, event.clientY)
-      try {
-        this.root.setPointerCapture(event.pointerId)
-      } catch {
-        // Pointer capture is unavailable for this event. Moves over the minimap still pan.
-      }
-    })
-    this.root.addEventListener('pointermove', (event) => {
-      if (!this.dragging) return
-      this.jump(event.clientX, event.clientY)
-    })
-    const stop = () => {
-      this.dragging = false
+    this.shownSites = this.layouts.map(() => '')
+    this.root.addEventListener('pointerdown', this.onPointerDown)
+    this.root.addEventListener('pointermove', this.onPointerMove)
+    this.root.addEventListener('pointerup', this.onPointerUp)
+    this.root.addEventListener('pointercancel', this.onPointerCancel)
+    this.root.addEventListener('pointerleave', this.onPointerLeave)
+  }
+
+  setHover(hover: (tile: TileCoord | null) => void) {
+    this.hover = hover
+  }
+
+  setCommand(command: MinimapCommand) {
+    this.command = command
+  }
+
+  dispose() {
+    this.root.removeEventListener('pointerdown', this.onPointerDown)
+    this.root.removeEventListener('pointermove', this.onPointerMove)
+    this.root.removeEventListener('pointerup', this.onPointerUp)
+    this.root.removeEventListener('pointercancel', this.onPointerCancel)
+    this.root.removeEventListener('pointerleave', this.onPointerLeave)
+  }
+
+  private readonly onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0) return
+    this.tracking = true
+    this.dragged = false
+    this.downX = event.clientX
+    this.downY = event.clientY
+    try {
+      this.root.setPointerCapture(event.pointerId)
+    } catch {
+      // Pointer capture is unavailable for this event. Moves over the minimap still pan.
     }
-    this.root.addEventListener('pointerup', stop)
-    this.root.addEventListener('pointercancel', stop)
+  }
+
+  private readonly onPointerMove = (event: PointerEvent) => {
+    this.hover?.(this.tileAt(event.clientX, event.clientY))
+    if (!this.tracking) return
+    if (!this.dragged) {
+      const dx = event.clientX - this.downX
+      const dy = event.clientY - this.downY
+      if (dx * dx + dy * dy < DRAG_PX * DRAG_PX) return
+      this.dragged = true
+    }
+    this.jump(event.clientX, event.clientY)
+  }
+
+  private readonly onPointerUp = (event: PointerEvent) => {
+    if (!this.tracking || event.button !== 0) return
+    const dragged = this.dragged
+    this.tracking = false
+    this.dragged = false
+    if (dragged) return
+    const tile = this.tileAt(event.clientX, event.clientY)
+    if (tile && this.command?.(tile, event)) return
+    this.jump(event.clientX, event.clientY)
+  }
+
+  private readonly onPointerCancel = () => {
+    this.tracking = false
+    this.dragged = false
+  }
+
+  private readonly onPointerLeave = () => {
+    this.hover?.(null)
   }
 
   draw(
@@ -117,9 +177,12 @@ export class Minimap {
       const state = this.cityStates[i]
       if (!state) continue
       const grown = state.grown ?? 0
-      if (this.shownGrown[i] !== grown) {
-        this.evolved[i] = projectCity(this.layouts[i], grown, this.world.terrain, this.world.width, this.world.height)
+      const sites = state.sites ?? []
+      const siteKey = sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
+      if (this.shownGrown[i] !== grown || this.shownSites[i] !== siteKey) {
+        this.evolved[i] = projectCity(this.layouts[i], grown, this.world.terrain, this.world.width, this.world.height, sites)
         this.shownGrown[i] = grown
+        this.shownSites[i] = siteKey
       }
       const layout = this.evolved[i]
       const color = state.color > 0 ? state.color : NEUTRAL_CITY
@@ -222,6 +285,15 @@ export class Minimap {
     const x = ((clientX - rect.left) / rect.width) * this.world.width
     const z = ((clientY - rect.top) / rect.height) * this.world.height
     this.onJump(x, z)
+  }
+
+  private tileAt(clientX: number, clientY: number): TileCoord | null {
+    const rect = this.root.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    const x = Math.floor(((clientX - rect.left) / rect.width) * this.world.width)
+    const y = Math.floor(((clientY - rect.top) / rect.height) * this.world.height)
+    if (x < 0 || y < 0 || x >= this.world.width || y >= this.world.height) return null
+    return { x, y }
   }
 }
 

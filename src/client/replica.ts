@@ -8,7 +8,7 @@ import {
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
-import { footprintNearCity, layoutCities, projectCity, settledCity, type CityLayout } from '../shared/cities.ts'
+import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, layoutCities, populationOf, projectCity, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
 import { UNIT_TYPES } from '../shared/unit-types.ts'
 import { isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
@@ -28,6 +28,7 @@ export class Replica {
   private readonly clearedTiles = new Set<string>()
   private bases: CityLayout[] | null = null
   private evolved: CityLayout[] = []
+  private full: CityLayout[] = []
   private blockedBuildings = new Set<string>()
   private blockKey = ''
 
@@ -114,20 +115,48 @@ export class Replica {
     return footprintNearCity(owned, origin, footprint)
   }
 
+  canRaise(tile: TileCoord): boolean {
+    if (this.citySizeAt(tile, true) === null || !this.isOpen(tile, [])) return false
+    const cost = this.cityBuildCost(tile)
+    return cost !== null && this.credits >= cost
+  }
+
+  cityBuildCost(tile: TileCoord | null): number | null {
+    if (!tile) return null
+    const size = this.citySizeAt(tile, false)
+    return size === null ? null : buildingCost(size)
+  }
+
+  private citySizeAt(tile: TileCoord, plotOnly: boolean): number | null {
+    const world = this.world
+    if (!world || this.playerId === null) return null
+    this.cityLayouts()
+    for (let i = 0; i < this.full.length; i++) {
+      const state = this.cities[i]
+      const layout = this.full[i]
+      if (!state || !layout || state.ownerId !== this.playerId) continue
+      const plot = canPlaceCityBuilding(layout, tile.x, tile.y, world.terrain, world.width, world.height)
+      if (!plot && (plotOnly || !cityContains(layout, tile.x, tile.y))) continue
+      return populationOf(layout, state.ruins)
+    }
+    return null
+  }
+
   private cityLayouts(): CityLayout[] {
     const world = this.world
     if (!world) return []
     const key = this.cities
-      .map((city) => `${city.grown}:${city.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')}`)
+      .map((city) => {
+        const sites = (city.sites ?? []).map((site) => `${site.at},${site.x},${site.y},${site.model},${site.yaw}`).join(';')
+        return `${city.grown}:${city.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')}:${sites}`
+      })
       .join(',')
     if (this.bases && key === this.blockKey) return this.evolved
     if (!this.bases) this.bases = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
-    this.evolved = this.bases.map((base, index) =>
-      settledCity(
-        projectCity(base, this.cities[index]?.grown ?? 0, world.terrain, world.width, world.height),
-        this.cities[index]?.ruins ?? [],
-      ),
+    this.full = this.bases.map((base, index) =>
+      projectCity(base, this.cities[index]?.grown ?? 0, world.terrain, world.width, world.height, this.cities[index]?.sites ?? []),
     )
+    this.evolved = this.full.map((layout, index) => settledCity(layout, this.cities[index]?.ruins ?? []))
     const blocked = new Set<string>()
     for (const city of this.evolved) {
       for (const building of city.buildings) blocked.add(`${building.x},${building.y}`)

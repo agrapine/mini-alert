@@ -248,4 +248,150 @@ describe('lobby', () => {
     expect(latest<WaitingRoom>(hostSock, LobbyServerKind.Waiting).games).toEqual([])
     expect(opened(lobby).games.has(created.gameId)).toBe(false)
   })
+
+  it('pauses AI and mechanics while nobody is in a live match, then resumes', async () => {
+    const lobby = new Lobby()
+    const hostSock = fake()
+    const watchSock = fake()
+    const host = lobby.connect(hostSock)
+    lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const created = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
+    lobby.onLobby(host, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    lobby.onLobby(host, { kind: LobbyClientKind.SetSlotAi, index: 1 })
+    lobby.onLobby(host, { kind: LobbyClientKind.StartGame })
+    expect(latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby).status).toBe(RoomStatus.Playing)
+
+    const match = opened(lobby).games.get(created.gameId)?.match
+    expect(match).toBeTruthy()
+    if (!match) return
+    const human = match.factions.find((faction) => !faction.ai)
+    expect(human).toBeTruthy()
+    if (!human) return
+    const credits = () => match.host.game.player(human.playerId)?.credits ?? 0
+    const started = credits()
+    lobby.tick(10)
+    const played = credits()
+    expect(played).toBeGreaterThan(started)
+
+    lobby.disconnect(host)
+    expect(opened(lobby).games.has(created.gameId)).toBe(true)
+    lobby.tick(30)
+    expect(credits()).toBe(played)
+
+    const watcher = lobby.connect(watchSock)
+    lobby.onLobby(watcher, { kind: LobbyClientKind.JoinGame, gameId: created.gameId })
+    expect(latest<GameLobbyState>(watchSock, LobbyServerKind.GameLobby).spectating).toBe(true)
+    lobby.tick(10)
+    expect(credits()).toBeGreaterThan(played)
+  })
+
+  it('ends a match when the last human leaves, and when every human is defeated', async () => {
+    const lobby = new Lobby()
+    const hostSock = fake()
+    const foeSock = fake()
+    const watchSock = fake()
+    const host = lobby.connect(hostSock)
+    const foe = lobby.connect(foeSock)
+    lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const created = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
+    lobby.onLobby(foe, { kind: LobbyClientKind.JoinGame, gameId: created.gameId })
+    lobby.onLobby(host, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    lobby.onLobby(foe, { kind: LobbyClientKind.TakeSlot, index: 1 })
+    lobby.onLobby(host, { kind: LobbyClientKind.SetSlotAi, index: 2 })
+    lobby.onLobby(host, { kind: LobbyClientKind.StartGame })
+
+    const watcher = lobby.connect(watchSock)
+    lobby.onLobby(watcher, { kind: LobbyClientKind.JoinGame, gameId: created.gameId })
+    lobby.onLobby(foe, { kind: LobbyClientKind.LeaveRoom })
+    expect(opened(lobby).games.has(created.gameId)).toBe(true)
+    expect(latest<WaitingRoom>(foeSock, LobbyServerKind.Waiting).you.id).toBe(foe.id)
+
+    const match = opened(lobby).games.get(created.gameId)?.match
+    expect(match).toBeTruthy()
+    if (!match) return
+    const sim = match.host as unknown as { ais: unknown[] }
+    lobby.onLobby(host, { kind: LobbyClientKind.LeaveRoom })
+    expect(latest<WaitingRoom>(hostSock, LobbyServerKind.Waiting).games).toEqual([])
+    expect(latest<WaitingRoom>(watchSock, LobbyServerKind.Waiting).you.id).toBe(watcher.id)
+    expect(opened(lobby).games.has(created.gameId)).toBe(false)
+    expect(sim.ais).toEqual([])
+
+    const again = new Lobby()
+    const soloSock = fake()
+    const solo = again.connect(soloSock)
+    again.onLobby(solo, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const second = latest<GameLobbyState>(soloSock, LobbyServerKind.GameLobby)
+    again.onLobby(solo, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    again.onLobby(solo, { kind: LobbyClientKind.SetSlotAi, index: 1 })
+    again.onLobby(solo, { kind: LobbyClientKind.StartGame })
+    const live = opened(again).games.get(second.gameId)?.match
+    expect(live).toBeTruthy()
+    if (!live) return
+    const human = live.factions.find((faction) => !faction.ai)
+    const bot = live.factions.find((faction) => faction.ai)
+    expect(human && bot).toBeTruthy()
+    if (!human || !bot) return
+    for (const unit of live.host.game.units) {
+      if (unit.ownerId === human.playerId) unit.health = 0
+    }
+    for (const town of live.host.game.scenery.towns) live.host.game.claimCity(town, bot.playerId)
+    const purse = () => live.host.game.player(bot.playerId)?.credits ?? 0
+    again.tick(1 / 30)
+    expect(opened(again).games.has(second.gameId)).toBe(true)
+    expect(latest<GameLobbyState>(soloSock, LobbyServerKind.GameLobby).factions.find((faction) => faction.playerId === human.playerId)?.defeated).toBe(true)
+    const frozen = purse()
+    again.tick(10)
+    expect(purse()).toBe(frozen)
+    again.disconnect(solo)
+    expect(opened(again).games.has(second.gameId)).toBe(true)
+    again.onLobby(solo, { kind: LobbyClientKind.LeaveRoom })
+    expect(opened(again).games.has(second.gameId)).toBe(false)
+  })
+
+  it('returns a refreshed player to the same seat', async () => {
+    const token = 'abc123abc123abc123abc123abc123ab'
+    const lobby = new Lobby()
+    const hostSock = fake()
+    const host = lobby.connect(hostSock, token)
+    lobby.onLobby(host, { kind: LobbyClientKind.SetName, name: 'Ada' })
+    lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const created = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
+    expect(created.token).toBe(token)
+    lobby.onLobby(host, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    lobby.onLobby(host, { kind: LobbyClientKind.SetSlotAi, index: 1 })
+    lobby.disconnect(host)
+
+    const backSock = fake()
+    const back = lobby.connect(backSock, token)
+    expect(back.id).toBe(host.id)
+    const restored = latest<GameLobbyState>(backSock, LobbyServerKind.GameLobby)
+    expect(restored.gameId).toBe(created.gameId)
+    expect(restored.hostId).toBe(host.id)
+    expect(restored.slots[0]).toMatchObject({ kind: SlotKind.Human, name: 'Ada', clientId: host.id })
+
+    lobby.onLobby(back, { kind: LobbyClientKind.StartGame })
+    const playing = latest<GameLobbyState>(backSock, LobbyServerKind.GameLobby)
+    expect(playing.status).toBe(RoomStatus.Playing)
+    expect(playing.spectating).toBe(false)
+    const seat = playing.seatId
+    lobby.disconnect(back)
+
+    const againSock = fake()
+    const again = lobby.connect(againSock, token)
+    expect(again.id).toBe(host.id)
+    const resumed = latest<GameLobbyState>(againSock, LobbyServerKind.GameLobby)
+    expect(resumed.spectating).toBe(false)
+    expect(resumed.seatId).toBe(seat)
+    expect(againSock.game.some((message) => message.kind === ServerMessageKind.World)).toBe(true)
+    expect(againSock.game.some((message) => message.kind === ServerMessageKind.Welcome && message.playerId === seat)).toBe(true)
+
+    const otherSock = fake()
+    const other = lobby.connect(otherSock, token)
+    expect(other.id).not.toBe(host.id)
+    expect(latest<WaitingRoom>(otherSock, LobbyServerKind.Waiting).token).not.toBe(token)
+  })
 })

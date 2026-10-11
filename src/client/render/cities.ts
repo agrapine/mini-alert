@@ -81,6 +81,7 @@ type CityView = {
   ringMaterial: MeshBasicMaterial
   shown: number
   ruinKey: string
+  siteKey: string
 }
 
 type Kit = {
@@ -152,6 +153,7 @@ export class CityLayer {
         shown: 0,
         buildingMaterial,
         ruinKey: '',
+        siteKey: '',
       }
       this.fill(view)
       this.root.add(cluster)
@@ -168,11 +170,14 @@ export class CityLayer {
       const view = this.views[index]
       const grown = states[index]?.grown ?? 0
       const ruins = states[index]?.ruins ?? []
+      const sites = states[index]?.sites ?? []
       const ruinKey = ruins.map((tile) => `${tile.x},${tile.y}`).join('|')
-      if (grown === view.grown && ruinKey === view.ruinKey) continue
-      if (grown !== view.grown) {
-        view.projected = projectCity(view.base, grown, world.terrain, world.width, world.height)
+      const siteKey = sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
+      if (grown === view.grown && ruinKey === view.ruinKey && siteKey === view.siteKey) continue
+      if (grown !== view.grown || siteKey !== view.siteKey) {
+        view.projected = projectCity(view.base, grown, world.terrain, world.width, world.height, sites)
         view.grown = grown
+        view.siteKey = siteKey
       }
       view.ruinKey = ruinKey
       view.layout = settledCity(view.projected, ruins)

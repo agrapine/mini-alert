@@ -284,7 +284,9 @@ function homeCenter(brain: Brain, layouts: readonly CityLayout[]): TileCoord | n
 function cityLayouts(brain: Brain): CityLayout[] {
   if (brain.towns.length === 0 || brain.terrain.length === 0) return []
   const bases = layoutCities(brain.towns, brain.seed, brain.terrain, brain.width, brain.height)
-  return bases.map((base, index) => projectCity(base, brain.cities[index]?.grown ?? 0, brain.terrain, brain.width, brain.height))
+  return bases.map((base, index) =>
+    projectCity(base, brain.cities[index]?.grown ?? 0, brain.terrain, brain.width, brain.height, brain.cities[index]?.sites ?? []),
+  )
 }
 
 function siteNear(brain: Brain, layouts: readonly CityLayout[], origin: TileCoord, footprint: number): TileCoord | null {
@@ -359,7 +361,8 @@ function population(brain: Brain): number {
   for (let i = 0; i < layouts.length; i++) {
     const city = brain.cities[i]
     if (!city || city.ownerId !== brain.playerId) continue
-    people += populationOf(projectCity(layouts[i], city.grown, brain.terrain, brain.width, brain.height), city.ruins)
+    const sites = city.sites ?? []
+    people += populationOf(projectCity(layouts[i], city.grown, brain.terrain, brain.width, brain.height, sites), city.ruins)
   }
   return people
 }

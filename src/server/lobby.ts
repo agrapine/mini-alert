@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { randomBytes } from 'node:crypto'
 import {
   DEFAULT_MAP_SIZE,
   AI_PACE_DEFAULT,
@@ -50,8 +51,9 @@ type Slot = {
 
 type Member = {
   id: number
+  token: string
   name: string
-  socket: LobbySocket
+  socket: LobbySocket | null
   gameId: number | null
   admin: boolean
 }
@@ -86,22 +88,43 @@ export class Lobby {
   private nextId = 1
   private nextGame = 1
   private readonly members = new Map<number, Member>()
+  private readonly tokens = new Map<string, number>()
   private readonly games = new Map<number, GameRoom>()
   private readonly hallChat: ChatLine[] = []
 
-  connect(socket: LobbySocket): LobbyMember {
-    const member: Member = { id: this.nextId++, name: '', socket, gameId: null, admin: false }
+  connect(socket: LobbySocket, token?: string | null): LobbyMember {
+    const clean = cleanToken(token)
+    if (clean) {
+      const prior = this.memberByToken(clean)
+      if (prior && !prior.socket) {
+        prior.socket = socket
+        this.reenter(prior)
+        return prior
+      }
+    }
+    const member: Member = {
+      id: this.nextId++,
+      token: clean && !this.tokens.has(clean) ? clean : this.mintToken(),
+      name: '',
+      socket,
+      gameId: null,
+      admin: false,
+    }
     member.name = `Player ${member.id}`
+    this.tokens.set(member.token, member.id)
     this.members.set(member.id, member)
     this.refreshWaiting()
     return member
   }
 
-  disconnect(member: LobbyMember) {
+  disconnect(member: LobbyMember, socket?: LobbySocket) {
     const client = this.members.get(member.id)
-    if (!client) return
-    this.members.delete(client.id)
-    if (client.gameId !== null) this.dropFromGame(client, false)
+    if (!client?.socket) return
+    if (socket && client.socket !== socket) return
+    client.socket = null
+    this.detachSeat(client)
+    const game = this.gameOf(client)
+    if (game) this.refreshGame(game)
     this.refreshWaiting()
   }
 
@@ -134,7 +157,10 @@ export class Lobby {
   tick(dt: number) {
     for (const game of this.games.values()) {
       if (!game.match) continue
+      if (!this.awake(game)) continue
       this.noteDefeats(game)
+      if (!this.games.has(game.id) || !game.match) continue
+      if (this.liveHumans(game) === 0) continue
       game.match.host.tick(dt)
     }
   }
@@ -171,7 +197,7 @@ export class Lobby {
     game.memberIds.push(client.id)
     if (game.status === RoomStatus.Playing && game.match) {
       const view = game.match.factions[0]?.playerId ?? 0
-      const seat = game.match.host.attach(view, false, (message) => client.socket.sendGame(message))
+      const seat = game.match.host.attach(view, false, (message) => client.socket?.sendGame(message))
       game.match.seats.set(client.id, seat)
       this.refreshGame(game)
       this.refreshWaiting()
@@ -186,8 +212,9 @@ export class Lobby {
   private leaveGame(client: Member) {
     const game = this.gameOf(client)
     if (!game) return
-    if (game.status === RoomStatus.Playing && game.match?.seats.get(client.id)?.playing) return
+    if (game.status === RoomStatus.Playing && game.match?.seats.get(client.id)?.playing) this.forfeit(game, client)
     this.dropFromGame(client, true)
+    if (this.games.has(game.id) && game.status === RoomStatus.Playing && this.liveHumans(game) === 0) this.endGame(game)
     this.refreshWaiting()
   }
 
@@ -308,7 +335,9 @@ export class Lobby {
       const playing = order >= 0
       const playerId = playing ? sim.players[order].id : factions[0].playerId
       if (playing) owners.set(playerId, id)
-      const seat = host.attach(playerId, playing, (message) => member.socket.sendGame(message))
+      if (!member.socket) continue
+      const link = member.socket
+      const seat = host.attach(playerId, playing, (message) => link.sendGame(message))
       seats.set(id, seat)
     }
     this.refreshGame(game)
@@ -366,6 +395,10 @@ export class Lobby {
     if (!client.admin || typeof gameId !== 'number') return
     const game = this.games.get(gameId)
     if (!game) return
+    this.endGame(game)
+  }
+
+  private endGame(game: GameRoom) {
     game.token += 1
     game.generating = false
     const memberIds = game.memberIds.slice()
@@ -386,6 +419,34 @@ export class Lobby {
     this.refreshWaiting()
   }
 
+  private forfeit(game: GameRoom, client: Member) {
+    const match = game.match
+    if (!match) return
+    for (const faction of match.factions) {
+      if (faction.ai || faction.defeated) continue
+      if (match.owners.get(faction.playerId) !== client.id) continue
+      faction.defeated = true
+      match.host.silence(faction.playerId)
+    }
+    match.seats.get(client.id)?.retire()
+  }
+
+  private liveHumans(game: GameRoom): number {
+    const match = game.match
+    if (!match) return 0
+    let count = 0
+    for (const faction of match.factions) {
+      if (!faction.ai && !faction.defeated) count += 1
+    }
+    return count
+  }
+
+  private onRoomChanged(game: GameRoom) {
+    if (!this.games.has(game.id) || game.status !== RoomStatus.Playing) return
+    if (game.memberIds.length > 0) return
+    if (this.liveHumans(game) === 0) this.endGame(game)
+  }
+
   private dropFromGame(client: Member, tell: boolean) {
     const game = client.gameId === null ? undefined : this.games.get(client.gameId)
     client.gameId = null
@@ -400,9 +461,66 @@ export class Lobby {
       }
       if (game.hostId === client.id) this.transferHost(game)
       if (game.memberIds.length === 0) this.games.delete(game.id)
+    } else this.onRoomChanged(game)
+    this.refreshGame(game)
+    if (tell) client.socket?.send(this.waitingState(client))
+  }
+
+  private reenter(client: Member) {
+    const game = this.gameOf(client)
+    if (!game) {
+      client.gameId = null
+      this.refreshWaiting()
+      return
+    }
+    if (!game.memberIds.includes(client.id)) game.memberIds.push(client.id)
+    if (game.status === RoomStatus.Playing && game.match) {
+      this.seatReturning(game, client)
+      this.refreshGame(game)
+      this.refreshWaiting()
+      game.match.seats.get(client.id)?.sync()
+      return
     }
     this.refreshGame(game)
-    if (tell) client.socket.send(this.waitingState(client))
+    this.refreshWaiting()
+    this.sendPreview(game, client)
+  }
+
+  private seatReturning(game: GameRoom, client: Member) {
+    const match = game.match
+    const link = client.socket
+    if (!match || !link) return
+    const playerId = this.seatId(game, client.id)
+    const faction = match.factions.find((item) => item.playerId === playerId)
+    const playing = playerId !== 0 && !!faction && !faction.defeated
+    const view = playing ? playerId : (match.factions.find((item) => !item.defeated)?.playerId ?? match.factions[0]?.playerId ?? 0)
+    const seat = match.host.attach(view, playing, (message) => link.sendGame(message))
+    match.seats.set(client.id, seat)
+  }
+
+  private detachSeat(client: Member) {
+    const game = this.gameOf(client)
+    const seat = game?.match?.seats.get(client.id)
+    seat?.close()
+    game?.match?.seats.delete(client.id)
+  }
+
+  private awake(game: GameRoom): boolean {
+    for (const id of game.memberIds) {
+      if (this.members.get(id)?.socket) return true
+    }
+    return false
+  }
+
+  private memberByToken(token: string): Member | undefined {
+    const id = this.tokens.get(token)
+    return id === undefined ? undefined : this.members.get(id)
+  }
+
+  private mintToken(): string {
+    let token = randomBytes(16).toString('hex')
+    while (this.tokens.has(token)) token = randomBytes(16).toString('hex')
+    return token
   }
 
   private transferHost(game: GameRoom) {
@@ -525,7 +643,7 @@ export class Lobby {
 
   private refreshWaiting() {
     for (const member of this.members.values()) {
-      if (member.gameId === null) member.socket.send(this.waitingState(member))
+      if (member.gameId === null) member.socket?.send(this.waitingState(member))
     }
   }
 
@@ -533,7 +651,7 @@ export class Lobby {
     if (!this.games.has(game.id)) return
     for (const id of game.memberIds) {
       const member = this.members.get(id)
-      if (member) member.socket.send(this.gameState(game, member))
+      member?.socket?.send(this.gameState(game, member))
     }
   }
 
@@ -545,14 +663,14 @@ export class Lobby {
   }
 
   private sendPreview(game: GameRoom, member: Member) {
-    if (!game.preview) return
+    if (!game.preview || !member.socket) return
     member.socket.send(this.previewMessage(game))
   }
 
   private waitingState(member: Member): WaitingRoom {
     const people: Person[] = []
     for (const client of this.members.values()) {
-      if (client.gameId === null) people.push({ id: client.id, name: client.name })
+      if (client.gameId === null && client.socket) people.push({ id: client.id, name: client.name })
     }
     const games: GameCard[] = []
     for (const game of this.games.values()) {
@@ -567,6 +685,7 @@ export class Lobby {
     return {
       kind: LobbyServerKind.Waiting,
       you: { id: member.id, name: member.name },
+      token: member.token,
       people,
       games,
       chat: this.hallChat.slice(),
@@ -577,6 +696,7 @@ export class Lobby {
     return {
       kind: LobbyServerKind.GameLobby,
       you: { id: member.id, name: member.name },
+      token: member.token,
       gameId: game.id,
       hostId: game.hostId,
       status: game.status,
@@ -639,7 +759,7 @@ export class Lobby {
     for (const id of game.memberIds) {
       if (seated.has(id)) continue
       const member = this.members.get(id)
-      if (member) people.push({ id: member.id, name: member.name })
+      if (member?.socket) people.push({ id: member.id, name: member.name })
     }
     return people
   }
@@ -657,6 +777,12 @@ function standing(game: { units: { ownerId: number; health: number }[]; cityStat
     if (city.ownerId === playerId) return true
   }
   return false
+}
+
+function cleanToken(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const token = value.trim().toLowerCase()
+  return /^[a-f0-9]{32}$/.test(token) ? token : null
 }
 
 function cleanName(value: unknown): string | null {

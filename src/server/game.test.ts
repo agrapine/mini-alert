@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { HEAVY_TANK, MED_TANK, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
+import { shotScatter } from './sim/combat.ts'
 import { Game } from './game.ts'
 import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
@@ -111,7 +112,8 @@ describe('movement', () => {
 
     ticks(game, 40)
     expect(lead.tile).toEqual({ x: 12, y: 2 })
-    expect(trail.tile).toEqual({ x: 11, y: 2 })
+    const yielded = Math.abs(trail.tile.x - 11) + Math.abs(trail.tile.y - 2)
+    expect(yielded).toBeLessThanOrEqual(1)
   })
 
   it('pivots a stopped med tank', () => {
@@ -122,6 +124,51 @@ describe('movement', () => {
     const facing = tank.facing
     tank.drive(STEP)
     expect(Math.abs(tank.facing - facing)).toBeGreaterThan(0.02)
+  })
+
+  it('turns a tank in place instead of driving through the turn', () => {
+    const { game, player } = battle(12, 5)
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 4, y: 2 }, -Math.PI / 2)
+    expect(game.orderMove(player.id, tank.id, { x: 9, y: 2 })).toBe(true)
+    ticks(game, 0.6)
+    expect(Math.hypot(tank.pos.x - 4.5, tank.pos.z - 2.5)).toBeLessThan(0.35)
+    expect(Math.abs(tank.speed)).toBeLessThan(0.15)
+    ticks(game, 8)
+    expect(tank.tile).toEqual({ x: 9, y: 2 })
+  })
+
+  it('gives scouts a turning radius under a third of a tile', () => {
+    const radius = SCOUT.wheelbase / Math.tan(SCOUT.maxSteer)
+    expect(radius).toBeLessThan(1 / 3)
+  })
+
+  it('scatters shots farther with range and with speed', () => {
+    expect(shotScatter(0, 4, 6)).toBe(0)
+    const still = shotScatter(10, 0, 6)
+    const moving = shotScatter(10, 6, 6)
+    expect(still).toBeCloseTo(0.35)
+    expect(moving).toBeGreaterThan(still * 2)
+  })
+
+  it('goes around one idle unit and through one that blocks the only gap', () => {
+    const open = battle(12, 5)
+    const aside = open.game.spawn(open.player, UnitTypeId.MedTank, { x: 5, y: 2 }, 0)
+    const passer = open.game.spawn(open.player, UnitTypeId.MedTank, { x: 1, y: 2 }, Math.PI / 2)
+    expect(open.game.orderMove(open.player.id, passer.id, { x: 10, y: 2 })).toBe(true)
+    expect(passer.path.some((tile) => tile.x === aside.tile.x && tile.y === aside.tile.y)).toBe(false)
+
+    const obstacles = []
+    for (let y = 0; y < 5; y++) if (y !== 2) obstacles.push({ x: 4, y })
+    const game = new Game(new World(10, 5, obstacles))
+    const player = game.addPlayer()
+    const idle = game.spawn(player, UnitTypeId.MedTank, { x: 4, y: 2 }, Math.PI / 2)
+    const mover = game.spawn(player, UnitTypeId.MedTank, { x: 1, y: 2 }, Math.PI / 2)
+    expect(game.orderMove(player.id, mover.id, { x: 8, y: 2 })).toBe(true)
+    expect(mover.path).toContainEqual({ x: 4, y: 2 })
+    ticks(game, 20)
+    expect(mover.tile).toEqual({ x: 8, y: 2 })
+    expect(idle.tile).not.toEqual({ x: 4, y: 2 })
+    expect(game.pathfinder.occupant(8, 2)).toBe(mover.id)
   })
 
   it('does not yaw a scout until it is moving', () => {

@@ -4,6 +4,9 @@
 
 - Cities and trees can be destroyed. 
 - Armies require populations to sustain and build.
+- Improved unit steering & pathing in narow paths
+- Reduce artilery range
+- Increased tank armours
 
 ## 0.2
 

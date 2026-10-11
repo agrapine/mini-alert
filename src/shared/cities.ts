@@ -1,4 +1,4 @@
-import type { MapPoint } from './protocol.ts'
+import type { CitySite, MapPoint } from './protocol.ts'
 import { isWalkableTerrain, type TileCoord } from './tiles.ts'
 
 export const NEUTRAL_CITY = 0xffffff
@@ -11,6 +11,12 @@ export const CITY_SIGHT = 10
 export const SIEGE_RANGE = 6
 export const BUILDING_HP = 120
 export const STREET_HP = 60
+export const CITY_MODELS = 8
+export const BUILDING_COST = 100
+
+export function buildingCost(population: number): number {
+  return BUILDING_COST * Math.max(1, population - 5)
+}
 
 export const enum StreetKind {
   Straight = 0,
@@ -205,7 +211,13 @@ export function growCity(
   height: number,
 ): CityLayout | null {
   const roads = roadTiles(city)
-  const buildings = city.buildings.map((building) => ({ x: building.x, y: building.y, keep: building.keep }))
+  const buildings = city.buildings.map((building) => ({
+    x: building.x,
+    y: building.y,
+    keep: building.keep,
+    model: building.model,
+    yaw: building.yaw,
+  }))
   const roadSet = new Set<number>()
   const buildingSet = new Set<number>()
   for (const road of roads) roadSet.add(key(road.x, road.y))
@@ -229,7 +241,9 @@ export function projectCity(
   terrain: ArrayLike<number>,
   width: number,
   height: number,
+  sites: readonly CitySite[] = [],
 ): CityLayout {
+  if (sites.length > 0) return replayCity(base, grown, terrain, width, height, sites)
   if (grown <= 0) return base
   const cached = projection.get(base.seed)
   let city = base
@@ -293,6 +307,98 @@ function addStreet(
   return compose(roads.concat(best), buildings, city.span, city.seed)
 }
 
+export function canPlaceCityBuilding(
+  city: CityLayout,
+  x: number,
+  y: number,
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+): boolean {
+  const roads = roadTiles(city)
+  const roadSet = new Set<number>()
+  const buildingSet = new Set<number>()
+  for (const road of roads) roadSet.add(key(road.x, road.y))
+  for (const building of city.buildings) buildingSet.add(key(building.x, building.y))
+  const frame = plotFrame(city, roads, roadSet)
+  if (frame.forbidden.has(key(x, y)) || !openLand(x, y, roadSet, buildingSet, terrain, width, height)) return false
+  for (let i = 0; i < roads.length; i++) {
+    const road = roads[i]
+    const openings = frame.openings[i]
+    for (let dir = 0; dir < 4; dir++) {
+      if (openings & (1 << dir)) continue
+      if (road.x + DIR_X[dir] === x && road.y + DIR_Y[dir] === y) return true
+    }
+  }
+  return false
+}
+
+export function insertBuilding(
+  city: CityLayout,
+  plot: { x: number; y: number; model: number; yaw: number },
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+): CityLayout | null {
+  if (!canPlaceCityBuilding(city, plot.x, plot.y, terrain, width, height)) return null
+  const roads = roadTiles(city)
+  const buildings = city.buildings.map((building) => ({
+    x: building.x,
+    y: building.y,
+    keep: building.keep,
+    model: building.model,
+    yaw: building.yaw,
+  }))
+  return compose(roads, buildings.concat({ ...plot, keep: false }), city.span, city.seed)
+}
+
+function replayCity(
+  base: CityLayout,
+  grown: number,
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  sites: readonly CitySite[],
+): CityLayout {
+  let city = base
+  let cursor = 0
+  const place = (at: number) => {
+    while (cursor < sites.length && sites[cursor].at === at) {
+      const site = sites[cursor]
+      cursor += 1
+      const next = insertBuilding(city, site, terrain, width, height)
+      if (next) city = next
+    }
+  }
+  for (let step = 0; step < grown; step++) {
+    place(step)
+    const next = growCity(city, terrain, width, height)
+    if (!next) break
+    city = next
+  }
+  place(grown)
+  return city
+}
+
+function plotFrame(
+  city: CityLayout,
+  roads: readonly TileCoord[],
+  roadSet: Set<number>,
+): { forbidden: Set<number>; openings: number[] } {
+  const forbidden = new Set<number>()
+  const openings = new Array<number>(roads.length)
+  for (let i = 0; i < roads.length; i++) {
+    const road = roads[i]
+    const mask = visualOpenings(road.x, road.y, roadSet, city.seed)
+    openings[i] = mask
+    for (let dir = 0; dir < 4; dir++) {
+      if ((mask & (1 << dir)) === 0) continue
+      forbidden.add(key(road.x + DIR_X[dir], road.y + DIR_Y[dir]))
+    }
+  }
+  return { forbidden, openings }
+}
+
 function addBuilding(
   city: CityLayout,
   roads: TileCoord[],
@@ -304,17 +410,9 @@ function addBuilding(
   height: number,
   salt: number,
 ): CityLayout | null {
-  const forbidden = new Set<number>()
-  const openingsByRoad = new Array<number>(roads.length)
-  for (let i = 0; i < roads.length; i++) {
-    const road = roads[i]
-    const openings = visualOpenings(road.x, road.y, roadSet, city.seed)
-    openingsByRoad[i] = openings
-    for (let dir = 0; dir < 4; dir++) {
-      if ((openings & (1 << dir)) === 0) continue
-      forbidden.add(key(road.x + DIR_X[dir], road.y + DIR_Y[dir]))
-    }
-  }
+  const frame = plotFrame(city, roads, roadSet)
+  const forbidden = frame.forbidden
+  const openingsByRoad = frame.openings
   let best: TileCoord | null = null
   let bestScore = -Infinity
   for (let i = 0; i < roads.length; i++) {
@@ -340,7 +438,7 @@ function addBuilding(
 
 function compose(
   roads: readonly TileCoord[],
-  buildings: readonly { x: number; y: number; keep?: boolean }[],
+  buildings: readonly { x: number; y: number; keep?: boolean; model?: number; yaw?: number }[],
   span: number,
   seed: number,
 ): CityLayout {
@@ -380,8 +478,8 @@ function compose(
     return {
       x: tile.x,
       y: tile.y,
-      model: hash(tile.x, tile.y, seed + 3) % 8,
-      yaw: hash(tile.x, tile.y, seed + 9) % 4,
+      model: tile.model ?? hash(tile.x, tile.y, seed + 3) % CITY_MODELS,
+      yaw: tile.yaw ?? hash(tile.x, tile.y, seed + 9) % 4,
       keep,
     }
   })

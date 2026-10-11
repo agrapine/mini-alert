@@ -9,11 +9,13 @@ export class PathFinder {
   readonly world: World
   private readonly occupants: Int32Array
   private readonly blocked: Uint8Array
+  private readonly soft: Uint8Array
 
   constructor(world: World) {
     this.world = world
     this.occupants = new Int32Array(world.width * world.height)
     this.blocked = new Uint8Array(world.width * world.height)
+    this.soft = new Uint8Array(world.width * world.height)
   }
 
   get width(): number {
@@ -29,8 +31,10 @@ export class PathFinder {
     return id === EMPTY ? null : id
   }
 
-  setOccupant(x: number, y: number, occupantId: number | null) {
-    this.occupants[this.index(x, y)] = occupantId ?? EMPTY
+  setOccupant(x: number, y: number, occupantId: number | null, movable = false) {
+    const index = this.index(x, y)
+    this.occupants[index] = occupantId ?? EMPTY
+    this.soft[index] = occupantId != null && movable ? 1 : 0
   }
 
   setBlocked(x: number, y: number, blocked: boolean) {
@@ -50,6 +54,22 @@ export class PathFinder {
     return occupantId === EMPTY || occupantId === ignoreUnitId
   }
 
+  isPassable(x: number, y: number, ignoreUnitId: number): boolean {
+    if (!this.world.inBounds(x, y)) return false
+    if (!isWalkableTerrain(this.world.terrainAt(x, y))) return false
+    if (this.blocked[this.index(x, y)] !== 0) return false
+    const occupantId = this.occupants[y * this.world.width + x]
+    if (occupantId === EMPTY || occupantId === ignoreUnitId) return true
+    return this.soft[this.index(x, y)] === 1
+  }
+
+  stepCost(x: number, y: number, ignoreUnitId: number): number {
+    if (!this.world.inBounds(x, y)) return 1
+    const occupantId = this.occupants[y * this.world.width + x]
+    if (occupantId === EMPTY || occupantId === ignoreUnitId) return 1
+    return this.soft[this.index(x, y)] === 1 ? 3 : 1
+  }
+
   findPath(start: TileCoord, goal: TileCoord, ignoreUnitId: number): TileCoord[] | null {
     return findPath(this, start, goal, ignoreUnitId)
   }
@@ -58,7 +78,7 @@ export class PathFinder {
     if (unit.tile.x === tile.x && unit.tile.y === tile.y) return true
     if (!this.canClaim(tile, footprint, unit.id)) return false
     this.clearFootprint(unit.tile, footprint, unit.id)
-    this.fillFootprint(tile, footprint, unit.id)
+    this.fillFootprint(tile, footprint, unit.id, unit.type.topSpeed > 0)
     unit.tile = { x: tile.x, y: tile.y }
     return true
   }
@@ -92,10 +112,10 @@ export class PathFinder {
     }
   }
 
-  private fillFootprint(origin: TileCoord, footprint: number, unitId: number) {
+  private fillFootprint(origin: TileCoord, footprint: number, unitId: number, movable: boolean) {
     for (let dy = 0; dy < footprint; dy++) {
       for (let dx = 0; dx < footprint; dx++) {
-        this.setOccupant(origin.x + dx, origin.y + dy, unitId)
+        this.setOccupant(origin.x + dx, origin.y + dy, unitId, movable)
       }
     }
   }

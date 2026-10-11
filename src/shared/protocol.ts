@@ -11,6 +11,7 @@ export const enum ClientMessageKind {
   SetPrimary = 7,
   SetRally = 8,
   OrderAttackGround = 9,
+  PlaceCity = 10,
 }
 
 export const enum ServerMessageKind {
@@ -69,6 +70,11 @@ export type SetRally = {
   tile: TileCoord
 }
 
+export type PlaceCity = {
+  kind: ClientMessageKind.PlaceCity
+  tile: TileCoord
+}
+
 export type ClientMessage =
   | OrderMove
   | OrderSpawn
@@ -79,6 +85,7 @@ export type ClientMessage =
   | CancelBuilding
   | SetPrimary
   | SetRally
+  | PlaceCity
 
 export type Welcome = {
   kind: ServerMessageKind.Welcome
@@ -135,6 +142,14 @@ export type TrainJob = {
   progress: number
 }
 
+export type CitySite = {
+  x: number
+  y: number
+  model: number
+  yaw: number
+  at: number
+}
+
 export type CityState = {
   ownerId: number
   color: number
@@ -143,6 +158,7 @@ export type CityState = {
   challengerColor: number
   grown: number
   ruins: TileCoord[]
+  sites: CitySite[]
 }
 
 export type UnitsSnapshot = {

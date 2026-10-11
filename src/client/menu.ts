@@ -10,14 +10,14 @@ const HELP = `# Shortcuts
 - **Select several** — drag a box around them
 - **Move** — with units selected, click open ground
 - **Attack** — click an enemy. Hold Ctrl or ⌘ and click the ground to shell that spot. Units also fire at enemies they can see
-- **Build** — choose Factory or Turret, then click open ground beside a city you own. Right-click cancels
+- **Build** — Factory or Turret goes on open ground beside a city you own. Building places one of the houses a city grows, only on a tile that city could grow. The price appears when you aim at that city. Right-click cancels
 - **Primary factory** — select a factory, then click it again. New units come out of that one. A star marks it
 - **Waypoint** — with a factory selected, click the ground. Finished units move there
 - **Ranges** — hold Ctrl or ⌘ with one unit selected to show its attack range and sight
 - **Pan** — \`WASD\`, arrow keys, middle-drag, or hold Space and drag
 - **Turn** — \`Q\` and \`E\` rotate the camera 45°
 - **Zoom** — mouse wheel
-- **Minimap** — click or drag to move the camera
+- **Minimap** — drag to move the camera. A click orders selected units as if you clicked that tile. With nothing selected, a click moves the camera
 
 # Rules
 
@@ -33,9 +33,9 @@ Cities grow on their own, adding streets and buildings. Each city has a hall tha
 
 ## Building
 
-Factories and turrets take time to finish, and they can only be placed beside a city you own. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Each finished factory adds 25% to that training speed. Credits are spent while that unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
+Factories and turrets take time to finish, and they can only be placed beside a city you own. A building is the same kind a city grows on its own, and it can only go on a tile that city could grow one. It appears at once and takes the full price. Aim at the city and the price appears: 100 while that city has 6 buildings or fewer, and after that 100 times how many buildings it has beyond 5. It adds 1 population. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Each finished factory adds 25% to that training speed. Credits are spent while a unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
 
-Vehicles and turrets shoot enemies and buildings of a city another commander holds. They leave neutral cities alone. Shells splash, knock down trees, and bring down those buildings and streets. Artillery reaches farther and is easy to lose. Scouts are fast and light.
+Vehicles and turrets shoot enemies and buildings of a city another commander holds. They leave neutral cities alone. Shots scatter more at long range, and more again when the shooter is moving. Shells splash, knock down trees, and bring down those buildings and streets. Artillery reaches farther and is easy to lose. Scouts are fast and light. Tanks turn in place. A friendly unit with nothing to do steps off a tile another unit needs; a unit already on its way is left to move, and the one behind waits.
 
 ## Sight
 

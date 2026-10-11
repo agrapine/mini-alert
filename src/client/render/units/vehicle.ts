@@ -106,11 +106,13 @@ function meshNumber(group: Group, key: string, fallback: number): number {
 }
 
 function addHealthBar(group: Group, maxHealth: number) {
-  const width = Math.max(0.72, meshNumber(group, 'span', 0.7) * 0.55)
+  const span = meshNumber(group, 'span', 0.7)
+  const bodyHeight = meshNumber(group, 'bodyHeight', 0.44)
+  const width = span < 0.7 ? span * 0.9 : Math.max(0.72, span * 0.55)
   const height = 0.09
   const bar = new Group()
   bar.name = 'health-bar'
-  bar.position.y = meshNumber(group, 'bodyHeight', 0.44) / 2 + 0.22
+  bar.position.y = bodyHeight / 2 + Math.min(0.22, bodyHeight * 0.65)
   const back = new Mesh(
     new PlaneGeometry(width, height),
     new MeshBasicMaterial({ color: 0x1a1c14, side: DoubleSide }),

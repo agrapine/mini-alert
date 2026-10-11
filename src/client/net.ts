@@ -1,3 +1,4 @@
+import { ensureSeatToken } from './seat.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
 import { type ClientMessage, type ServerMessage } from '../shared/protocol.ts'
 
@@ -12,7 +13,8 @@ export class Net {
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-    const socket = new WebSocket(`${protocol}://${location.host}/ws`)
+    const seat = encodeURIComponent(ensureSeatToken())
+    const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${seat}`)
     this.socket = socket
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return

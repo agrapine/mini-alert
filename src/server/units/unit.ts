@@ -24,6 +24,7 @@ export abstract class Unit {
   attackPoint: { x: number; z: number } | null = null
   path: TileCoord[] = []
   progress = 1
+  bill: number
 
   constructor(id: number, ownerId: number, type: UnitType, tile: TileCoord, facing: number) {
     this.id = id
@@ -36,6 +37,7 @@ export abstract class Unit {
     this.turretYaw = facing
     this.health = type.maxHealth
     this.rounds = type.weapon.magazine
+    this.bill = type.cost
   }
 
   abstract drive(dt: number): void
@@ -147,6 +149,17 @@ export abstract class Unit {
   protected headingError(aim: { x: number; z: number }): number {
     const desired = Math.atan2(aim.x - this.pos.x, aim.z - this.pos.z)
     return wrapAngle(desired - this.facing)
+  }
+
+  protected trackedDrive(dt: number) {
+    const aim = this.aimPoint()
+    if (!aim) return
+    const err = this.headingError(aim)
+    const step = clamp(err, -this.type.turnRate * dt, this.type.turnRate * dt)
+    this.facing = wrapAngle(this.facing + step)
+    const limit = Math.abs(this.speed) > 0.15 ? 0.75 : 0.35
+    const target = Math.abs(err) <= limit ? this.cruiseSpeed(1) : 0
+    this.speed = approach(this.speed, target, this.type.acceleration * dt)
   }
 
   protected cruiseSpeed(direction: number): number {

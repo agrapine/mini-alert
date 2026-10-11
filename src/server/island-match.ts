@@ -9,7 +9,7 @@ import { World } from './world.ts'
 
 const MATCH_SEED = Math.random() * 100
 
-const SQUAD = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.HeavyTank, UnitTypeId.Artillery]
+const SQUAD = [UnitTypeId.Scout]
 
 export type MatchSeat = {
   ai: boolean

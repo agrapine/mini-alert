@@ -1,5 +1,5 @@
-import { BUILDING_HP, captureDuration, captureFade, CITY_GROW_SECONDS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
-import type { CityState, MapPoint, ShotEvent, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
+import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, CITY_MODELS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
+import type { CitySite, CityState, MapPoint, ShotEvent, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
 import { Terrain, type TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
@@ -27,6 +27,7 @@ type CityRuntime = {
   challengerId: number
   grown: number
   ruins: TileCoord[]
+  sites: CitySite[]
   integrity: Map<string, number>
 }
 const SPAWN_STEPS: TileCoord[] = [
@@ -107,7 +108,7 @@ export class Game {
     const terrain = this.terrainTable()
     this.cities.length = 0
     for (const layout of layoutCities(this.scenery.towns, this.scenery.seed, terrain, this.world.width, this.world.height)) {
-      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, ruins: [], integrity: new Map() })
+      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, ruins: [], sites: [], integrity: new Map() })
     }
     this.syncBlocks()
   }
@@ -128,6 +129,13 @@ export class Game {
       challengerColor: city.challengerId > 0 ? (this.player(city.challengerId)?.color ?? 0) : 0,
       grown: city.grown,
       ruins: city.ruins.map((tile) => ({ x: tile.x, y: tile.y })),
+      sites: city.sites.map((site) => ({
+        x: site.x,
+        y: site.y,
+        model: site.model,
+        yaw: site.yaw,
+        at: site.at,
+      })),
     }))
   }
 
@@ -159,7 +167,7 @@ export class Game {
     let population = 0
     for (const city of this.cities) {
       if (city.ownerId !== playerId || this.besieged(city)) continue
-      population += populationOf(city.layout, city.ruins)
+      population += this.peopleOf(city)
     }
     return CREDIT_PER_POPULATION * population
   }
@@ -189,10 +197,50 @@ export class Game {
     const owned = this.cities.filter((city) => city.ownerId === playerId).map((city) => this.live(city))
     if (!footprintNearCity(owned, tile, type.footprint)) return false
     const unit = this.spawn(owner, typeId, tile, 0)
+    unit.bill = type.cost
     unit.progress = 0
     const queue = this.jobs.get(playerId) ?? []
     queue.push(unit.id)
     this.jobs.set(playerId, queue)
+    return true
+  }
+
+  placeCityBuilding(playerId: number, tile: TileCoord): boolean {
+    const owner = this.players.get(playerId)
+    if (!owner || !this.pathfinder.isWalkable(tile.x, tile.y, -1)) return false
+    const terrain = this.terrainTable()
+    let cityIndex = -1
+    for (let i = 0; i < this.cities.length; i++) {
+      const city = this.cities[i]
+      if (city.ownerId !== playerId) continue
+      if (!canPlaceCityBuilding(city.layout, tile.x, tile.y, terrain, this.world.width, this.world.height)) continue
+      cityIndex = i
+      break
+    }
+    if (cityIndex < 0) return false
+    const city = this.cities[cityIndex]
+    const quote = buildingCost(populationOf(this.live(city), city.ruins))
+    if (owner.credits < quote) return false
+    const next = insertBuilding(
+      city.layout,
+      { x: tile.x, y: tile.y, model: Math.floor(Math.random() * CITY_MODELS), yaw: Math.floor(Math.random() * 4) },
+      terrain,
+      this.world.width,
+      this.world.height,
+    )
+    if (!next) return false
+    const placed = next.buildings.find((building) => building.x === tile.x && building.y === tile.y)
+    if (!placed) return false
+    owner.credits -= quote
+    city.layout = next
+    city.sites.push({
+      x: placed.x,
+      y: placed.y,
+      model: placed.model,
+      yaw: placed.yaw,
+      at: city.grown,
+    })
+    this.syncBlocks()
     return true
   }
 
@@ -213,8 +261,7 @@ export class Game {
     const unit = this.units.find((candidate) => candidate.id === id)
     const owner = this.players.get(playerId)
     if (unit && owner && unit.progress < 1) {
-      const due = unit.type.cost * (1 - unit.progress)
-      owner.credits = Math.max(0, owner.credits - due)
+      owner.credits = Math.max(0, owner.credits - unit.bill * (1 - unit.progress))
     }
     if (unit) unit.progress = 1
     queue?.shift()
@@ -436,9 +483,13 @@ export class Game {
     let people = 0
     for (const city of this.cities) {
       if (city.ownerId !== playerId) continue
-      people += populationOf(city.layout, city.ruins)
+      people += this.peopleOf(city)
     }
     return people
+  }
+
+  private peopleOf(city: CityRuntime): number {
+    return populationOf(this.live(city), city.ruins)
   }
 
   private besieged(city: CityRuntime): boolean {
@@ -462,7 +513,7 @@ export class Game {
       for (const player of this.players.values()) {
         for (const city of this.cities) {
           if (city.ownerId !== player.id || this.besieged(city)) continue
-          const people = populationOf(city.layout, city.ruins)
+          const people = this.peopleOf(city)
           if (people <= 0) continue
           player.credits += CREDIT_PER_POPULATION * people
           const origin = citySightOrigin(this.live(city))
@@ -627,7 +678,7 @@ export class Game {
         if (!cityHolds(this.live(city), unit.pos.x, unit.pos.z)) continue
         weight.set(unit.ownerId, (weight.get(unit.ownerId) ?? 0) + unit.type.supply)
       }
-      const people = populationOf(this.live(city), city.ruins)
+      const people = this.peopleOf(city)
       const challengerPresent = city.challengerId > 0 && (weight.get(city.challengerId) ?? 0) > 0
       if (challengerPresent) {
         if (weight.size > 1) continue
@@ -673,7 +724,7 @@ export class Game {
           continue
         }
         const before = unit.progress
-        unit.progress = this.fund(owner, unit.type.cost, before, unit.type.buildTime, left)
+        unit.progress = this.fund(owner, unit.bill, before, unit.type.buildTime, left)
         const gained = unit.progress - before
         if (gained <= 0) break
         left -= gained * unit.type.buildTime
@@ -779,7 +830,7 @@ export class Game {
     const span = unit.type.footprint
     for (let dy = 0; dy < span; dy++) {
       for (let dx = 0; dx < span; dx++) {
-        this.pathfinder.setOccupant(unit.tile.x + dx, unit.tile.y + dy, unit.id)
+        this.pathfinder.setOccupant(unit.tile.x + dx, unit.tile.y + dy, unit.id, unit.type.topSpeed > 0)
       }
     }
   }
