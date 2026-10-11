@@ -6,7 +6,7 @@ function rnd<T>(...arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
-const size = rnd(64, 128, 256, 512);
+const size = rnd(64, 128, 256);
 //const size = 24;
 // const size = rnd(64, 96);
 export const ISLAND_WIDTH = size;

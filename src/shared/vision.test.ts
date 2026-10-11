@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UnitTypeId, WeaponKind } from './unit-types.ts'
-import { shotsForPlayer, stampSight, unitsForPlayer } from './vision.ts'
+import { FOG_FEATHER, FOG_TEXELS, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
 
 function snapshot(id: number, ownerId: number, x: number, z: number, typeId = UnitTypeId.Scout): UnitSnapshot {
   return {
@@ -63,4 +63,26 @@ describe('vision', () => {
     expect(visible[tile]).toBe(0)
     expect(explored[tile]).toBe(1)
   })
+
+  it('keeps a smooth explored distance and ignores points past the feather', () => {
+    const width = 20
+    const height = 20
+    const cols = width * FOG_TEXELS
+    const field = new Float32Array(cols * height * FOG_TEXELS).fill(FOG_FEATHER)
+    stampExploredDistance(FOG_TEXELS, width, height, [{ x: 5, z: 5, sight: 3 }], field)
+    const center = texelIndex(cols, 5, 5)
+    expect(field[center]).toBeLessThan(0)
+    const far = texelIndex(cols, 5 + 3 + FOG_FEATHER + 1, 5)
+    expect(field[far]).toBeCloseTo(FOG_FEATHER)
+    const remembered = field[center]
+    stampExploredDistance(FOG_TEXELS, width, height, [{ x: 15, z: 15, sight: 2 }], field)
+    expect(field[center]).toBe(remembered)
+    expect(field[texelIndex(cols, 15, 15)]).toBeLessThan(0)
+  })
 })
+
+function texelIndex(cols: number, x: number, z: number): number {
+  const tx = Math.min(cols - 1, Math.max(0, Math.floor(x * FOG_TEXELS)))
+  const ty = Math.min(cols - 1, Math.max(0, Math.floor(z * FOG_TEXELS)))
+  return ty * cols + tx
+}

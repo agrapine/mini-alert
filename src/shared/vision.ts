@@ -2,6 +2,8 @@ import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UNIT_TYPES } from './unit-types.ts'
 
 export const EXPLORED_FOG = 0.55
+export const FOG_FEATHER = 0.8
+export const FOG_TEXELS = 2
 
 export type SightSource = {
   x: number
@@ -70,6 +72,38 @@ export function stampSight(
         const index = y * width + x
         visible[index] = 1
         explored[index] = 1
+      }
+    }
+  }
+}
+
+export function stampExploredDistance(
+  texelsPerTile: number,
+  width: number,
+  height: number,
+  friends: readonly SightSource[],
+  field: Float32Array,
+  feather = FOG_FEATHER,
+): void {
+  const cols = width * texelsPerTile
+  const rows = height * texelsPerTile
+  for (const friend of friends) {
+    const reach = friend.sight + feather
+    const x0 = Math.max(0, Math.floor((friend.x - reach) * texelsPerTile))
+    const x1 = Math.min(cols - 1, Math.ceil((friend.x + reach) * texelsPerTile) - 1)
+    const y0 = Math.max(0, Math.floor((friend.z - reach) * texelsPerTile))
+    const y1 = Math.min(rows - 1, Math.ceil((friend.z + reach) * texelsPerTile) - 1)
+    for (let ty = y0; ty <= y1; ty++) {
+      const wz = (ty + 0.5) / texelsPerTile
+      const dz = wz - friend.z
+      for (let tx = x0; tx <= x1; tx++) {
+        const wx = (tx + 0.5) / texelsPerTile
+        const dx = wx - friend.x
+        const distance = Math.hypot(dx, dz) - friend.sight
+        if (distance >= feather) continue
+        const index = ty * cols + tx
+        const next = distance < -feather ? -feather : distance
+        if (next < field[index]) field[index] = next
       }
     }
   }
