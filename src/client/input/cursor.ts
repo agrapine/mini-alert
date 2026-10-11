@@ -19,9 +19,13 @@ export function cursorFor(
   if (hovered !== null) {
     const unit = replica.unit(hovered)
     if (unit && unit.ownerId === replica.playerId) return 'pointer'
-    if (unit && selected.length > 0) return ATTACK_CURSOR
+    if (unit && player.commanding()) return ATTACK_CURSOR
   }
   const tile = selected.length > 0 ? view.pickTile(clientX, clientY) : null
+  if (player.factorySelected()) {
+    if (!tile) return 'default'
+    return replica.isOpen(tile, []) ? MOVE_CURSOR : 'not-allowed'
+  }
   if (selected.length === 0 || !tile) return 'default'
   const standing = replica.occupant(tile)
   if (standing && standing.ownerId !== replica.playerId) return ATTACK_CURSOR

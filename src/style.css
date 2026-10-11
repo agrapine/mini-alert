@@ -806,31 +806,6 @@ body.match #lobby {
   display: none;
 }
 
-#ai-pace {
-  position: fixed;
-  z-index: 6;
-  right: 16px;
-  bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: rgba(18, 20, 14, 0.9);
-  border: 1px solid #4a5340;
-  border-radius: 4px;
-  color: #e4e6d4;
-  font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
-}
-
-#ai-pace[hidden],
-body.lobby #ai-pace {
-  display: none;
-}
-
-#ai-pace input {
-  width: 120px;
-}
-
 .pace-row {
   display: flex;
   align-items: center;

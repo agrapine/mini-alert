@@ -40,6 +40,7 @@ const SPAWN_STEPS: TileCoord[] = [
 ]
 
 const SPAWN_REACH = 8
+const FACTORY_BUILD_BONUS = 0.25
 
 function spawnSteps(): TileCoord[] {
   const steps = [...SPAWN_STEPS]
@@ -71,6 +72,8 @@ export class Game {
   private deaths: Unit[] = []
   private readonly jobs = new Map<number, number[]>()
   private readonly training = new Map<number, TrainJob[]>()
+  private readonly primaries = new Map<number, number>()
+  private readonly rallies = new Map<number, TileCoord>()
   scenery: Scenery = EMPTY_SCENERY
   private readonly cities: CityRuntime[] = []
   private growClock = 0
@@ -166,7 +169,8 @@ export class Game {
     const type = UNIT_TYPES[typeId]
     if (!owner || type.topSpeed > 0) return false
     if (!this.footprintFree(tile, type.footprint)) return false
-    if (!footprintNearCity(this.cities.map((city) => city.layout), tile, type.footprint)) return false
+    const owned = this.cities.filter((city) => city.ownerId === playerId).map((city) => city.layout)
+    if (!footprintNearCity(owned, tile, type.footprint)) return false
     const unit = this.spawn(owner, typeId, tile, 0)
     unit.progress = 0
     const queue = this.jobs.get(playerId) ?? []
@@ -220,6 +224,38 @@ export class Game {
 
   trainingCount(playerId: number): number {
     return this.training.get(playerId)?.length ?? 0
+  }
+
+  setPrimary(playerId: number, unitId: number): boolean {
+    const unit = this.owned(playerId, unitId)
+    if (!unit || unit.typeId !== UnitTypeId.Factory || unit.health <= 0) return false
+    this.primaries.set(playerId, unitId)
+    return true
+  }
+
+  primaryFactory(playerId: number): number {
+    const id = this.primaries.get(playerId)
+    if (id === undefined) return 0
+    const unit = this.units.find(
+      (candidate) =>
+        candidate.id === id &&
+        candidate.ownerId === playerId &&
+        candidate.typeId === UnitTypeId.Factory &&
+        candidate.health > 0,
+    )
+    return unit ? unit.id : 0
+  }
+
+  setRally(playerId: number, tile: TileCoord): boolean {
+    if (!this.ownsFactory(playerId)) return false
+    if (!this.pathfinder.isWalkable(tile.x, tile.y, -1)) return false
+    this.rallies.set(playerId, { x: tile.x, y: tile.y })
+    return true
+  }
+
+  rally(playerId: number): TileCoord | null {
+    const tile = this.rallies.get(playerId)
+    return tile ? { x: tile.x, y: tile.y } : null
   }
 
   trySpawn(playerId: number, typeId: UnitTypeId): boolean {
@@ -316,6 +352,7 @@ export class Game {
       if (unit.health > 0) continue
       this.pathfinder.release(unit)
       this.clearJob(unit.id)
+      this.clearPrimary(unit.id)
       this.deaths.push(unit)
     }
     this.units.splice(0, this.units.length, ...this.units.filter((unit) => unit.health > 0))
@@ -452,11 +489,12 @@ export class Game {
           continue
         }
         const type = UNIT_TYPES[job.typeId]
+        const duration = type.buildTime / this.factoryPace(playerId)
         const before = job.progress
-        job.progress = this.fund(owner, type.cost, before, type.buildTime, left)
+        job.progress = this.fund(owner, type.cost, before, duration, left)
         const gained = job.progress - before
         if (gained <= 0) break
-        left -= gained * type.buildTime
+        left -= gained * duration
         if (job.progress < 1) break
         if (!this.releaseTrainee(playerId, job.typeId)) break
         queue.shift()
@@ -478,19 +516,38 @@ export class Game {
   private releaseTrainee(playerId: number, typeId: UnitTypeId): boolean {
     const owner = this.players.get(playerId)
     if (!owner) return false
-    const factory = this.units.find(
-      (unit) =>
-        unit.ownerId === playerId &&
-        unit.typeId === UnitTypeId.Factory &&
-        unit.health > 0 &&
-        unit.progress >= 1,
-    )
+    const factory = this.exitFactory(playerId)
     if (!factory) return false
     const exit = this.exitTile(factory)
     if (!exit) return false
     const unit = this.spawn(owner, typeId, exit.tile, exit.facing)
-    if (exit.rally.x !== exit.tile.x || exit.rally.y !== exit.tile.y) unit.orderMove(exit.rally, this.pathfinder)
+    const goal = this.rallies.get(playerId) ?? exit.rally
+    if (goal.x !== exit.tile.x || goal.y !== exit.tile.y) unit.orderMove(goal, this.pathfinder)
     return true
+  }
+
+  private factoryPace(playerId: number): number {
+    let count = 0
+    for (const unit of this.units) {
+      if (unit.ownerId !== playerId || unit.typeId !== UnitTypeId.Factory || unit.health <= 0 || unit.progress < 1) continue
+      count += 1
+    }
+    return 1 + FACTORY_BUILD_BONUS * count
+  }
+
+  private ownsFactory(playerId: number): boolean {
+    return this.units.some((unit) => unit.ownerId === playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0)
+  }
+
+  private exitFactory(playerId: number): Unit | undefined {
+    const ready = (unit: Unit) =>
+      unit.ownerId === playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0 && unit.progress >= 1
+    const primaryId = this.primaries.get(playerId)
+    if (primaryId !== undefined) {
+      const primary = this.units.find((unit) => unit.id === primaryId && ready(unit))
+      if (primary) return primary
+    }
+    return this.units.find(ready)
   }
 
   private openSpawn(target: TileCoord, footprint: number): TileCoord | null {
@@ -542,6 +599,12 @@ export class Game {
       }
     }
     return null
+  }
+
+  private clearPrimary(unitId: number) {
+    for (const [playerId, id] of this.primaries) {
+      if (id === unitId) this.primaries.delete(playerId)
+    }
   }
 
   private clearJob(unitId: number) {

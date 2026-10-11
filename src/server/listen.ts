@@ -1,17 +1,20 @@
 import { createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type RawData } from 'ws'
 import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
 import type { ClientMessage } from '../shared/protocol.ts'
 import { Lobby } from './lobby.ts'
+import { serveClient } from './static.ts'
 
-const PORT = 8787
+const PORT = Number(process.env.PORT) || 8787
 const STEP = 1 / 30
+const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist')
 
 const lobby = new Lobby()
-const httpServer = createServer((_req, res) => {
-  res.writeHead(200, { 'content-type': 'text/plain' })
-  res.end('rts')
+const httpServer = createServer((req, res) => {
+  serveClient(clientRoot, req, res)
 })
 const sockets = new WebSocketServer({ server: httpServer, path: '/ws' })
 
@@ -35,7 +38,7 @@ sockets.on('connection', (socket) => {
 
 setInterval(() => lobby.tick(STEP), STEP * 1000)
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`server listening on ${PORT}`)
 })
 

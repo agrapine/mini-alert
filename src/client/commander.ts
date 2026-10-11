@@ -1,7 +1,7 @@
 import type { ClientPort } from '../shared/protocol.ts'
 import { ClientMessageKind } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
-import { UNIT_TYPES, type UnitTypeId } from '../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import type { UnitSnapshot } from '../shared/protocol.ts'
 import type { Replica } from './replica.ts'
 
@@ -34,7 +34,13 @@ export class Commander {
       return
     }
     const unit = this.replica.unit(id)
-    if (!unit || unit.ownerId !== this.replica.playerId || UNIT_TYPES[unit.typeId].topSpeed <= 0) return
+    if (!unit || unit.ownerId !== this.replica.playerId) return
+    const mobile = UNIT_TYPES[unit.typeId].topSpeed > 0
+    if (!mobile && unit.typeId !== UnitTypeId.Factory) return
+    if (this.selectedIds.length === 1 && this.selectedIds[0] === id && unit.typeId === UnitTypeId.Factory) {
+      this.port.send({ kind: ClientMessageKind.SetPrimary, unitId: id })
+      return
+    }
     this.selectedIds = [id]
   }
 
@@ -48,6 +54,15 @@ export class Commander {
     this.selectedIds = own
   }
 
+  commanding(): boolean {
+    return this.selected().some((unit) => UNIT_TYPES[unit.typeId].topSpeed > 0)
+  }
+
+  factorySelected(): boolean {
+    const units = this.selected()
+    return units.length === 1 && units[0].typeId === UnitTypeId.Factory
+  }
+
   selected(): UnitSnapshot[] {
     const units: UnitSnapshot[] = []
     for (const id of this.selectedIds) {
@@ -56,6 +71,11 @@ export class Commander {
       units.push(unit)
     }
     return units
+  }
+
+  setRally(tile: TileCoord) {
+    if (this.spectating || !this.factorySelected()) return
+    this.port.send({ kind: ClientMessageKind.SetRally, tile })
   }
 
   orderMove(tile: TileCoord) {

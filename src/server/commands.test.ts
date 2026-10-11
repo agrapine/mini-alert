@@ -6,9 +6,10 @@ import { ServerHost } from './host.ts'
 import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
 
-function seat(game: Game, x: number, y: number) {
+function seat(game: Game, playerId: number, x: number, y: number) {
   game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 4 }
   game.bindCities()
+  game.claimCity({ x: x + 0.5, y: y + 0.5 }, playerId)
 }
 
 describe('player commands', () => {
@@ -44,7 +45,7 @@ describe('player commands', () => {
     const human = game.addPlayer()
     const host = new ServerHost(game)
     const humanPort = host.join(human)
-    seat(game, 10, 4)
+    seat(game, human.id, 10, 4)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
     const before = game.units.length

@@ -22,10 +22,7 @@ const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-const aiPace = document.querySelector<HTMLElement>('#ai-pace')
-const aiPaceRange = document.querySelector<HTMLInputElement>('#ai-pace-range')
-const aiPaceValue = document.querySelector<HTMLElement>('#ai-pace-value')
-if (!canvas || !status || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose || !aiPace || !aiPaceRange || !aiPaceValue) {
+if (!canvas || !status || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
@@ -35,14 +32,6 @@ const legendBar = legend
 const outcomeLayer = outcome
 const outcomeHeading = outcomeTitle
 const outcomeCopy = outcomeText
-const paceControl = aiPace
-const paceRange = aiPaceRange
-const paceReadout = aiPaceValue
-paceRange.addEventListener('input', () => {
-  const pace = Number(paceRange.value)
-  paceReadout.textContent = pace.toFixed(2)
-  net.sendLobby({ kind: LobbyClientKind.SetAiPace, pace })
-})
 outcomeClose.addEventListener('click', () => {
   outcomeLayer.hidden = true
 })
@@ -167,14 +156,12 @@ net.onLobby = (message) => {
     paintVision()
     paintLegend()
     noteOutcome()
-    paintAiPace(message.aiPace, message.factions.some((faction) => faction.ai && !faction.defeated))
     return
   }
   leaveMatch()
   music.lobby()
   lobby.showGame(message, preview)
   claimName(message.you.name)
-  paintAiPace(message.aiPace, false)
 }
 
 function claimName(serverName: string) {
@@ -224,7 +211,6 @@ function leaveMatch() {
   legendBar.hidden = true
   legendBar.replaceChildren()
   outcomeLayer.hidden = true
-  paceControl.hidden = true
 }
 
 function mountWorld() {
@@ -314,13 +300,6 @@ function showOutcome(title: string, text: string) {
   outcomeHeading.textContent = title
   outcomeCopy.textContent = text
   outcomeLayer.hidden = false
-}
-
-function paintAiPace(pace: number, show: boolean) {
-  paceControl.hidden = !show
-  if (document.activeElement === paceRange) return
-  paceRange.value = String(pace)
-  paceReadout.textContent = pace.toFixed(2)
 }
 
 function cssColor(color: number): string {
@@ -523,7 +502,15 @@ const frame = (now: number) => {
   if (view) {
     view.update(frameDt)
     refreshHud(frameDt)
-    view.render(replica.units, player.selected(), replica.takeShots(), replica.playerId, replica.cities)
+    view.render(
+      replica.units,
+      player.selected(),
+      replica.takeShots(),
+      replica.playerId,
+      replica.cities,
+      replica.primaryFactoryId,
+      replica.rally,
+    )
   }
   requestAnimationFrame(frame)
 }

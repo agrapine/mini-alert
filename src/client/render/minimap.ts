@@ -1,7 +1,7 @@
 import type { CityState, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { layoutCities, NEUTRAL_CITY, projectCity, type CityLayout } from '../../shared/cities.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
-import type { Terrain } from '../../shared/tiles.ts'
+import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
 const DOT = 3.25
 
@@ -62,6 +62,8 @@ export class Minimap {
     viewport: readonly { x: number; z: number }[],
     fog?: Float32Array,
     cities: readonly CityState[] = [],
+    primaryFactoryId = 0,
+    rally: TileCoord | null = null,
   ) {
     this.cityStates = cities
     if (fog) this.applyFog(fog)
@@ -88,6 +90,9 @@ export class Minimap {
     }
     for (const unit of rest) this.dot(ctx, unit, width, height, false)
     for (const unit of picked) this.dot(ctx, unit, width, height, true)
+    const primary = units.find((unit) => unit.id === primaryFactoryId)
+    if (primary) this.star(ctx, this.toPixel({ x: primary.x, z: primary.z }, width, height))
+    if (rally) this.diamond(ctx, this.toPixel({ x: rally.x + 0.5, z: rally.y + 0.5 }, width, height))
   }
 
   private applyFog(mask: Float32Array) {
@@ -169,6 +174,39 @@ export class Minimap {
     ctx.lineWidth = 1.25
     ctx.strokeStyle = '#f0d060'
     ctx.stroke()
+  }
+
+  private star(ctx: CanvasRenderingContext2D, point: { x: number; y: number }) {
+    ctx.save()
+    ctx.translate(point.x, point.y)
+    ctx.beginPath()
+    let rot = -Math.PI / 2
+    const step = Math.PI / 5
+    ctx.moveTo(Math.cos(rot) * 7, Math.sin(rot) * 7)
+    for (let i = 0; i < 5; i++) {
+      rot += step
+      ctx.lineTo(Math.cos(rot) * 3, Math.sin(rot) * 3)
+      rot += step
+      ctx.lineTo(Math.cos(rot) * 7, Math.sin(rot) * 7)
+    }
+    ctx.closePath()
+    ctx.fillStyle = '#f0d060'
+    ctx.fill()
+    ctx.lineWidth = 1
+    ctx.strokeStyle = '#1a1e12'
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  private diamond(ctx: CanvasRenderingContext2D, point: { x: number; y: number }) {
+    ctx.beginPath()
+    ctx.moveTo(point.x, point.y - 5)
+    ctx.lineTo(point.x + 4, point.y)
+    ctx.lineTo(point.x, point.y + 5)
+    ctx.lineTo(point.x - 4, point.y)
+    ctx.closePath()
+    ctx.fillStyle = '#f0d060'
+    ctx.fill()
   }
 
   private toPixel(point: { x: number; z: number }, width: number, height: number): { x: number; y: number } {

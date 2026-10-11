@@ -102,13 +102,7 @@ export class ServerHost {
     const all = deaths.length > 0 ? living.concat(deaths) : living
     for (const session of this.sessions) {
       const units = unitsForPlayer(all, session.playerId, sights)
-      session.send({
-        kind: ServerMessageKind.Units,
-        units,
-        credits: this.creditsFor(session.playerId),
-        training: this.game.trainingFor(session.playerId),
-        cities: this.game.cityStates(),
-      })
+      session.send(this.unitsMessage(session, units))
       const seen = shotsForPlayer(shots, living, session.playerId, sights)
       if (seen.length > 0) session.send({ kind: ServerMessageKind.Shots, shots: seen })
     }
@@ -129,6 +123,10 @@ export class ServerHost {
       this.game.placeBuilding(playerId, message.typeId, message.tile)
     } else if (message.kind === ClientMessageKind.CancelBuilding) {
       this.game.cancelBuild(playerId, message.typeId)
+    } else if (message.kind === ClientMessageKind.SetPrimary) {
+      this.game.setPrimary(playerId, message.unitId)
+    } else if (message.kind === ClientMessageKind.SetRally) {
+      this.game.setRally(playerId, message.tile)
     }
   }
 
@@ -143,13 +141,20 @@ export class ServerHost {
   }
 
   private pushUnits(session: Session) {
-    session.send({
-      kind: ServerMessageKind.Units,
-      units: unitsForPlayer(this.game.unitSnapshots(), session.playerId, this.game.citySights()),
+    const units = unitsForPlayer(this.game.unitSnapshots(), session.playerId, this.game.citySights())
+    session.send(this.unitsMessage(session, units))
+  }
+
+  private unitsMessage(session: Session, units: ReturnType<Game['unitSnapshots']>) {
+    return {
+      kind: ServerMessageKind.Units as const,
+      units,
       credits: this.creditsFor(session.playerId),
       training: this.game.trainingFor(session.playerId),
       cities: this.game.cityStates(),
-    })
+      primaryFactoryId: this.game.primaryFactory(session.playerId),
+      rally: this.game.rally(session.playerId),
+    }
   }
 
   private creditsFor(playerId: number): number {

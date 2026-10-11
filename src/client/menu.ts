@@ -9,7 +9,9 @@ const HELP = `# Shortcuts
 - **Select several** — drag a box around them
 - **Move** — with units selected, click open ground
 - **Attack** — click an enemy. Units also fire at enemies they can see
-- **Build** — choose Factory or Turret, then click open ground. Right-click cancels
+- **Build** — choose Factory or Turret, then click open ground beside a city you own. Right-click cancels
+- **Primary factory** — select a factory, then click it again. New units come out of that one. A star marks it
+- **Waypoint** — with a factory selected, click the ground. Finished units move there
 - **Ranges** — hold Ctrl or ⌘ to show attack range and sight
 - **Pan** — \`WASD\`, arrow keys, middle-drag, or hold Space and drag
 - **Turn** — \`Q\` and \`E\` rotate the camera 45°
@@ -30,7 +32,7 @@ Cities grow on their own, adding streets and buildings. Population is the number
 
 ## Building
 
-Factories and turrets take time to finish. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Credits are spent while that unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
+Factories and turrets take time to finish, and they can only be placed beside a city you own. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Each finished factory adds 25% to that training speed. Credits are spent while that unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
 
 Vehicles and turrets shoot enemies in sight. Shells splash. Artillery reaches farther and is easy to lose. Scouts are fast and light.
 

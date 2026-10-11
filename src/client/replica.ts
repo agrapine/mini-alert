@@ -19,6 +19,8 @@ export class Replica {
   credits = 0
   training: TrainJob[] = []
   cities: CityState[] = []
+  primaryFactoryId = 0
+  rally: TileCoord | null = null
   private pendingShots: ShotEvent[] = []
   private bases: CityLayout[] | null = null
   private evolved: CityLayout[] = []
@@ -32,6 +34,8 @@ export class Replica {
     this.credits = 0
     this.training = []
     this.cities = []
+    this.primaryFactoryId = 0
+    this.rally = null
     this.pendingShots = []
     this.bases = null
     this.evolved = []
@@ -54,6 +58,8 @@ export class Replica {
       this.credits = message.credits
       this.training = message.training
       this.cities = message.cities
+      this.primaryFactoryId = message.primaryFactoryId
+      this.rally = message.rally
     }
   }
 
@@ -84,7 +90,8 @@ export class Replica {
   }
 
   nearCity(origin: TileCoord, footprint: number): boolean {
-    return footprintNearCity(this.cityLayouts(), origin, footprint)
+    const owned = this.cityLayouts().filter((_, index) => this.cities[index]?.ownerId === this.playerId)
+    return footprintNearCity(owned, origin, footprint)
   }
 
   private cityLayouts(): CityLayout[] {

@@ -288,13 +288,14 @@ function cityLayouts(brain: Brain): CityLayout[] {
 }
 
 function siteNear(brain: Brain, layouts: readonly CityLayout[], origin: TileCoord, footprint: number): TileCoord | null {
+  const owned = layouts.filter((_, index) => brain.cities[index]?.ownerId === brain.playerId)
   const blocked = buildingTiles(layouts)
   for (let radius = 1; radius <= 10; radius++) {
     for (let y = origin.y - radius; y <= origin.y + radius; y++) {
       for (let x = origin.x - radius; x <= origin.x + radius; x++) {
         if (Math.max(Math.abs(x - origin.x), Math.abs(y - origin.y)) !== radius) continue
         const tile = { x, y }
-        if (!footprintNearCity(layouts, tile, footprint)) continue
+        if (!footprintNearCity(owned, tile, footprint)) continue
         if (!canPlaceFootprint(tile, footprint, brain.width, brain.height, (px, py) => brain.terrain[py * brain.width + px] as Terrain, brain.units)) continue
         if (coversBlocked(tile, footprint, blocked)) continue
         return tile

@@ -1,7 +1,7 @@
-import { DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry } from 'three'
+import { BoxGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
 import type { CityState, ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { citySightOrigin, layoutCities, projectCity, type CityLayout } from '../../shared/cities.ts'
-import { UNIT_TYPES, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
 import { friendsOf } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
@@ -49,6 +49,8 @@ export class GameView {
   private readonly particles: Particles
   private readonly wrecks: Wreck[] = []
   private readonly pings: { mesh: Mesh; age: number }[] = []
+  private readonly primaryMark: Sprite
+  private readonly rallyMark: Group
   private shotDt = 0
 
   constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
@@ -80,6 +82,10 @@ export class GameView {
     )
     this.sightMark.rotation.x = -Math.PI / 2
     this.sightMark.visible = false
+    this.primaryMark = primaryIcon()
+    this.stage.scene.add(this.primaryMark)
+    this.rallyMark = rallyFlag()
+    this.stage.scene.add(this.rallyMark)
   }
 
   mountTerrain(world: WorldSnapshot) {
@@ -132,6 +138,9 @@ export class GameView {
   }
 
   dispose() {
+    const material = this.primaryMark.material
+    material.map?.dispose()
+    material.dispose()
     this.stage.dispose()
   }
 
@@ -251,6 +260,8 @@ export class GameView {
     shots: readonly ShotEvent[] = [],
     playerId: number | null = null,
     cities: readonly CityState[] = [],
+    primaryFactoryId = 0,
+    rally: TileCoord | null = null,
   ) {
     for (const unit of units) {
       if (unit.health > 0) continue
@@ -291,12 +302,26 @@ export class GameView {
     this.placeRanges(showSelection && this.showRanges ? selected : [])
     const goals = showSelection ? selected.filter((unit) => unit.goal !== null) : []
     this.placeOrders(goals)
+    this.placePrimary(living, primaryFactoryId)
+    this.placeRally(rally)
 
     if (selected.length === 1) {
       const unit = selected[0]
       const moving = unit.goal ? ' · moving' : ''
       const label = UNIT_TYPES[unit.typeId].label
-      this.status.textContent = `${label} ${unit.id} · tile ${unit.tileX},${unit.tileY}${moving}`
+      const factory =
+        unit.typeId === UnitTypeId.Factory
+          ? unit.id === primaryFactoryId
+            ? ' · primary'
+            : ' · click again for primary'
+          : ''
+      const waypoint =
+        unit.typeId === UnitTypeId.Factory
+          ? rally
+            ? ` · waypoint ${rally.x},${rally.y}`
+            : ' · click ground for a waypoint'
+          : ''
+      this.status.textContent = `${label} ${unit.id} · tile ${unit.tileX},${unit.tileY}${moving}${factory}${waypoint}`
     } else if (selected.length > 1) {
       this.status.textContent = `${selected.length} selected`
     } else {
@@ -318,7 +343,7 @@ export class GameView {
     this.fog?.update(this.shotDt, friends)
     this.fog?.setView(cameraYaw)
     this.cities?.sync(cities)
-    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities)
+    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, primaryFactoryId, rally)
     this.stage.draw()
   }
 
@@ -435,6 +460,19 @@ export class GameView {
     }
   }
 
+  private placePrimary(units: readonly UnitSnapshot[], primaryFactoryId: number) {
+    const factory = units.find((unit) => unit.id === primaryFactoryId && unit.typeId === UnitTypeId.Factory)
+    this.primaryMark.visible = factory !== undefined
+    if (!factory) return
+    this.primaryMark.position.set(factory.x, TILE_TOP + 2.6, factory.z)
+  }
+
+  private placeRally(rally: TileCoord | null) {
+    this.rallyMark.visible = rally !== null
+    if (!rally) return
+    this.rallyMark.position.set(rally.x + 0.5, TILE_TOP, rally.y + 0.5)
+  }
+
   private placeOrders(units: readonly UnitSnapshot[]) {
     this.stage.orderMark.visible = false
     const rings = growRings(this.orderRings, this.stage.orderMark, units.length, this.stage.scene)
@@ -476,6 +514,62 @@ function circleHitsRect(
   const dx = cx - nearestX
   const dy = cy - nearestY
   return dx * dx + dy * dy <= radius * radius
+}
+
+function primaryIcon(): Sprite {
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.translate(32, 32)
+    ctx.beginPath()
+    starPath(ctx, 5, 26, 11)
+    ctx.fillStyle = '#f0d060'
+    ctx.fill()
+    ctx.lineWidth = 4
+    ctx.strokeStyle = '#1a1e12'
+    ctx.stroke()
+  }
+  const material = new SpriteMaterial({
+    map: new CanvasTexture(canvas),
+    transparent: true,
+    depthWrite: false,
+  })
+  const sprite = new Sprite(material)
+  sprite.scale.set(1.5, 1.5, 1)
+  sprite.visible = false
+  return sprite
+}
+
+function rallyFlag(): Group {
+  const group = new Group()
+  const pole = new Mesh(
+    new BoxGeometry(0.06, 1.1, 0.06),
+    new MeshBasicMaterial({ color: 0xe7efe0 }),
+  )
+  pole.position.y = 0.55
+  const flag = new Mesh(
+    new PlaneGeometry(0.62, 0.38),
+    new MeshBasicMaterial({ color: 0xf0d060, side: DoubleSide }),
+  )
+  flag.position.set(0.34, 0.9, 0)
+  group.add(pole, flag)
+  group.visible = false
+  return group
+}
+
+function starPath(ctx: CanvasRenderingContext2D, spikes: number, outer: number, inner: number) {
+  let rot = -Math.PI / 2
+  const step = Math.PI / spikes
+  ctx.moveTo(Math.cos(rot) * outer, Math.sin(rot) * outer)
+  for (let i = 0; i < spikes; i++) {
+    rot += step
+    ctx.lineTo(Math.cos(rot) * inner, Math.sin(rot) * inner)
+    rot += step
+    ctx.lineTo(Math.cos(rot) * outer, Math.sin(rot) * outer)
+  }
+  ctx.closePath()
 }
 
 function placeRing(ring: Mesh, unit: UnitSnapshot, mesh: Group | undefined) {
