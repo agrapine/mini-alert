@@ -38,24 +38,27 @@ export class ServerHost {
       units: this.unitsFor(playerId),
       credits: this.creditsFor(playerId),
       training: this.game.trainingFor(playerId),
+      cities: this.game.cityStates(),
     })
   }
 
   tick(dt: number) {
     this.ai.update(dt)
     const shots = this.game.tick(dt)
+    const sights = this.game.citySights()
     const living = this.game.unitSnapshots()
     const deaths = this.game.takeDeaths()
     const all = deaths.length > 0 ? living.concat(deaths) : living
     for (const session of this.sessions) {
-      const units = unitsForPlayer(all, session.playerId)
+      const units = unitsForPlayer(all, session.playerId, sights)
       session.send({
         kind: ServerMessageKind.Units,
         units,
         credits: this.creditsFor(session.playerId),
         training: this.game.trainingFor(session.playerId),
+        cities: this.game.cityStates(),
       })
-      const seen = shotsForPlayer(shots, living, session.playerId)
+      const seen = shotsForPlayer(shots, living, session.playerId, sights)
       if (seen.length > 0) session.send({ kind: ServerMessageKind.Shots, shots: seen })
     }
   }
@@ -67,8 +70,12 @@ export class ServerHost {
       this.game.orderAttack(playerId, message.unitId, message.targetId)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
+    } else if (message.kind === ClientMessageKind.CancelSpawn) {
+      this.game.cancelTraining(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.PlaceBuilding) {
       this.game.placeBuilding(playerId, message.typeId, message.tile)
+    } else if (message.kind === ClientMessageKind.CancelBuilding) {
+      this.game.cancelBuild(playerId, message.typeId)
     }
   }
 
@@ -77,7 +84,7 @@ export class ServerHost {
   }
 
   private unitsFor(playerId: number) {
-    return unitsForPlayer(this.game.unitSnapshots(), playerId)
+    return unitsForPlayer(this.game.unitSnapshots(), playerId, this.game.citySights())
   }
 
   private worldSnapshot(): WorldSnapshot {

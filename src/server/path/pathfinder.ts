@@ -8,10 +8,12 @@ const EMPTY = 0
 export class PathFinder {
   readonly world: World
   private readonly occupants: Int32Array
+  private readonly blocked: Uint8Array
 
   constructor(world: World) {
     this.world = world
     this.occupants = new Int32Array(world.width * world.height)
+    this.blocked = new Uint8Array(world.width * world.height)
   }
 
   get width(): number {
@@ -31,9 +33,19 @@ export class PathFinder {
     this.occupants[this.index(x, y)] = occupantId ?? EMPTY
   }
 
+  setBlocked(x: number, y: number, blocked: boolean) {
+    if (!this.world.inBounds(x, y)) return
+    this.blocked[this.index(x, y)] = blocked ? 1 : 0
+  }
+
+  clearBlocked() {
+    this.blocked.fill(0)
+  }
+
   isWalkable(x: number, y: number, ignoreUnitId: number): boolean {
     if (!this.world.inBounds(x, y)) return false
     if (!isWalkableTerrain(this.world.terrainAt(x, y))) return false
+    if (this.blocked[this.index(x, y)] !== 0) return false
     const occupantId = this.occupants[y * this.world.width + x]
     return occupantId === EMPTY || occupantId === ignoreUnitId
   }

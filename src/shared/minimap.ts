@@ -37,7 +37,7 @@ export function isMinimapShore(
 export function minimapRgb(terrain: Terrain, shore: boolean): Rgb {
   if (terrain === Terrain.Water) return WATER
   if (terrain === Terrain.Lake) return LAKE
-  if (terrain === Terrain.Forest) return FOREST
+  if (terrain === Terrain.Forest || terrain === Terrain.Tree) return FOREST
   if (terrain === Terrain.Road) return ROAD
   if (terrain === Terrain.Town) return TOWN
   return shore ? SHORE : LAND

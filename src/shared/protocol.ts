@@ -6,6 +6,8 @@ export const enum ClientMessageKind {
   Spawn = 2,
   OrderAttack = 3,
   PlaceBuilding = 4,
+  CancelSpawn = 5,
+  CancelBuilding = 6,
 }
 
 export const enum ServerMessageKind {
@@ -38,7 +40,17 @@ export type PlaceBuilding = {
   tile: TileCoord
 }
 
-export type ClientMessage = OrderMove | OrderSpawn | OrderAttack | PlaceBuilding
+export type CancelSpawn = {
+  kind: ClientMessageKind.CancelSpawn
+  typeId: UnitTypeId
+}
+
+export type CancelBuilding = {
+  kind: ClientMessageKind.CancelBuilding
+  typeId: UnitTypeId
+}
+
+export type ClientMessage = OrderMove | OrderSpawn | OrderAttack | PlaceBuilding | CancelSpawn | CancelBuilding
 
 export type Welcome = {
   kind: ServerMessageKind.Welcome
@@ -95,11 +107,19 @@ export type TrainJob = {
   progress: number
 }
 
+export type CityState = {
+  ownerId: number
+  progress: number
+  challengerId: number
+  grown: number
+}
+
 export type UnitsSnapshot = {
   kind: ServerMessageKind.Units
   units: UnitSnapshot[]
   credits: number
   training: TrainJob[]
+  cities: CityState[]
 }
 
 export type ServerMessage = Welcome | WorldSnapshot | UnitsSnapshot | ShotsSnapshot

@@ -26,6 +26,12 @@ export function bindPanKeys(view: GameView): { release(): void } {
 
   const onKeyDown = (event: KeyboardEvent) => {
     const key = event.key.toLowerCase()
+    if (key === 'q' || key === 'e') {
+      if (event.repeat) return
+      event.preventDefault()
+      view.nudgeYaw(key === 'e' ? 1 : -1)
+      return
+    }
     if (!PAN_KEYS.has(key)) return
     event.preventDefault()
     down.add(key)

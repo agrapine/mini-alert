@@ -70,6 +70,10 @@ export class Commander {
     this.port.send({ kind: ClientMessageKind.Spawn, typeId })
   }
 
+  cancelSpawn(typeId: UnitTypeId) {
+    this.port.send({ kind: ClientMessageKind.CancelSpawn, typeId })
+  }
+
   placingType(): UnitTypeId | null {
     return this.placing
   }

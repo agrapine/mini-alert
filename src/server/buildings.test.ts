@@ -1,25 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { SCOUT, UnitTypeId } from '../shared/unit-types.ts'
+import { layoutCities } from '../shared/cities.ts'
+import { FACTORY, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
-import { CREDIT_INCOME } from './player.ts'
+import { CREDIT_PER_CITY, CREDIT_PER_POPULATION } from './player.ts'
+import { Terrain } from '../shared/tiles.ts'
 import { World } from './world.ts'
 
+function seat(game: Game, x: number, y: number) {
+  game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 4 }
+  game.bindCities()
+}
+
 describe('buildings', () => {
-  it('rejects a building the player cannot afford', () => {
+  it('pauses a structure when credits run out and keeps what was already paid', () => {
     const game = new Game(new World(12, 12))
     const human = game.addPlayer()
     human.credits = 100
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(false)
+    seat(game, 8, 2)
+    expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
     expect(human.credits).toBe(100)
-    expect(game.units).toHaveLength(0)
+    game.tick(TURRET.buildTime)
+    expect(game.units[0].progress).toBeCloseTo(100 / TURRET.cost)
+    expect(human.credits).toBeCloseTo(0)
+    game.tick(TURRET.buildTime)
+    expect(game.units[0].progress).toBeCloseTo(100 / TURRET.cost)
+    expect(human.credits).toBeCloseTo(0)
   })
 
   it('places several structures and builds them one at a time', () => {
     const game = new Game(new World(16, 16))
     const human = game.addPlayer()
+    seat(game, 4, 10)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
-    expect(human.credits).toBe(10_000 - 800 - 2500)
+    expect(human.credits).toBe(10_000)
     const turret = game.units[0]
     const factory = game.units[1]
     expect(game.pathfinder.occupant(6, 6)).toBe(factory.id)
@@ -27,54 +41,100 @@ describe('buildings', () => {
     game.tick(2.5)
     expect(turret.progress).toBeCloseTo(0.5)
     expect(factory.progress).toBe(0)
+    expect(human.credits).toBeCloseTo(10_000 - TURRET.cost / 2)
     game.tick(2.5)
     expect(turret.progress).toBe(1)
     expect(factory.progress).toBe(0)
+    expect(human.credits).toBeCloseTo(10_000 - TURRET.cost)
     game.tick(4)
     expect(factory.progress).toBeCloseTo(0.5)
+    expect(human.credits).toBeCloseTo(10_000 - TURRET.cost - FACTORY.cost / 2)
   })
 
   it('queues unit production and finishes one at a time', () => {
     const game = new Game(new World(16, 16))
     const human = game.addPlayer()
+    seat(game, 10, 4)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
+    expect(human.credits).toBe(10_000 - FACTORY.cost)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(human.credits).toBe(10_000 - FACTORY.cost)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(0)
     expect(game.trainingFor(human.id)[0]?.progress).toBe(0)
     game.tick(SCOUT.buildTime / 2)
     expect(game.trainingFor(human.id)).toHaveLength(2)
     expect(game.trainingFor(human.id)[0]?.progress).toBeCloseTo(0.5)
     expect(game.trainingFor(human.id)[1]?.progress).toBe(0)
+    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost / 2)
     game.tick(SCOUT.buildTime / 2)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(1)
     expect(game.trainingFor(human.id)[0]?.progress).toBe(0)
     game.tick(SCOUT.buildTime)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(2)
     expect(game.trainingFor(human.id)).toHaveLength(0)
+    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 2)
   })
 
-  it('earns credits slowly and charges for a spawned unit', () => {
-    const game = new Game(new World(12, 12))
+  it('cancels the latest queued build and leaves credits already spent', () => {
+    const game = new Game(new World(16, 16))
     const human = game.addPlayer()
-    human.credits = 0
-    game.tick(1)
-    expect(human.credits).toBeCloseTo(CREDIT_INCOME)
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(false)
-    human.credits = SCOUT.cost
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(false)
-    human.credits = 2500 + SCOUT.cost
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
+    seat(game, 4, 10)
+    expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
+    expect(game.cancelBuild(human.id, UnitTypeId.Factory)).toBe(true)
+    game.tick(0)
+    expect(game.units.map((unit) => unit.typeId)).toEqual([UnitTypeId.Turret])
+    game.tick(TURRET.buildTime / 2)
+    expect(human.credits).toBeCloseTo(10_000 - TURRET.cost / 2)
+    expect(game.cancelBuild(human.id, UnitTypeId.Turret)).toBe(true)
+    game.tick(0)
+    expect(game.units).toHaveLength(0)
+    expect(human.credits).toBeCloseTo(10_000 - TURRET.cost / 2)
+
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
     game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    expect(human.credits).toBeCloseTo(0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(false)
+    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(true)
+    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(game.cancelTraining(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(game.trainingFor(human.id).map((job) => job.typeId)).toEqual([UnitTypeId.Scout, UnitTypeId.MedTank])
+    game.tick(SCOUT.buildTime / 2)
+    const paid = human.credits
+    expect(game.cancelTraining(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(game.trainingFor(human.id).map((job) => job.typeId)).toEqual([UnitTypeId.MedTank])
+    expect(human.credits).toBeCloseTo(paid)
+  })
+
+  it('earns credits from owned cities and their population', () => {
+    const width = 16
+    const height = 16
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 6, y: 6 }], seed: 4 }
+    game.bindCities()
+    const human = game.addPlayer()
+    game.claimCity({ x: 6, y: 6 }, human.id)
+    const population = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), width, height)[0].tiles.length
+    expect(population).toBeGreaterThan(0)
+    const rate = CREDIT_PER_CITY + CREDIT_PER_POPULATION * population
+    expect(game.creditIncome(human.id)).toBe(rate)
+    human.credits = 0
+    game.tick(1)
+    expect(human.credits).toBeCloseTo(rate)
+    human.credits = 0
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
+    game.tick(1)
+    const spent = Math.min(rate, FACTORY.cost / FACTORY.buildTime)
+    expect(human.credits).toBeCloseTo(rate - spent)
+    expect(game.units[0].progress).toBeCloseTo(spent / FACTORY.cost)
   })
 
   it('rejects a footprint that overlaps an occupied tile', () => {
     const game = new Game(new World(12, 12))
     const human = game.addPlayer()
+    seat(game, 10, 4)
     game.spawn(human, UnitTypeId.Scout, { x: 4, y: 4 })
     const credits = human.credits
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(false)
@@ -86,6 +146,7 @@ describe('buildings', () => {
     const game = new Game(new World(24, 24))
     const human = game.addPlayer()
     const enemy = game.addPlayer()
+    seat(game, 10, 4)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 4, y: 4 })).toBe(true)
     const turret = game.units[0]
     const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 4, y: 10 })
@@ -102,3 +163,11 @@ describe('buildings', () => {
     expect(turret.path).toEqual([])
   })
 })
+
+function terrainOf(game: Game): number[] {
+  const terrain: number[] = []
+  for (let y = 0; y < game.world.height; y++) {
+    for (let x = 0; x < game.world.width; x++) terrain.push(game.world.terrainAt(x, y))
+  }
+  return terrain
+}

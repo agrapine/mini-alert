@@ -8,14 +8,43 @@
   </head>
   <body>
     <canvas id="view"></canvas>
+    <nav id="menubar">
+      <div id="menu" class="menu">
+        <button type="button" data-open="menu">Menu</button>
+        <div class="dropdown">
+          <button type="button" data-dismiss>Surrender</button>
+          <div class="submenu">
+            <button type="button">Settings <span class="caret">›</span></button>
+            <div class="flyout">
+              <button type="button" data-toggle aria-pressed="true">Music <span class="mark">On</span></button>
+              <button type="button" data-toggle aria-pressed="true">Sounds <span class="mark">On</span></button>
+              <button type="button" data-toggle aria-pressed="true">Input <span class="mark">On</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button type="button" data-open="changelog">Changelog</button>
+      <button type="button" data-open="help">Help</button>
+    </nav>
+    <div id="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <header>
+          <h2 id="sheet-title"></h2>
+          <button type="button" id="sheet-close">Close</button>
+        </header>
+        <div id="sheet-body"></div>
+      </div>
+    </div>
     <div id="minimap">
       <canvas id="minimap-map"></canvas>
       <canvas id="minimap-marks"></canvas>
     </div>
     <div id="hud">
-      <p id="credits"></p>
+      <p id="ledger">
+        <span id="credits"></span>
+        <span id="realm"></span>
+      </p>
       <p id="status"></p>
-      <p id="help">Click a unit to select, drag a box for several, click the ground to move, click an enemy to attack · Hold Ctrl or ⌘ to show attack range and sight · WASD, middle-drag, or Space-drag to pan · Wheel zoom · Minimap click or drag</p>
     </div>
     <div id="build"></div>
     <div id="spawn"></div>

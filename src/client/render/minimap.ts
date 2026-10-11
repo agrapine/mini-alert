@@ -1,4 +1,5 @@
-import type { UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import type { CityState, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import { cityColor, layoutCities, projectCity, type CityLayout } from '../../shared/cities.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain } from '../../shared/tiles.ts'
 
@@ -7,6 +8,11 @@ const DOT = 3.25
 export class Minimap {
   private readonly world: WorldSnapshot
   private readonly base: Uint8ClampedArray
+  private readonly pristine: Uint8ClampedArray
+  private readonly layouts: CityLayout[]
+  private evolved: CityLayout[]
+  private shownGrown: number[]
+  private cityStates: readonly CityState[] = []
   private readonly image: ImageData
   private readonly ctx: CanvasRenderingContext2D
   private dragging = false
@@ -25,6 +31,10 @@ export class Minimap {
     this.ctx = painted.ctx
     this.image = painted.image
     this.base = painted.base
+    this.pristine = new Uint8ClampedArray(painted.base)
+    this.layouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
+    this.evolved = this.layouts.slice()
+    this.shownGrown = this.layouts.map(() => 0)
     this.root.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return
       this.dragging = true
@@ -51,7 +61,9 @@ export class Minimap {
     selectedIds: ReadonlySet<number>,
     viewport: readonly { x: number; z: number }[],
     fog?: Float32Array,
+    cities: readonly CityState[] = [],
   ) {
+    this.cityStates = cities
     if (fog) this.applyFog(fog)
     const ctx = this.marks.getContext('2d')
     if (!ctx) return
@@ -79,6 +91,8 @@ export class Minimap {
   }
 
   private applyFog(mask: Float32Array) {
+    this.base.set(this.pristine)
+    this.paintCities()
     const data = this.image.data
     const base = this.base
     const count = Math.min(mask.length, base.length / 4)
@@ -90,6 +104,31 @@ export class Minimap {
       data[pixel + 2] = base[pixel + 2] * lit
     }
     this.ctx.putImageData(this.image, 0, 0)
+  }
+
+  private paintCities() {
+    const { width } = this.world
+    for (let i = 0; i < this.layouts.length; i++) {
+      const state = this.cityStates[i]
+      if (!state) continue
+      const grown = state.grown ?? 0
+      if (this.shownGrown[i] !== grown) {
+        this.evolved[i] = projectCity(this.layouts[i], grown, this.world.terrain, this.world.width, this.world.height)
+        this.shownGrown[i] = grown
+      }
+      const layout = this.evolved[i]
+      const color = cityColor(state.ownerId)
+      const r = (color >> 16) & 255
+      const g = (color >> 8) & 255
+      const b = color & 255
+      for (const tile of layout.tiles) {
+        if (tile.x < 0 || tile.y < 0 || tile.x >= width || tile.y >= this.world.height) continue
+        const pixel = (tile.y * width + tile.x) * 4
+        this.base[pixel] = r
+        this.base[pixel + 1] = g
+        this.base[pixel + 2] = b
+      }
+    }
   }
 
   private strokeViewport(

@@ -1,13 +1,15 @@
 import { DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry } from 'three'
-import type { ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import type { CityState, ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import { citySightOrigin, layoutCities, projectCity, type CityLayout } from '../../shared/cities.ts'
 import { UNIT_TYPES, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
-import type { SightSource } from '../../shared/vision.ts'
+import { friendsOf } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
+import { CityLayer } from './cities.ts'
 import { buildIsland } from './island.ts'
 import { Minimap } from './minimap.ts'
 import { loadProps } from './props.ts'
-import { Stage } from './stage.ts'
+import { Stage, cameraYaw } from './stage.ts'
 import { Particles } from './particles.ts'
 import { ShotLayer } from './shots.ts'
 import { TILE_TOP, buildTerrain } from './terrain.ts'
@@ -38,7 +40,10 @@ export class GameView {
   private hoveredIds: number[] = []
   private boxPreview = false
   private minimap: Minimap | null = null
+  private cities: CityLayer | null = null
   private fog: Fog | null = null
+  private world: WorldSnapshot | null = null
+  private cityBases: CityLayout[] | null = null
   private readonly placement: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
@@ -78,6 +83,8 @@ export class GameView {
   }
 
   mountTerrain(world: WorldSnapshot) {
+    this.world = world
+    this.cityBases = null
     const root = document.querySelector<HTMLElement>('#minimap')
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
@@ -88,10 +95,28 @@ export class GameView {
         this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
       }
       void loadProps(world).then((props) => this.stage.scene.add(props))
+      this.cities = new CityLayer()
+      void this.cities.load(world).then(() => this.stage.scene.add(this.cities!.root))
       return
     }
     if (root) root.hidden = true
     this.stage.scene.add(buildTerrain(world))
+  }
+
+  private ownedCitySights(playerId: number, states: readonly CityState[]) {
+    const world = this.world
+    if (!world) return []
+    if (!this.cityBases) {
+      this.cityBases = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
+    }
+    const sights = []
+    for (let index = 0; index < this.cityBases.length; index++) {
+      const state = states[index]
+      if (!state || state.ownerId !== playerId) continue
+      const layout = projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height)
+      sights.push({ ownerId: playerId, ...citySightOrigin(layout) })
+    }
+    return sights
   }
 
   focus(x: number, z: number) {
@@ -100,6 +125,10 @@ export class GameView {
 
   setPanAxis(x: number, z: number) {
     this.stage.setPanAxis(x, z)
+  }
+
+  nudgeYaw(direction: number) {
+    this.stage.nudgeYaw(direction)
   }
 
   update(dt: number) {
@@ -209,6 +238,7 @@ export class GameView {
     selected: readonly UnitSnapshot[],
     shots: readonly ShotEvent[] = [],
     playerId: number | null = null,
+    cities: readonly CityState[] = [],
   ) {
     for (const unit of units) {
       if (unit.health > 0) continue
@@ -272,17 +302,11 @@ export class GameView {
     this.shots.spawn(shots, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
-    const friends: SightSource[] = []
-    if (playerId !== null) {
-      for (const unit of living) {
-        if (unit.ownerId !== playerId || unit.progress < 1) continue
-        const sight = UNIT_TYPES[unit.typeId].weapon.sight
-        if (sight <= 0) continue
-        friends.push({ x: unit.x, z: unit.z, sight })
-      }
-    }
+    const friends = playerId === null ? [] : friendsOf(living, playerId, this.ownedCitySights(playerId, cities))
     this.fog?.update(this.shotDt, friends)
-    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask)
+    this.fog?.setView(cameraYaw)
+    this.cities?.sync(cities)
+    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities)
     this.stage.draw()
   }
 

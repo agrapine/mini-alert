@@ -7,6 +7,11 @@ import { ServerHost } from './host.ts'
 import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
 
+function seat(game: Game, x: number, y: number) {
+  game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 4 }
+  game.bindCities()
+}
+
 describe('player commands', () => {
   it('accepts an order only from the connection that owns the unit', () => {
     const { game, human, ai } = createSkirmish()
@@ -41,6 +46,7 @@ describe('player commands', () => {
     const ai = game.addPlayer()
     const host = new ServerHost(game, new AiPlayer(ai.id, game))
     const humanPort = host.join(human)
+    seat(game, 10, 4)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
     const before = game.units.length
@@ -82,6 +88,7 @@ describe('player commands', () => {
     const game = new Game(new World(16, 16))
     const ai = game.addPlayer()
     game.setSpawnAnchor(ai.id, { x: 4, y: 4 })
+    seat(game, 10, 4)
     expect(game.placeBuilding(ai.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(ai.id)
     ai.credits = 100_000

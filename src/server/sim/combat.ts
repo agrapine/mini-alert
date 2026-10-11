@@ -1,6 +1,7 @@
+import { CITY_SIGHT } from '../../shared/cities.ts'
 import type { ShotEvent } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
-import { seesPoint, type SightSource } from '../../shared/vision.ts'
+import { seesPoint, type CitySight, type SightSource } from '../../shared/vision.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
 import type { Unit } from '../units/unit.ts'
 
@@ -13,8 +14,14 @@ export type Impact = {
   splash: number
 }
 
-export function engage(units: readonly Unit[], dt: number, time: number, impacts: Impact[]): ShotEvent[] {
-  const vision = teamVision(units)
+export function engage(
+  units: readonly Unit[],
+  dt: number,
+  time: number,
+  impacts: Impact[],
+  cities: readonly CitySight[] = [],
+): ShotEvent[] {
+  const vision = teamVision(units, cities)
   const shots: ShotEvent[] = []
   for (const unit of units) {
     if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
@@ -116,7 +123,7 @@ function bodyReach(unit: Unit): number {
 
 const ATTACK_COMMIT = 1.5
 
-function teamVision(units: readonly Unit[]): Map<number, SightSource[]> {
+function teamVision(units: readonly Unit[], cities: readonly CitySight[]): Map<number, SightSource[]> {
   const vision = new Map<number, SightSource[]>()
   for (const unit of units) {
     if (unit.health <= 0 || unit.progress < 1) continue
@@ -125,6 +132,12 @@ function teamVision(units: readonly Unit[]): Map<number, SightSource[]> {
     const friends = vision.get(unit.ownerId) ?? []
     friends.push({ x: unit.pos.x, z: unit.pos.z, sight })
     vision.set(unit.ownerId, friends)
+  }
+  for (const city of cities) {
+    if (city.ownerId <= 0) continue
+    const friends = vision.get(city.ownerId) ?? []
+    friends.push({ x: city.x, z: city.z, sight: CITY_SIGHT })
+    vision.set(city.ownerId, friends)
   }
   return vision
 }

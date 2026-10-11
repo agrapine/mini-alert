@@ -1,3 +1,4 @@
+import { CITY_SIGHT } from './cities.ts'
 import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UNIT_TYPES } from './unit-types.ts'
 
@@ -20,7 +21,17 @@ export function seesPoint(friends: readonly SightSource[], x: number, z: number)
   return false
 }
 
-export function friendsOf(units: readonly UnitSnapshot[], playerId: number): SightSource[] {
+export type CitySight = {
+  ownerId: number
+  x: number
+  z: number
+}
+
+export function friendsOf(
+  units: readonly UnitSnapshot[],
+  playerId: number,
+  cities: readonly CitySight[] = [],
+): SightSource[] {
   const friends: SightSource[] = []
   for (const unit of units) {
     if (unit.ownerId !== playerId || unit.health <= 0 || unit.progress < 1) continue
@@ -28,11 +39,19 @@ export function friendsOf(units: readonly UnitSnapshot[], playerId: number): Sig
     if (sight <= 0) continue
     friends.push({ x: unit.x, z: unit.z, sight })
   }
+  for (const city of cities) {
+    if (city.ownerId !== playerId) continue
+    friends.push({ x: city.x, z: city.z, sight: CITY_SIGHT })
+  }
   return friends
 }
 
-export function unitsForPlayer(units: readonly UnitSnapshot[], playerId: number): UnitSnapshot[] {
-  const friends = friendsOf(units, playerId)
+export function unitsForPlayer(
+  units: readonly UnitSnapshot[],
+  playerId: number,
+  cities: readonly CitySight[] = [],
+): UnitSnapshot[] {
+  const friends = friendsOf(units, playerId, cities)
   return units.filter((unit) => unit.ownerId === playerId || seesPoint(friends, unit.x, unit.z))
 }
 
@@ -40,8 +59,9 @@ export function shotsForPlayer(
   shots: readonly ShotEvent[],
   units: readonly UnitSnapshot[],
   playerId: number,
+  cities: readonly CitySight[] = [],
 ): ShotEvent[] {
-  const friends = friendsOf(units, playerId)
+  const friends = friendsOf(units, playerId, cities)
   return shots.filter(
     (shot) => seesPoint(friends, shot.x, shot.z) || seesPoint(friends, shot.aimX, shot.aimZ),
   )

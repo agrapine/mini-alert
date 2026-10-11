@@ -8,10 +8,11 @@ export const enum Terrain {
   Flowers = 6,
   Road = 7,
   Town = 8,
+  Tree = 9,
 }
 
 export function isWalkableTerrain(terrain: Terrain): boolean {
-  return terrain !== Terrain.Obstacle && terrain !== Terrain.Water && terrain !== Terrain.Lake
+  return terrain !== Terrain.Obstacle && terrain !== Terrain.Water && terrain !== Terrain.Lake && terrain !== Terrain.Tree
 }
 
 export type TileCoord = { x: number; y: number }

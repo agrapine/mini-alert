@@ -11,7 +11,7 @@ import {
 } from 'three'
 import type { UnitSnapshot } from '../../../shared/protocol.ts'
 import { UNIT_TYPES, UnitTypeId } from '../../../shared/unit-types.ts'
-import { PITCH } from '../stage.ts'
+import { PITCH, cameraYaw } from '../stage.ts'
 import { TILE_TOP } from '../terrain.ts'
 import { createArtillery } from './artillery.ts'
 import { createFactory } from './factory.ts'
@@ -133,7 +133,7 @@ function syncHealthBar(group: Group, unit: UnitSnapshot) {
   const bar = group.getObjectByName('health-bar')
   if (bar) {
     bar.rotation.set(0, 0, 0)
-    bar.rotateY(-unit.facing)
+    bar.rotateY(cameraYaw - unit.facing)
     bar.rotateX(-PITCH)
   }
   const fill = group.getObjectByName('health-fill')

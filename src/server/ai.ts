@@ -34,7 +34,8 @@ export class AiPlayer {
     const living = this.game.units.filter((unit) => unit.ownerId === this.playerId && unit.type.topSpeed > 0)
     if (living.length === 0) return
     const unit = living[Math.floor(Math.random() * living.length)]
-    const tile = {
+    const city = this.game.nearestUnownedCityTile(this.playerId, unit.tile)
+    const tile = city ?? {
       x: Math.floor(Math.random() * this.game.world.width),
       y: Math.floor(Math.random() * this.game.world.height),
     }

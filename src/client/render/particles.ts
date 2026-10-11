@@ -10,7 +10,7 @@ import {
   Scene,
 } from 'three'
 import { WeaponKind } from '../../shared/unit-types.ts'
-import { PITCH } from './stage.ts'
+import { PITCH, cameraYaw } from './stage.ts'
 import { TILE_TOP } from './terrain.ts'
 
 const EXPLOSION = {
@@ -123,6 +123,7 @@ class Burst {
         vz: Math.sin(yaw) * horizontal * speed,
       })
       const bit = new Mesh(geometry, this.bitMaterial)
+      bit.rotation.order = 'YXZ'
       bit.rotation.x = -PITCH
       bit.frustumCulled = false
       this.bits.add(bit)
@@ -145,8 +146,10 @@ class Burst {
       spark.y += spark.vy * dt
       spark.z += spark.vz * dt
       bit.position.set(spark.x, spark.y, spark.z)
+      bit.rotation.set(-PITCH, cameraYaw, 0)
     }
     const starT = Math.min(1, this.age / this.style.starLife)
+    this.star.rotation.set(-PITCH, cameraYaw, 0)
     this.star.scale.setScalar(0.35 + starT * 1.7)
     this.starMaterial.opacity = (1 - starT) * (1 - starT)
     this.star.visible = starT < 1
@@ -179,6 +182,7 @@ function makeStarburst(scale: number, color: number): { group: Group; material: 
     side: DoubleSide,
   })
   const group = new Group()
+  group.rotation.order = 'YXZ'
   group.rotation.x = -PITCH
   group.frustumCulled = false
   group.add(new Mesh(new CircleGeometry(0.22 * scale, 10), material))

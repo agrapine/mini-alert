@@ -56,10 +56,11 @@ export function bindInput(
     for (let dy = 0; dy < footprint; dy++) {
       for (let dx = 0; dx < footprint; dx++) {
         const tile = { x: origin.x + dx, y: origin.y + dy }
+        const onMap = canPlaceFootprint(tile, 1, world.width, world.height, terrainAt, replica.units)
         cells.push({
           x: tile.x,
           y: tile.y,
-          open: canPlaceFootprint(tile, 1, world.width, world.height, terrainAt, replica.units),
+          open: onMap && replica.nearCity(tile, 1),
         })
       }
     }
@@ -74,6 +75,7 @@ export function bindInput(
     const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
     const footprint = UNIT_TYPES[typeId].footprint
     if (!canPlaceFootprint(origin, footprint, world.width, world.height, terrainAt, replica.units)) return
+    if (!replica.nearCity(origin, footprint)) return
     player.placeBuilding(origin)
     view.showPlacement(null)
   }

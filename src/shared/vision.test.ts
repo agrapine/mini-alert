@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UnitTypeId, WeaponKind } from './unit-types.ts'
+import { CITY_SIGHT } from './cities.ts'
 import { FOG_FEATHER, FOG_TEXELS, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
 
 function snapshot(id: number, ownerId: number, x: number, z: number, typeId = UnitTypeId.Scout): UnitSnapshot {
@@ -48,6 +49,25 @@ describe('vision', () => {
     }
     const landing: ShotEvent = { ...hidden, aimX: 4, aimZ: 0 }
     expect(shotsForPlayer([hidden, landing], [own], 1)).toEqual([landing])
+  })
+
+  it('reveals ground and enemies within range of an owned city', () => {
+    const inside = snapshot(2, 2, CITY_SIGHT, 0)
+    const outside = snapshot(3, 2, CITY_SIGHT + 0.1, 0)
+    const owned = [{ ownerId: 1, x: 0, z: 0 }]
+    expect(unitsForPlayer([inside, outside], 1, owned).map((unit) => unit.id)).toEqual([2])
+    expect(unitsForPlayer([inside], 1, [{ ownerId: 0, x: 0, z: 0 }])).toEqual([])
+    expect(unitsForPlayer([inside], 1, [{ ownerId: 2, x: 0, z: 0 }])).toEqual([])
+    const landing: ShotEvent = {
+      kind: WeaponKind.Shell,
+      shooterId: 9,
+      x: 40,
+      z: 40,
+      aimX: 4,
+      aimZ: 0,
+      flight: 1,
+    }
+    expect(shotsForPlayer([landing], [], 1, owned)).toEqual([landing])
   })
 
   it('keeps a tile explored after the unit that saw it moves away', () => {

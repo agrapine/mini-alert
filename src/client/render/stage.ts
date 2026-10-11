@@ -17,8 +17,11 @@ import {
 import type { TileCoord } from '../../shared/tiles.ts'
 
 export const PITCH = (50 * Math.PI) / 180
+const YAW_STEP = Math.PI / 4
+export let cameraYaw = YAW_STEP
 const CAM_DIST = 36
 const PAN_SPEED = 14
+const YAW_EASE_SECONDS = 0.16
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 4
 const ZOOM_PER_PIXEL = 0.005
@@ -42,6 +45,8 @@ export class Stage {
   private readonly projected = new Vector3()
   private axisX = 0
   private axisZ = 0
+  private bearing = YAW_STEP
+  private bearingTarget = YAW_STEP
   private zoomTarget = 1
   private zoomCursor: { x: number; y: number } | null = null
 
@@ -115,11 +120,32 @@ export class Stage {
     this.axisZ = z
   }
 
+  nudgeYaw(direction: number) {
+    this.bearingTarget += direction * YAW_STEP
+  }
+
   update(dt: number) {
+    const gap = this.bearingTarget - this.bearing
+    if (Math.abs(gap) > 0.0004) {
+      const t = Math.min(1, dt / YAW_EASE_SECONDS)
+      this.bearing += gap * easeOutCubic(t)
+      cameraYaw = this.bearing
+      this.syncCamera()
+    } else if (this.bearing !== this.bearingTarget) {
+      this.bearing = this.bearingTarget
+      cameraYaw = this.bearing
+      this.syncCamera()
+    }
     if (this.axisX !== 0 || this.axisZ !== 0) {
       const len = Math.hypot(this.axisX, this.axisZ)
       const speed = (PAN_SPEED / this.camera.zoom) * dt
-      this.moveLook((this.axisX / len) * speed, (this.axisZ / len) * speed)
+      const rightX = Math.cos(this.bearing)
+      const rightZ = -Math.sin(this.bearing)
+      const backX = Math.sin(this.bearing)
+      const backZ = Math.cos(this.bearing)
+      const x = this.axisX / len
+      const z = this.axisZ / len
+      this.moveLook((x * rightX + z * backX) * speed, (x * rightZ + z * backZ) * speed)
     }
     this.easeZoom(dt)
   }
@@ -233,10 +259,12 @@ export class Stage {
   }
 
   private syncCamera() {
+    cameraYaw = this.bearing
+    const horizontal = Math.cos(PITCH) * CAM_DIST
     this.camera.position.set(
-      this.look.x,
+      this.look.x + Math.sin(this.bearing) * horizontal,
       Math.sin(PITCH) * CAM_DIST,
-      this.look.z + Math.cos(PITCH) * CAM_DIST,
+      this.look.z + Math.cos(this.bearing) * horizontal,
     )
     this.camera.lookAt(this.look)
   }

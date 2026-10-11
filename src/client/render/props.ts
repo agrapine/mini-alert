@@ -73,7 +73,7 @@ function scatter(world: WorldSnapshot, props: Map<PropName, Group>): Group {
       const tile = terrain[y * width + x]
       const n = hash(x, y, seed)
       const yaw = ((n % 360) * Math.PI) / 180
-      if (tile === Terrain.Forest && n % 7 === 0) {
+      if (tile === Terrain.Tree) {
         group.add(place(props, n % 2 === 0 ? 'tree' : 'tree-high', x, y, yaw))
       } else if (tile === Terrain.Flowers && n % 4 === 0) {
         group.add(place(props, 'plant', x, y, yaw))

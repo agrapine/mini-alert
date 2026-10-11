@@ -1,5 +1,5 @@
 import type { MapPoint } from '../shared/protocol.ts'
-import { isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
+import type { TileCoord } from '../shared/tiles.ts'
 import { UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { generateIsland, type Island } from './mapgen/generate.ts'
@@ -11,22 +11,6 @@ const MATCH_SEED = Math.random()*100;
 
 const SQUAD = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.HeavyTank, UnitTypeId.Artillery]
 
-const OFFSETS: TileCoord[] = [
-  { x: 0, y: 1 },
-  { x: 1, y: 0 },
-  { x: 0, y: -1 },
-  { x: -1, y: 0 },
-  { x: 1, y: 1 },
-  { x: 1, y: -1 },
-  { x: -1, y: 1 },
-  { x: -1, y: -1 },
-  { x: 0, y: 2 },
-  { x: 2, y: 0 },
-  { x: 0, y: -2 },
-  { x: -2, y: 0 },
-  { x: 0, y: 0 },
-]
-
 export function createIslandMatch(seed = MATCH_SEED): { game: Game; human: Player; ai: Player } {
   const island = generateIsland(seed)
   const game = new Game(World.fromTiles(island.width, island.height, island.terrain))
@@ -37,13 +21,16 @@ export function createIslandMatch(seed = MATCH_SEED): { game: Game; human: Playe
     towns: island.towns,
     seed: island.seed,
   }
+  game.bindCities()
   const human = game.addPlayer()
   const ai = game.addPlayer()
   const [humanTown, aiTown] = farTowns(island)
+  game.claimCity(humanTown, human.id)
+  game.claimCity(aiTown, ai.id)
   const humanFacing = facingAlongRoad(island, humanTown)
   const aiFacing = facingAlongRoad(island, aiTown)
-  const humanTiles = spawnSquad(game, human, island, humanTown, humanFacing)
-  const aiTiles = spawnSquad(game, ai, island, aiTown, aiFacing)
+  const humanTiles = spawnSquad(game, human, humanTown, humanFacing)
+  const aiTiles = spawnSquad(game, ai, aiTown, aiFacing)
   game.setSpawnAnchor(human.id, humanTiles[0] ?? tileOf(humanTown))
   game.setSpawnAnchor(ai.id, aiTiles[0] ?? tileOf(aiTown))
   return { game, human, ai }
@@ -101,35 +88,14 @@ function facingAlongRoad(island: Island, town: MapPoint): number {
   return facing
 }
 
-function spawnSquad(
-  game: Game,
-  player: Player,
-  island: Island,
-  town: MapPoint,
-  facing: number,
-): TileCoord[] {
+function spawnSquad(game: Game, player: Player, town: MapPoint, facing: number): TileCoord[] {
   const origin = tileOf(town)
-  const used = new Set<string>()
   const placed: TileCoord[] = []
   for (const typeId of SQUAD) {
-    const tile = openTile(island, origin, used)
-    if (!tile) continue
-    used.add(`${tile.x},${tile.y}`)
-    game.spawn(player, typeId, tile, facing)
-    placed.push(tile)
+    const unit = game.spawn(player, typeId, origin, facing)
+    placed.push(unit.tile)
   }
   return placed
-}
-
-function openTile(island: Island, origin: TileCoord, used: ReadonlySet<string>): TileCoord | null {
-  for (const step of OFFSETS) {
-    const tile = { x: origin.x + step.x, y: origin.y + step.y }
-    if (used.has(`${tile.x},${tile.y}`)) continue
-    if (tile.x < 0 || tile.y < 0 || tile.x >= island.width || tile.y >= island.height) continue
-    if (!isWalkableTerrain(island.terrain[tile.y * island.width + tile.x])) continue
-    return tile
-  }
-  return null
 }
 
 function tileOf(point: MapPoint): TileCoord {

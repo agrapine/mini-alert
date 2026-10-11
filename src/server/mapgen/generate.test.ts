@@ -22,6 +22,33 @@ describe('island generator', () => {
     expect(island.coast.length).toBeGreaterThan(8)
   })
 
+  it('scales towns and roads with the map', () => {
+    const small = generateIsland(1, 64, 64)
+    const large = generateIsland(1, 128, 128)
+    expect(large.towns.length).toBeGreaterThan(small.towns.length * 2)
+    expect(large.roads.length).toBeGreaterThan(small.roads.length * 2)
+    const density = (map: { towns: unknown[]; width: number; height: number }) => map.towns.length / (map.width * map.height)
+    expect(density(large)).toBeGreaterThan(density(small) * 0.5)
+    expect(density(large)).toBeLessThan(density(small) * 4)
+  })
+
+  it('blocks trees and leaves forest gaps you can walk', () => {
+    let trees = 0
+    let gaps = 0
+    const { terrain } = island
+    for (let i = 0; i < terrain.length; i++) {
+      if (terrain[i] === Terrain.Tree) {
+        trees++
+        expect(isWalkableTerrain(terrain[i])).toBe(false)
+      } else if (terrain[i] === Terrain.Forest) {
+        gaps++
+        expect(isWalkableTerrain(terrain[i])).toBe(true)
+      }
+    }
+    expect(trees).toBeGreaterThan(gaps)
+    expect(gaps).toBeGreaterThan(0)
+  })
+
   it('joins counties into one road network within the hop limit', () => {
     const count = island.towns.length
     expect(count).toBeGreaterThan(1)
@@ -72,6 +99,7 @@ describe('island generator', () => {
     expect(inlandLand).toBe(true)
     expect(shoreForest).toBe(true)
     expect(minimapRgb(Terrain.Forest, true)).toEqual(minimapRgb(Terrain.Forest, false))
+    expect(minimapRgb(Terrain.Tree, false)).toEqual(minimapRgb(Terrain.Forest, false))
   })
 })
 

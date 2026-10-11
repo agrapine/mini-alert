@@ -13,7 +13,13 @@ export const ISLAND_WIDTH = size;
 export const ISLAND_HEIGHT = size;
 export const MAX_HOPS = 4
 
-const SITES = 42
+const BASE_SPAN = 64
+const BASE_SITES = 42
+
+function siteCount(width: number, height: number): number {
+  const area = (width * height) / (BASE_SPAN * BASE_SPAN)
+  return Math.max(8, Math.round((BASE_SITES * area) / 4))
+}
 const DIRS = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -34,12 +40,10 @@ export type Island = {
   roadEdges: [number, number][]
 }
 
-export function generateIsland(seed: number): Island {
-  const width = ISLAND_WIDTH
-  const height = ISLAND_HEIGHT
+export function generateIsland(seed: number, width = ISLAND_WIDTH, height = ISLAND_HEIGHT): Island {
   const rng = mulberry32(seed)
   const region = new Int16Array(width * height)
-  const sites = Array.from({ length: SITES }, () => ({
+  const sites = Array.from({ length: siteCount(width, height) }, () => ({
     x: rng() * width,
     y: rng() * height,
   }))
@@ -61,7 +65,7 @@ export function generateIsland(seed: number): Island {
     }
   }
 
-  const dropped = new Uint8Array(SITES)
+  const dropped = new Uint8Array(sites.length)
   for (let x = 0; x < width; x++) {
     dropped[region[x]] = 1
     dropped[region[(height - 1) * width + x]] = 1
@@ -136,6 +140,7 @@ export function generateIsland(seed: number): Island {
     terrain[Math.floor(town.y) * width + Math.floor(town.x)] = Terrain.Town
   }
   fillWaterCracks(terrain, width, height)
+  plantTrees(terrain, width, height, seed)
   const { coast, holes } = traceShore(terrain, width, height)
 
   return {
@@ -152,7 +157,13 @@ export function generateIsland(seed: number): Island {
   }
 }
 
-export function countyHops(edges: readonly [number, number][], count: number, from: number, to: number): number {
+export function countyHops(
+  edges: readonly [number, number][],
+  count: number,
+  from: number,
+  to: number,
+  maxDist = Infinity,
+): number {
   if (from === to) return 0
   const adj: number[][] = Array.from({ length: count }, () => [])
   for (const [a, b] of edges) {
@@ -165,6 +176,7 @@ export function countyHops(edges: readonly [number, number][], count: number, fr
   for (let head = 0; head < queue.length; head++) {
     const current = queue[head]
     if (current === to) return dist[current]
+    if (dist[current] >= maxDist) continue
     for (const next of adj[current]) {
       if (dist[next] >= 0) continue
       dist[next] = dist[current] + 1
@@ -358,7 +370,7 @@ function addShortcuts(
     let pair: [number, number] | null = null
     for (const [a, b] of borders) {
       if (linked.has(key(a, b))) continue
-      const dist = countyHops(edges, count, a, b)
+      const dist = countyHops(edges, count, a, b, MAX_HOPS)
       if (dist > MAX_HOPS && dist > best) {
         best = dist
         pair = [a, b]
@@ -376,22 +388,17 @@ function pruneRoads(
   borders: readonly [number, number][],
   count: number,
 ): { edge: [number, number]; line: MapPoint[] }[] {
-  let current = [...drawn]
-  let changed = true
-  while (changed) {
-    changed = false
-    const order = current
-      .map((item, index) => ({ index, length: polylineLength(item.line) }))
-      .sort((a, b) => a.length - b.length)
-    for (const { index } of order) {
-      const next = current.filter((_, i) => i !== index)
-      if (!bordersWithin(next.map((item) => item.edge), borders, count)) continue
-      current = next
-      changed = true
-      break
-    }
+  const order = drawn
+    .map((item, index) => ({ index, length: polylineLength(item.line) }))
+    .sort((a, b) => a.length - b.length)
+  const removed = new Set<number>()
+  for (const { index } of order) {
+    removed.add(index)
+    const edges: [number, number][] = []
+    for (let i = 0; i < drawn.length; i++) if (!removed.has(i)) edges.push(drawn[i].edge)
+    if (!bordersWithin(edges, borders, count)) removed.delete(index)
   }
-  return current
+  return drawn.filter((_, index) => !removed.has(index))
 }
 
 function bordersWithin(
@@ -400,7 +407,7 @@ function bordersWithin(
   count: number,
 ): boolean {
   for (const [a, b] of borders) {
-    if (countyHops(edges, count, a, b) > MAX_HOPS) return false
+    if (countyHops(edges, count, a, b, MAX_HOPS) > MAX_HOPS) return false
   }
   return componentCount(edges, count) === 1
 }
@@ -524,6 +531,23 @@ function paintRoads(terrain: Uint8Array, width: number, height: number, roads: r
       terrain[i] = Terrain.Road
     }
   }
+}
+
+function plantTrees(terrain: Uint8Array, width: number, height: number, seed: number) {
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (terrain[i] !== Terrain.Forest) continue
+      if (hash(x, y, seed) % 3 === 0) continue
+      terrain[i] = Terrain.Tree
+    }
+  }
+}
+
+function hash(x: number, y: number, seed: number): number {
+  let n = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ (seed | 0)
+  n = Math.imul(n ^ (n >>> 13), 1274126177)
+  return (n ^ (n >>> 16)) >>> 0
 }
 
 function roadDistance(terrain: Uint8Array, width: number, height: number): Int16Array {

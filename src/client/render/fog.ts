@@ -34,6 +34,7 @@ export class Fog {
   private readonly friendData: Float32Array
   private readonly friendTexture: DataTexture
   private readonly friendCount = { value: 0 }
+  private readonly viewShift = new Vector2(0, FOG_OVERHANG)
   private readonly width: number
   private readonly height: number
 
@@ -69,13 +70,13 @@ export class Fog {
     this.friendTexture.flipY = false
     this.friendTexture.needsUpdate = true
 
-    const depth = height + FOG_OVERHANG + FOG_SLACK
+    const margin = FOG_OVERHANG + FOG_SLACK
     const mesh = new Mesh(
-      new PlaneGeometry(width, depth),
-      fogMaterial(this.exploredTexture, this.friendTexture, this.friendCount, width, height),
+      new PlaneGeometry(width + margin * 2, height + margin * 2),
+      fogMaterial(this.exploredTexture, this.friendTexture, this.friendCount, this.viewShift, width, height),
     )
     mesh.rotation.x = -Math.PI / 2
-    mesh.position.set(width / 2, FOG_Y, depth / 2)
+    mesh.position.set(width / 2, FOG_Y, height / 2)
     mesh.renderOrder = 20
     mesh.frustumCulled = false
     scene.add(mesh)
@@ -102,6 +103,10 @@ export class Fog {
     this.friendCount.value = count
     this.friendTexture.needsUpdate = true
   }
+
+  setView(yaw: number) {
+    this.viewShift.set(Math.sin(yaw) * FOG_OVERHANG, Math.cos(yaw) * FOG_OVERHANG)
+  }
 }
 
 function encodeExplored(field: Float32Array, pixels: Uint8Array) {
@@ -115,6 +120,7 @@ function fogMaterial(
   explored: DataTexture,
   friends: DataTexture,
   friendCount: { value: number },
+  viewShift: Vector2,
   width: number,
   height: number,
 ): ShaderMaterial {
@@ -127,7 +133,7 @@ function fogMaterial(
       friends: { value: friends },
       friendCount,
       mapSize: { value: new Vector2(width, height) },
-      overhang: { value: FOG_OVERHANG },
+      viewShift: { value: viewShift },
       feather: { value: FOG_FEATHER },
       exploredFog: { value: EXPLORED_FOG },
     },
@@ -144,12 +150,12 @@ function fogMaterial(
       uniform sampler2D friends;
       uniform float friendCount;
       uniform vec2 mapSize;
-      uniform float overhang;
+      uniform vec2 viewShift;
       uniform float feather;
       uniform float exploredFog;
       varying vec3 vWorld;
       void main() {
-        vec2 ground = vec2(vWorld.x, vWorld.z - overhang);
+        vec2 ground = vec2(vWorld.x, vWorld.z) - viewShift;
         vec2 uv = clamp(ground / mapSize, 0.0, 1.0);
         float knownDist = (texture2D(explored, uv).r - 0.5) * 2.0 * feather;
         float vis = 1000.0;
