@@ -1,6 +1,7 @@
 import type { MapPoint } from '../../shared/protocol.ts'
 import { Terrain } from '../../shared/tiles.ts'
 import { mulberry32, valueNoise } from './noise.ts'
+import { fitShifts, type Site } from './shifts.ts'
 
 function rnd<T>(...arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
@@ -38,6 +39,9 @@ export type Island = {
   towns: MapPoint[]
   borders: [number, number][]
   roadEdges: [number, number][]
+  shifts: Uint8Array
+  keptSites: Site[]
+  droppedSites: Site[]
 }
 
 export function generateIsland(seed: number, width = ISLAND_WIDTH, height = ISLAND_HEIGHT): Island {
@@ -142,6 +146,11 @@ export function generateIsland(seed: number, width = ISLAND_WIDTH, height = ISLA
   fillWaterCracks(terrain, width, height)
   plantTrees(terrain, width, height, seed)
   const { coast, holes } = traceShore(terrain, width, height)
+  const used = new Uint8Array(sites.length)
+  for (let i = 0; i < region.length; i++) if (region[i] >= 0) used[region[i]] = 1
+  const keptSites = sites.filter((_, index) => used[index] === 1)
+  const droppedSites = sites.filter((_, index) => dropped[index] === 1)
+  const shifts = fitShifts(terrain, width, height, seed, keptSites, droppedSites, roads)
 
   return {
     seed,
@@ -154,6 +163,9 @@ export function generateIsland(seed: number, width = ISLAND_WIDTH, height = ISLA
     towns,
     borders,
     roadEdges,
+    shifts,
+    keptSites,
+    droppedSites,
   }
 }
 

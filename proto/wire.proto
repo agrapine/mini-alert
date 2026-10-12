@@ -1,0 +1,274 @@
+syntax = "proto3";
+
+package rts;
+
+message Tile {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message Point {
+  float x = 1;
+  float y = 2;
+}
+
+message Poly {
+  repeated Point points = 1;
+}
+
+message MapCell {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 terrain = 3;
+  uint32 shift = 4;
+}
+
+message MapData {
+  uint32 width = 1;
+  uint32 height = 2;
+  repeated MapCell cells = 3;
+  repeated Point coast = 4;
+  repeated Poly holes = 5;
+  repeated Poly roads = 6;
+  repeated Point towns = 7;
+  repeated Tile cleared = 8;
+}
+
+message TrainJob {
+  uint32 type_id = 1;
+  float progress = 2;
+}
+
+message CitySite {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 model = 3;
+  uint32 yaw = 4;
+  uint32 at = 5;
+}
+
+message CityBuilding {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 model = 3;
+  uint32 yaw = 4;
+  bool keep = 5;
+}
+
+message CityStreet {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 kind = 3;
+  uint32 yaw = 4;
+  float ox = 5;
+  float oz = 6;
+}
+
+message CityLayoutMsg {
+  int32 x = 1;
+  int32 y = 2;
+  uint32 span = 3;
+  uint32 seed = 4;
+  repeated Tile tiles = 5;
+  repeated CityBuilding buildings = 6;
+  repeated CityStreet streets = 7;
+}
+
+message CityStateMsg {
+  uint32 owner_id = 1;
+  uint32 color = 2;
+  float progress = 3;
+  uint32 challenger_id = 4;
+  uint32 challenger_color = 5;
+  uint32 grown = 6;
+  repeated Tile ruins = 7;
+  repeated CitySite sites = 8;
+}
+
+message CityUpdateMsg {
+  uint32 index = 1;
+  CityStateMsg state = 2;
+  CityLayoutMsg layout = 3;
+}
+
+message UnitMotionMsg {
+  uint32 id = 1;
+  uint32 type_id = 2;
+  uint32 owner_id = 3;
+  uint32 color = 4;
+  float x = 5;
+  float z = 6;
+  float facing = 7;
+  float turret_yaw = 8;
+  float speed = 9;
+  float health = 10;
+  float progress = 11;
+  int32 tile_x = 12;
+  int32 tile_y = 13;
+  repeated Tile path = 14;
+  Tile goal = 15;
+  uint32 attack_id = 16;
+  float attack_x = 17;
+  float attack_z = 18;
+  bool attacking_ground = 19;
+}
+
+message WelcomeMsg {
+  uint32 player_id = 1;
+}
+
+message SnapshotMsg {
+  MapData map = 1;
+  repeated UnitMotionMsg units = 2;
+  repeated CityUpdateMsg cities = 3;
+  float credits = 4;
+  repeated TrainJob training = 5;
+  uint32 primary_factory_id = 6;
+  bool rally_set = 7;
+  int32 rally_x = 8;
+  int32 rally_y = 9;
+}
+
+message UnitHealthMsg {
+  uint32 id = 1;
+  float health = 2;
+}
+
+message UnitProgressMsg {
+  uint32 id = 1;
+  float progress = 2;
+}
+
+message UnitHiddenMsg {
+  uint32 id = 1;
+}
+
+message ShotSpawnMsg {
+  uint32 kind = 1;
+  uint32 shooter_id = 2;
+  float x = 3;
+  float z = 4;
+  float aim_x = 5;
+  float aim_z = 6;
+  float flight = 7;
+}
+
+message ShotHitMsg {
+  uint32 kind = 1;
+  float aim_x = 2;
+  float aim_z = 3;
+}
+
+message CreditsMsg {
+  float credits = 1;
+}
+
+message TrainingMsg {
+  repeated TrainJob jobs = 1;
+}
+
+message RallyMsg {
+  bool set = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message PrimaryMsg {
+  uint32 id = 1;
+}
+
+message YieldsMsg {
+  repeated Point points = 1;
+}
+
+message ServerEvent {
+  oneof body {
+    WelcomeMsg welcome = 1;
+    SnapshotMsg snapshot = 2;
+    UnitMotionMsg motion = 3;
+    UnitHealthMsg health = 4;
+    UnitProgressMsg progress = 5;
+    UnitHiddenMsg hidden = 6;
+    ShotSpawnMsg shot_spawn = 7;
+    ShotHitMsg shot_hit = 8;
+    MapData map_patch = 9;
+    CityUpdateMsg city = 10;
+    CreditsMsg credits = 11;
+    TrainingMsg training = 12;
+    RallyMsg rally = 13;
+    PrimaryMsg primary = 14;
+    YieldsMsg yields = 15;
+  }
+}
+
+message ServerFrame {
+  uint32 tick = 1;
+  repeated ServerEvent events = 2;
+}
+
+message OrderMoveMsg {
+  uint32 unit_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message SpawnMsg {
+  uint32 type_id = 1;
+}
+
+message OrderAttackMsg {
+  uint32 unit_id = 1;
+  uint32 target_id = 2;
+}
+
+message OrderAttackGroundMsg {
+  uint32 unit_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message PlaceBuildingMsg {
+  uint32 type_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message CancelSpawnMsg {
+  uint32 type_id = 1;
+}
+
+message CancelBuildingMsg {
+  uint32 type_id = 1;
+}
+
+message SetPrimaryMsg {
+  uint32 unit_id = 1;
+}
+
+message SetRallyMsg {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message PlaceCityMsg {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message RequestSnapshotMsg {}
+
+message ClientCommand {
+  oneof body {
+    OrderMoveMsg order_move = 1;
+    SpawnMsg spawn = 2;
+    OrderAttackMsg order_attack = 3;
+    PlaceBuildingMsg place_building = 4;
+    CancelSpawnMsg cancel_spawn = 5;
+    CancelBuildingMsg cancel_building = 6;
+    SetPrimaryMsg set_primary = 7;
+    SetRallyMsg set_rally = 8;
+    OrderAttackGroundMsg order_attack_ground = 9;
+    PlaceCityMsg place_city = 10;
+    RequestSnapshotMsg request_snapshot = 11;
+  }
+}

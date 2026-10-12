@@ -23,7 +23,7 @@ import {
   type WaitingRoom,
 } from '../shared/lobby.ts'
 import { PLAYER_COLORS } from '../shared/players.ts'
-import type { ClientMessage, ServerMessage, MapPoint } from '../shared/protocol.ts'
+import type { ClientMessage, MapPoint, ServerFrame } from '../shared/protocol.ts'
 import { AiPlayer } from '../ai/player.ts'
 import type { RemotePlay } from './host.ts'
 import { ServerHost } from './host.ts'
@@ -36,7 +36,7 @@ const TEXT_LIMIT = 200
 
 export type LobbySocket = {
   send(message: LobbyServerMessage): void
-  sendGame(message: ServerMessage): void
+  sendGame(message: ServerFrame): void
 }
 
 export type LobbyMember = {

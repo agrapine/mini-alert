@@ -1,19 +1,25 @@
 import {
+  BoxGeometry,
   BufferGeometry,
+  Color,
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Object3D,
   Path,
   PlaneGeometry,
   Shape,
   ShapeGeometry,
   Vector2,
 } from 'three'
+import { bankRuns, forestLoops, landLoops, loopContains, roadLines, signedArea, type LayerLoop } from '../../shared/contour.ts'
 import type { MapPoint, WorldSnapshot } from '../../shared/protocol.ts'
 import { blockerHoles, smoothShore } from '../../shared/shore.ts'
+import { Terrain } from '../../shared/tiles.ts'
 import { TILE_TOP } from './terrain.ts'
 
 const SAMPLE = 0.32
@@ -21,6 +27,9 @@ const ROAD_HALF = 0.5
 const ROAD_COLOR = 0x667755;
 const WATER_Y = TILE_TOP - 0.04
 const CAP_COLOR = [143 / 255, 206 / 255, 106 / 255]
+const FOREST_COLOR = [61 / 255, 154 / 255, 74 / 255]
+const TOWN = new Color(0x1a1a1a)
+const OBSTACLE = new Color(0x3a342e)
 const WET_COLOR = [36 / 255, 92 / 255, 48 / 255]
 const BANK = [
   { offset: 0, y: TILE_TOP, wet: 0 },
@@ -38,6 +47,92 @@ export function buildIsland(world: WorldSnapshot): Group {
     if (ribbon) group.add(ribbon)
   }
   return group
+}
+
+export function buildSurface(world: WorldSnapshot): Group {
+  const group = new Group()
+  const grass = capMaterial()
+  const woods = capMaterial()
+  for (const shape of packLoops(landLoops(world.terrain, world.known, world.shifts, world.width, world.height))) {
+    group.add(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points), grass))
+    for (const loop of [shape.outer, ...shape.holes]) {
+      for (const run of bankRuns(loop)) {
+        const strip = run.closed ? bankStrip(run.points, grass) : openBank(run.points, grass)
+        if (strip) group.add(strip)
+      }
+    }
+  }
+  for (const shape of packLoops(forestLoops(world.terrain, world.known, world.shifts, world.width, world.height))) {
+    group.add(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points), woods, TILE_TOP + 0.02, FOREST_COLOR))
+  }
+  for (const line of roadLines(world.terrain, world.known, world.shifts, world.width, world.height)) {
+    const ribbon = roadRibbon(line)
+    if (ribbon) group.add(ribbon)
+  }
+  const marks = markers(world)
+  if (marks) group.add(marks)
+  return group
+}
+
+function packLoops(loops: readonly LayerLoop[]): { outer: LayerLoop; holes: LayerLoop[] }[] {
+  const outers = loops.filter((loop) => signedArea(loop.points) > 0)
+  const holes = loops.filter((loop) => signedArea(loop.points) < 0)
+  const groups = outers.map((outer) => ({ outer, holes: [] as LayerLoop[] }))
+  for (const hole of holes) {
+    const point = hole.points[0]
+    let best: { outer: LayerLoop; holes: LayerLoop[] } | null = null
+    let bestArea = Infinity
+    for (const group of groups) {
+      const area = Math.abs(signedArea(group.outer.points))
+      if (area >= bestArea || !loopContains(group.outer.points, point.x, point.y)) continue
+      best = group
+      bestArea = area
+    }
+    if (best) best.holes.push(hole)
+  }
+  return groups
+}
+
+function capMaterial(): MeshStandardMaterial {
+  return new MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.95,
+    metalness: 0,
+    side: DoubleSide,
+  })
+}
+
+function markers(world: WorldSnapshot): InstancedMesh | null {
+  const spots: { x: number; y: number; color: Color }[] = []
+  for (let y = 0; y < world.height; y++) {
+    for (let x = 0; x < world.width; x++) {
+      const index = y * world.width + x
+      if (world.known[index] !== 1) continue
+      const terrain = world.terrain[index]
+      if (terrain === Terrain.Town) spots.push({ x, y, color: TOWN })
+      else if (terrain === Terrain.Obstacle) spots.push({ x, y, color: OBSTACLE })
+    }
+  }
+  if (spots.length === 0) return null
+  const mesh = new InstancedMesh(
+    new BoxGeometry(0.98, TILE_TOP, 0.98),
+    new MeshStandardMaterial({ roughness: 0.92, metalness: 0 }),
+    spots.length,
+  )
+  const dummy = new Object3D()
+  for (let i = 0; i < spots.length; i++) {
+    const spot = spots[i]
+    dummy.position.set(spot.x + 0.5, TILE_TOP / 2 + 0.04, spot.y + 0.5)
+    dummy.rotation.set(0, 0, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    mesh.setMatrixAt(i, dummy.matrix)
+    mesh.setColorAt(i, spot.color)
+  }
+  mesh.instanceMatrix.needsUpdate = true
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  return mesh
 }
 
 function landMesh(world: WorldSnapshot): Group | null {
@@ -64,7 +159,13 @@ function landMesh(world: WorldSnapshot): Group | null {
   return group
 }
 
-function flatCap(coast: readonly MapPoint[], holes: readonly MapPoint[][], material: MeshStandardMaterial): Mesh {
+function flatCap(
+  coast: readonly MapPoint[],
+  holes: readonly MapPoint[][],
+  material: MeshStandardMaterial,
+  y = TILE_TOP,
+  color: readonly number[] = CAP_COLOR,
+): Mesh {
   const shape = new Shape(coast.map((point) => new Vector2(point.x, point.y)))
   for (const hole of holes) {
     if (hole.length < 3) continue
@@ -72,13 +173,13 @@ function flatCap(coast: readonly MapPoint[], holes: readonly MapPoint[][], mater
   }
   const geometry = new ShapeGeometry(shape)
   geometry.rotateX(Math.PI / 2)
-  geometry.translate(0, TILE_TOP, 0)
+  geometry.translate(0, y, 0)
   const count = geometry.getAttribute('position').count
   const colors = new Float32Array(count * 3)
   for (let i = 0; i < count; i++) {
-    colors[i * 3] = CAP_COLOR[0]
-    colors[i * 3 + 1] = CAP_COLOR[1]
-    colors[i * 3 + 2] = CAP_COLOR[2]
+    colors[i * 3] = color[0]
+    colors[i * 3 + 1] = color[1]
+    colors[i * 3 + 2] = color[2]
   }
   geometry.setAttribute('color', new Float32BufferAttribute(colors, 3))
   const normal = geometry.getAttribute('normal')
@@ -88,6 +189,57 @@ function flatCap(coast: readonly MapPoint[], holes: readonly MapPoint[][], mater
     for (let i = 0; i < normal.count; i++) normal.setY(i, -normal.getY(i))
   }
   return new Mesh(geometry, material)
+}
+
+function openBank(loop: readonly MapPoint[], material: MeshStandardMaterial): Mesh | null {
+  if (loop.length < 2) return null
+  const normals = openNormals(loop)
+  const positions: number[] = []
+  const colors: number[] = []
+  for (const ring of BANK) {
+    for (let i = 0; i < loop.length; i++) {
+      const point = loop[i]
+      const normal = normals[i]
+      positions.push(point.x + normal.x * ring.offset, ring.y, point.y + normal.y * ring.offset)
+      colors.push(
+        CAP_COLOR[0] + (WET_COLOR[0] - CAP_COLOR[0]) * ring.wet,
+        CAP_COLOR[1] + (WET_COLOR[1] - CAP_COLOR[1]) * ring.wet,
+        CAP_COLOR[2] + (WET_COLOR[2] - CAP_COLOR[2]) * ring.wet,
+      )
+    }
+  }
+  const indices: number[] = []
+  const count = loop.length
+  for (let ring = 0; ring < BANK.length - 1; ring++) {
+    for (let i = 0; i < count - 1; i++) {
+      const a = ring * count + i
+      const b = ring * count + i + 1
+      const c = (ring + 1) * count + i
+      const d = (ring + 1) * count + i + 1
+      indices.push(a, c, d, a, d, b)
+    }
+  }
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new Float32BufferAttribute(colors, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return new Mesh(geometry, material)
+}
+
+function openNormals(loop: readonly MapPoint[]): MapPoint[] {
+  const normals: MapPoint[] = []
+  for (let i = 0; i < loop.length; i++) {
+    const prev = loop[Math.max(0, i - 1)]
+    const next = loop[Math.min(loop.length - 1, i + 1)]
+    let dx = next.x - prev.x
+    let dy = next.y - prev.y
+    const len = Math.hypot(dx, dy) || 1
+    dx /= len
+    dy /= len
+    normals.push({ x: dy, y: -dx })
+  }
+  return normals
 }
 
 function bankStrip(loop: readonly MapPoint[], material: MeshStandardMaterial): Mesh | null {

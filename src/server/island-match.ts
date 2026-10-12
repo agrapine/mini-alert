@@ -30,7 +30,7 @@ export function seatIsland(
   seats: readonly MatchSeat[],
   towns: readonly MapPoint[] = spreadTowns(island, seats.length),
 ): { game: Game; players: Player[] } {
-  const game = new Game(World.fromTiles(island.width, island.height, island.terrain))
+  const game = new Game(World.fromTiles(island.width, island.height, island.terrain, island.shifts))
   game.scenery = {
     coast: island.coast,
     holes: island.holes,

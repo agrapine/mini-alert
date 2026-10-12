@@ -1,17 +1,23 @@
+import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
+import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
+import { SIM_STEP, SNAP_DISTANCE, SNAPSHOT_GAP, stepMotion, timeScale, type MotionState } from '../shared/motion.ts'
 import {
-  ServerMessageKind,
-  type MapPoint,
-  type ServerMessage,
-  type ShotEvent,
-  type TrainJob,
+  ServerEventKind,
+  type CityRecord,
   type CityState,
+  type MapData,
+  type MapPoint,
+  type ServerFrame,
+  type ShotEvent,
+  type ShotHit,
+  type TrainJob,
   type UnitSnapshot,
   type WorldSnapshot,
 } from '../shared/protocol.ts'
-import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, layoutCities, populationOf, projectCity, settledCity, type CityLayout } from '../shared/cities.ts'
-import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
+import { Terrain, isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES } from '../shared/unit-types.ts'
-import { isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
+
+const CATCHUP_STEPS = 8
 
 export class Replica {
   playerId: number | null = null
@@ -19,18 +25,28 @@ export class Replica {
   units: UnitSnapshot[] = []
   credits = 0
   training: TrainJob[] = []
-  cities: CityState[] = []
+  cities: (CityState | null)[] = []
+  layouts: (CityLayout | null)[] = []
   primaryFactoryId = 0
   rally: TileCoord | null = null
   cleared: TileCoord[] = []
+  serverTick = 0
+  localTick = 0
+  wantsSnapshot = false
+  mapChanged = false
+  propEpoch = 0
+
   private pendingShots: ShotEvent[] = []
+  private pendingHits: ShotHit[] = []
   private pendingYields: MapPoint[] = []
   private readonly clearedTiles = new Set<string>()
-  private bases: CityLayout[] | null = null
-  private evolved: CityLayout[] = []
-  private full: CityLayout[] = []
+  private evolved: (CityLayout | null)[] = []
   private blockedBuildings = new Set<string>()
   private blockKey = ''
+  private accumulator = 0
+  private serverEstimate = 0
+  private askedTick = -SNAPSHOT_GAP
+  private knownCount = 0
 
   reset() {
     this.playerId = null
@@ -39,41 +55,64 @@ export class Replica {
     this.credits = 0
     this.training = []
     this.cities = []
+    this.layouts = []
     this.primaryFactoryId = 0
     this.rally = null
     this.cleared = []
+    this.serverTick = 0
+    this.localTick = 0
+    this.serverEstimate = 0
+    this.wantsSnapshot = false
+    this.mapChanged = false
+    this.propEpoch = 0
     this.clearedTiles.clear()
     this.pendingShots = []
+    this.pendingHits = []
     this.pendingYields = []
-    this.bases = null
     this.evolved = []
     this.blockedBuildings.clear()
     this.blockKey = ''
+    this.accumulator = 0
+    this.askedTick = -SNAPSHOT_GAP
+    this.knownCount = 0
   }
 
-  apply(message: ServerMessage) {
-    if (message.kind === ServerMessageKind.Welcome) {
-      this.playerId = message.playerId
-      this.pendingShots = []
-      this.pendingYields = []
+  apply(frame: ServerFrame) {
+    const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
+    if (!snapshot && this.world && Math.abs(frame.tick - this.localTick) > SNAPSHOT_GAP) {
+      this.serverTick = frame.tick
+      this.serverEstimate = frame.tick
+      this.wantsSnapshot = true
+      return
     }
-    else if (message.kind === ServerMessageKind.World) {
-      this.world = message
-      this.bases = null
-      this.blockKey = ''
-      this.cleared = []
-      this.clearedTiles.clear()
-    } else if (message.kind === ServerMessageKind.Shots) this.pendingShots.push(...message.shots)
-    else {
-      this.units = message.units
-      this.credits = message.credits
-      this.training = message.training
-      this.cities = message.cities
-      this.primaryFactoryId = message.primaryFactoryId
-      this.rally = message.rally
-      this.noteCleared(message.cleared)
-      if (message.yields.length > 0) this.pendingYields.push(...message.yields)
+    this.serverTick = frame.tick
+    this.serverEstimate = frame.tick
+    for (const event of frame.events) this.applyEvent(event)
+  }
+
+  advance(dt: number): boolean {
+    const expected = Math.round(this.serverEstimate)
+    if (this.world && Math.abs(expected - this.localTick) > SNAPSHOT_GAP) {
+      this.wantsSnapshot = true
+      return this.dueSnapshot()
     }
+    const scale = timeScale(this.localTick, expected)
+    this.serverEstimate += dt / SIM_STEP
+    this.accumulator += dt * scale
+    let steps = 0
+    while (this.accumulator >= SIM_STEP && steps < CATCHUP_STEPS) {
+      this.accumulator -= SIM_STEP
+      this.localTick += 1
+      this.stepUnits(SIM_STEP)
+      steps += 1
+    }
+    return this.dueSnapshot()
+  }
+
+  private dueSnapshot(): boolean {
+    if (!this.wantsSnapshot || this.localTick - this.askedTick < SNAPSHOT_GAP) return false
+    this.askedTick = this.localTick
+    return true
   }
 
   takeShots(): ShotEvent[] {
@@ -82,10 +121,22 @@ export class Replica {
     return shots
   }
 
+  takeHits(): ShotHit[] {
+    const hits = this.pendingHits
+    this.pendingHits = []
+    return hits
+  }
+
   takeYields(): MapPoint[] {
     const yields = this.pendingYields
     this.pendingYields = []
     return yields
+  }
+
+  consumeMapChange(): boolean {
+    const changed = this.mapChanged
+    this.mapChanged = false
+    return changed
   }
 
   unit(id: number): UnitSnapshot | undefined {
@@ -102,8 +153,9 @@ export class Replica {
     const world = this.world
     if (!world) return false
     if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    const open =
-      isWalkableTerrain(world.terrain[tile.y * world.width + tile.x]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return false
+    const open = isWalkableTerrain(world.terrain[index]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
     if (!open) return false
     if (this.buildingBlocks().has(`${tile.x},${tile.y}`)) return false
     const skip = typeof ignore === 'number' ? [ignore] : ignore
@@ -111,8 +163,8 @@ export class Replica {
   }
 
   nearCity(origin: TileCoord, footprint: number): boolean {
-    const owned = this.cityLayouts().filter((_, index) => this.cities[index]?.ownerId === this.playerId)
-    return footprintNearCity(owned, origin, footprint)
+    const owned = this.settledLayouts().filter((layout, index) => layout && this.cities[index]?.ownerId === this.playerId)
+    return footprintNearCity(owned.filter((layout): layout is CityLayout => layout !== null), origin, footprint)
   }
 
   canRaise(tile: TileCoord): boolean {
@@ -127,13 +179,218 @@ export class Replica {
     return size === null ? null : buildingCost(size)
   }
 
+  settledLayouts(): (CityLayout | null)[] {
+    this.cityLayouts()
+    return this.evolved
+  }
+
+  private applyEvent(event: ServerFrame['events'][number]) {
+    if (event.kind === ServerEventKind.Welcome) {
+      this.playerId = event.playerId
+      this.pendingShots = []
+      this.pendingHits = []
+      this.pendingYields = []
+      return
+    }
+    if (event.kind === ServerEventKind.Snapshot) {
+      this.installMap(event.map, true)
+      this.units = event.units.map(copyUnit)
+      this.credits = event.credits
+      this.training = event.training
+      this.primaryFactoryId = event.primaryFactoryId
+      this.rally = event.rally
+      this.installCities(event.cities, true)
+      this.noteCleared(event.map.cleared, true)
+      this.localTick = this.serverTick
+      this.accumulator = 0
+      this.wantsSnapshot = false
+      this.blockKey = ''
+      return
+    }
+    if (event.kind === ServerEventKind.MapPatch) {
+      this.installMap(event.map, false)
+      this.noteCleared(event.map.cleared, false)
+      return
+    }
+    if (event.kind === ServerEventKind.CityUpdate) {
+      this.installCities([event.city], false)
+      return
+    }
+    if (event.kind === ServerEventKind.UnitMotion) {
+      this.applyMotion(event.unit)
+      return
+    }
+    if (event.kind === ServerEventKind.UnitHealth) {
+      const unit = this.unit(event.id)
+      if (!unit) {
+        this.wantsSnapshot = true
+        return
+      }
+      unit.health = event.health
+      return
+    }
+    if (event.kind === ServerEventKind.UnitProgress) {
+      const unit = this.unit(event.id)
+      if (!unit) {
+        this.wantsSnapshot = true
+        return
+      }
+      unit.progress = event.progress
+      return
+    }
+    if (event.kind === ServerEventKind.UnitHidden) {
+      this.units = this.units.filter((unit) => unit.id !== event.id)
+      return
+    }
+    if (event.kind === ServerEventKind.ShotSpawn) {
+      this.pendingShots.push(event.shot)
+      return
+    }
+    if (event.kind === ServerEventKind.ShotHit) {
+      this.pendingHits.push(event.hit)
+      return
+    }
+    if (event.kind === ServerEventKind.Credits) {
+      this.credits = event.credits
+      return
+    }
+    if (event.kind === ServerEventKind.Training) {
+      this.training = event.training
+      return
+    }
+    if (event.kind === ServerEventKind.Rally) {
+      this.rally = event.rally
+      return
+    }
+    if (event.kind === ServerEventKind.Primary) {
+      this.primaryFactoryId = event.primaryFactoryId
+      return
+    }
+    if (event.kind === ServerEventKind.Yields) this.pendingYields.push(...event.yields)
+  }
+
+  private applyMotion(next: UnitSnapshot) {
+    const unit = this.unit(next.id)
+    if (!unit) {
+      this.units.push(copyUnit(next))
+      return
+    }
+    const error = Math.hypot(unit.x - next.x, unit.z - next.z)
+    if (error > SNAP_DISTANCE) {
+      unit.x = next.x
+      unit.z = next.z
+      unit.facing = next.facing
+      unit.tileX = next.tileX
+      unit.tileY = next.tileY
+    }
+    unit.speed = next.speed
+    unit.turretYaw = next.turretYaw
+    unit.path = next.path.map((tile) => ({ x: tile.x, y: tile.y }))
+    unit.goal = next.goal ? { x: next.goal.x, y: next.goal.y } : null
+    unit.attackId = next.attackId
+    unit.attackPoint = next.attackPoint ? { x: next.attackPoint.x, z: next.attackPoint.z } : null
+    unit.health = next.health
+    unit.progress = next.progress
+    unit.color = next.color
+  }
+
+  private stepUnits(dt: number) {
+    const occupied = new Map<string, number>()
+    for (const unit of this.units) {
+      if (unit.health <= 0) continue
+      stamp(occupied, unit.id, unit.tileX, unit.tileY, UNIT_TYPES[unit.typeId]?.footprint ?? 1)
+    }
+    for (const unit of this.units) {
+      const type = UNIT_TYPES[unit.typeId]
+      if (!type || type.topSpeed <= 0 || unit.health <= 0) continue
+      const state: MotionState = {
+        x: unit.x,
+        z: unit.z,
+        facing: unit.facing,
+        speed: unit.speed,
+        tileX: unit.tileX,
+        tileY: unit.tileY,
+        path: unit.path,
+      }
+      stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, x, y))
+      if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
+        clearStamp(occupied, unit.id, unit.tileX, unit.tileY, type.footprint)
+        stamp(occupied, unit.id, state.tileX, state.tileY, type.footprint)
+      }
+      unit.x = state.x
+      unit.z = state.z
+      unit.facing = state.facing
+      unit.speed = state.speed
+      unit.tileX = state.tileX
+      unit.tileY = state.tileY
+      unit.path = state.path
+      unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
+    }
+  }
+
+  private tileBlocked(occupied: ReadonlyMap<string, number>, self: number, x: number, y: number): boolean {
+    const holder = occupied.get(`${x},${y}`)
+    if (holder !== undefined && holder !== self) return true
+    const world = this.world
+    if (!world) return false
+    if (x < 0 || y < 0 || x >= world.width || y >= world.height) return true
+    const index = y * world.width + x
+    if (world.known[index] === 0) return false
+    return !isWalkableTerrain(world.terrain[index])
+  }
+
+  private installMap(map: MapData, replace: boolean) {
+    const world = replace || !this.world ? blankWorld(map.width, map.height) : this.world
+    if (replace) {
+      world.coast = []
+      world.holes = []
+      world.roads = []
+      world.towns = []
+    }
+    for (const cell of map.cells) {
+      if (cell.x < 0 || cell.y < 0 || cell.x >= world.width || cell.y >= world.height) continue
+      const index = cell.y * world.width + cell.x
+      world.terrain[index] = cell.terrain
+      world.known[index] = 1
+      world.shifts[index] = cell.shift
+    }
+    world.coast.push(...map.coast)
+    world.holes.push(...map.holes)
+    world.roads.push(...map.roads)
+    world.towns.push(...map.towns)
+    this.world = world
+    this.mapChanged = true
+    const known = world.known.reduce((sum, bit) => sum + bit, 0)
+    if (replace || known - this.knownCount >= 16) {
+      this.knownCount = known
+      this.propEpoch += 1
+    }
+  }
+
+  private installCities(records: readonly CityRecord[], replace: boolean) {
+    if (replace) {
+      this.cities = []
+      this.layouts = []
+    }
+    for (const record of records) {
+      while (this.cities.length <= record.index) {
+        this.cities.push(null)
+        this.layouts.push(null)
+      }
+      this.cities[record.index] = record.state
+      this.layouts[record.index] = record.layout
+    }
+    this.blockKey = ''
+    this.mapChanged = true
+  }
+
   private citySizeAt(tile: TileCoord, plotOnly: boolean): number | null {
     const world = this.world
     if (!world || this.playerId === null) return null
-    this.cityLayouts()
-    for (let i = 0; i < this.full.length; i++) {
+    const layouts = this.cityLayouts()
+    for (let i = 0; i < layouts.length; i++) {
       const state = this.cities[i]
-      const layout = this.full[i]
+      const layout = layouts[i]
       if (!state || !layout || state.ownerId !== this.playerId) continue
       const plot = canPlaceCityBuilding(layout, tile.x, tile.y, world.terrain, world.width, world.height)
       if (!plot && (plotOnly || !cityContains(layout, tile.x, tile.y))) continue
@@ -142,23 +399,20 @@ export class Replica {
     return null
   }
 
-  private cityLayouts(): CityLayout[] {
-    const world = this.world
-    if (!world) return []
+  private cityLayouts(): (CityLayout | null)[] {
     const key = this.cities
-      .map((city) => {
-        const sites = (city.sites ?? []).map((site) => `${site.at},${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-        return `${city.grown}:${city.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')}:${sites}`
+      .map((city, index) => {
+        if (!city) return ''
+        const layout = this.layouts[index]
+        const buildings = layout?.buildings.map((building) => `${building.x},${building.y}`).join('.') ?? ''
+        return `${city.grown}:${city.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')}:${buildings}`
       })
       .join(',')
-    if (this.bases && key === this.blockKey) return this.evolved
-    if (!this.bases) this.bases = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
-    this.full = this.bases.map((base, index) =>
-      projectCity(base, this.cities[index]?.grown ?? 0, world.terrain, world.width, world.height, this.cities[index]?.sites ?? []),
-    )
-    this.evolved = this.full.map((layout, index) => settledCity(layout, this.cities[index]?.ruins ?? []))
+    if (key === this.blockKey) return this.evolved
+    this.evolved = this.layouts.map((layout, index) => (layout ? settledCity(layout, this.cities[index]?.ruins ?? []) : null))
     const blocked = new Set<string>()
     for (const city of this.evolved) {
+      if (!city) continue
       for (const building of city.buildings) blocked.add(`${building.x},${building.y}`)
     }
     this.blockedBuildings = blocked
@@ -166,13 +420,63 @@ export class Replica {
     return this.evolved
   }
 
-  private noteCleared(tiles: readonly TileCoord[]) {
-    this.cleared = tiles.map((tile) => ({ x: tile.x, y: tile.y }))
-    for (const tile of tiles) this.clearedTiles.add(`${tile.x},${tile.y}`)
+  private noteCleared(tiles: readonly TileCoord[], replace: boolean) {
+    if (replace) {
+      this.cleared = []
+      this.clearedTiles.clear()
+    }
+    for (const tile of tiles) {
+      const key = `${tile.x},${tile.y}`
+      if (this.clearedTiles.has(key)) continue
+      this.clearedTiles.add(key)
+      this.cleared.push({ x: tile.x, y: tile.y })
+    }
   }
 
   private buildingBlocks(): Set<string> {
     this.cityLayouts()
     return this.blockedBuildings
+  }
+}
+
+function stamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, footprint: number) {
+  for (let dy = 0; dy < footprint; dy++) {
+    for (let dx = 0; dx < footprint; dx++) occupied.set(`${tileX + dx},${tileY + dy}`, id)
+  }
+}
+
+function clearStamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, footprint: number) {
+  for (let dy = 0; dy < footprint; dy++) {
+    for (let dx = 0; dx < footprint; dx++) {
+      const key = `${tileX + dx},${tileY + dy}`
+      if (occupied.get(key) === id) occupied.delete(key)
+    }
+  }
+}
+
+function copyUnit(unit: UnitSnapshot): UnitSnapshot {
+  return {
+    ...unit,
+    path: unit.path.map((tile) => ({ x: tile.x, y: tile.y })),
+    goal: unit.goal ? { x: unit.goal.x, y: unit.goal.y } : null,
+    attackPoint: unit.attackPoint ? { x: unit.attackPoint.x, z: unit.attackPoint.z } : null,
+  }
+}
+
+function blankWorld(width: number, height: number): WorldSnapshot {
+  const count = width * height
+  const terrain: Terrain[] = []
+  for (let i = 0; i < count; i++) terrain.push(Terrain.Obstacle)
+  return {
+    width,
+    height,
+    terrain,
+    known: new Uint8Array(count),
+    shifts: new Uint8Array(count),
+    coast: [],
+    holes: [],
+    roads: [],
+    towns: [],
+    seed: 0,
   }
 }

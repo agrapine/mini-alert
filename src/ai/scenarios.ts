@@ -33,8 +33,9 @@ export type Brain = {
   towns: readonly { x: number; y: number }[]
   units: readonly UnitSnapshot[]
   training: readonly TrainJob[]
-  cities: readonly CityState[]
+  cities: readonly (CityState | null)[]
   terrain: ArrayLike<number>
+  layouts?: readonly (CityLayout | null)[]
 }
 
 type Zone = {
@@ -56,7 +57,7 @@ export function consider(brain: Brain, budget: number): ClientMessage[] {
   return plan(brain, layouts, choice.zone).slice(0, budget)
 }
 
-function choose(brain: Brain, layouts: readonly CityLayout[]): Choice | null {
+function choose(brain: Brain, layouts: readonly (CityLayout | null)[]): Choice | null {
   const choices: Choice[] = []
   const contact = nearestContact(brain)
   if (contact) {
@@ -105,7 +106,7 @@ function choose(brain: Brain, layouts: readonly CityLayout[]): Choice | null {
   return best
 }
 
-function plan(brain: Brain, layouts: readonly CityLayout[], zone: Zone): ClientMessage[] {
+function plan(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
   if (zone.scenario === Scenario.Defend || zone.scenario === Scenario.Assault) return fight(brain, zone)
   if (zone.scenario === Scenario.Build) return build(brain, layouts, zone)
   if (zone.scenario === Scenario.Train) return train(brain)
@@ -132,7 +133,7 @@ function fight(brain: Brain, zone: Zone): ClientMessage[] {
   return orders
 }
 
-function build(brain: Brain, layouts: readonly CityLayout[], zone: Zone): ClientMessage[] {
+function build(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
   const standing = factory(brain)
   if (!standing) {
     const spot = siteNear(brain, layouts, { x: zone.x, y: zone.y }, FACTORY.footprint)
@@ -154,8 +155,9 @@ function train(brain: Brain): ClientMessage[] {
   return [{ kind: ClientMessageKind.Spawn, typeId }]
 }
 
-function capture(brain: Brain, layouts: readonly CityLayout[], zone: Zone): ClientMessage[] {
+function capture(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
   const city = layouts.find((layout) => {
+    if (!layout) return false
     const center = cityCenter(layout)
     return center.x === zone.x && center.y === zone.y
   })
@@ -233,33 +235,35 @@ function nearestEnemy(brain: Brain): UnitSnapshot | null {
   return best
 }
 
-function captureTarget(brain: Brain, layouts: readonly CityLayout[]): CityLayout | null {
+function captureTarget(brain: Brain, layouts: readonly (CityLayout | null)[]): CityLayout | null {
   const origin = average(ownMobile(brain)) ?? homeCenter(brain, layouts)
   if (!origin) return null
   let best: CityLayout | null = null
   let bestDist = Infinity
   for (let i = 0; i < layouts.length; i++) {
+    const layout = layouts[i]
     const state = brain.cities[i]
-    if (state && state.ownerId === brain.playerId) continue
-    const center = cityCenter(layouts[i])
+    if (!layout || (state && state.ownerId === brain.playerId)) continue
+    const center = cityCenter(layout)
     const dist = (center.x - origin.x) ** 2 + (center.y - origin.y) ** 2
     const neutral = !state || state.ownerId === 0
     const score = dist - (neutral ? 40 : 0)
     if (score >= bestDist) continue
     bestDist = score
-    best = layouts[i]
+    best = layout
   }
   return best
 }
 
-function scoutTarget(brain: Brain, layouts: readonly CityLayout[]): TileCoord | null {
+function scoutTarget(brain: Brain, layouts: readonly (CityLayout | null)[]): TileCoord | null {
   const origin = average(ownMobile(brain))
   if (!origin) return null
   let best: TileCoord | null = null
   let bestDist = Infinity
   for (let i = 0; i < layouts.length; i++) {
-    if (brain.cities[i]?.ownerId === brain.playerId) continue
-    const center = cityCenter(layouts[i])
+    const layout = layouts[i]
+    if (!layout || brain.cities[i]?.ownerId === brain.playerId) continue
+    const center = cityCenter(layout)
     const dist = (center.x - origin.x) ** 2 + (center.y - origin.y) ** 2
     if (dist < bestDist) {
       bestDist = dist
@@ -269,19 +273,21 @@ function scoutTarget(brain: Brain, layouts: readonly CityLayout[]): TileCoord | 
   return best
 }
 
-function homeCity(brain: Brain, layouts: readonly CityLayout[]): CityLayout | null {
+function homeCity(brain: Brain, layouts: readonly (CityLayout | null)[]): CityLayout | null {
   for (let i = 0; i < layouts.length; i++) {
-    if (brain.cities[i]?.ownerId === brain.playerId) return layouts[i]
+    const layout = layouts[i]
+    if (layout && brain.cities[i]?.ownerId === brain.playerId) return layout
   }
   return null
 }
 
-function homeCenter(brain: Brain, layouts: readonly CityLayout[]): TileCoord | null {
+function homeCenter(brain: Brain, layouts: readonly (CityLayout | null)[]): TileCoord | null {
   const home = homeCity(brain, layouts)
   return home ? cityCenter(home) : null
 }
 
-function cityLayouts(brain: Brain): CityLayout[] {
+function cityLayouts(brain: Brain): readonly (CityLayout | null)[] {
+  if (brain.layouts) return brain.layouts
   if (brain.towns.length === 0 || brain.terrain.length === 0) return []
   const bases = layoutCities(brain.towns, brain.seed, brain.terrain, brain.width, brain.height)
   return bases.map((base, index) =>
@@ -289,8 +295,8 @@ function cityLayouts(brain: Brain): CityLayout[] {
   )
 }
 
-function siteNear(brain: Brain, layouts: readonly CityLayout[], origin: TileCoord, footprint: number): TileCoord | null {
-  const owned = layouts.filter((_, index) => brain.cities[index]?.ownerId === brain.playerId)
+function siteNear(brain: Brain, layouts: readonly (CityLayout | null)[], origin: TileCoord, footprint: number): TileCoord | null {
+  const owned = layouts.filter((layout, index): layout is CityLayout => layout !== null && brain.cities[index]?.ownerId === brain.playerId)
   const blocked = buildingTiles(layouts)
   for (let radius = 1; radius <= 10; radius++) {
     for (let y = origin.y - radius; y <= origin.y + radius; y++) {
@@ -307,9 +313,10 @@ function siteNear(brain: Brain, layouts: readonly CityLayout[], origin: TileCoor
   return null
 }
 
-function buildingTiles(layouts: readonly CityLayout[]): Set<string> {
+function buildingTiles(layouts: readonly (CityLayout | null)[]): Set<string> {
   const blocked = new Set<string>()
   for (const layout of layouts) {
+    if (!layout) continue
     for (const building of layout.buildings) blocked.add(`${building.x},${building.y}`)
   }
   return blocked
@@ -356,13 +363,13 @@ function supplyUsed(brain: Brain): number {
 }
 
 function population(brain: Brain): number {
-  const layouts = layoutCities(brain.towns, brain.seed, brain.terrain, brain.width, brain.height)
+  const layouts = cityLayouts(brain)
   let people = 0
   for (let i = 0; i < layouts.length; i++) {
     const city = brain.cities[i]
-    if (!city || city.ownerId !== brain.playerId) continue
-    const sites = city.sites ?? []
-    people += populationOf(projectCity(layouts[i], city.grown, brain.terrain, brain.width, brain.height, sites), city.ruins)
+    const layout = layouts[i]
+    if (!city || !layout || city.ownerId !== brain.playerId) continue
+    people += populationOf(layout, city.ruins)
   }
   return people
 }

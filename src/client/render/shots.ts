@@ -8,7 +8,7 @@ import {
   MeshBasicMaterial,
   Scene,
 } from 'three'
-import type { ShotEvent } from '../../shared/protocol.ts'
+import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
 import { TILE_TOP } from './terrain.ts'
 
@@ -31,7 +31,7 @@ export class ShotLayer {
 
   constructor(private readonly scene: Scene) {}
 
-  spawn(events: readonly ShotEvent[], onImpact?: (x: number, z: number, kind: WeaponKind) => void) {
+  spawn(events: readonly ShotEvent[]) {
     for (const event of events) {
       const object = event.kind === WeaponKind.Bullet ? tracer() : shell()
       this.scene.add(object)
@@ -47,7 +47,19 @@ export class ShotLayer {
       }
       place(shot)
       this.live.push(shot)
-      if (event.kind === WeaponKind.Bullet) onImpact?.(event.aimX, event.aimZ, event.kind)
+    }
+  }
+
+  strike(hits: readonly ShotHit[], onImpact?: (x: number, z: number, kind: WeaponKind) => void) {
+    for (const hit of hits) {
+      onImpact?.(hit.aimX, hit.aimZ, hit.kind)
+      if (hit.kind !== WeaponKind.Shell) continue
+      const index = this.live.findIndex(
+        (shot) => shot.kind === WeaponKind.Shell && Math.hypot(shot.aimX - hit.aimX, shot.aimZ - hit.aimZ) < 0.75,
+      )
+      if (index < 0) continue
+      this.scene.remove(this.live[index].object)
+      this.live.splice(index, 1)
     }
   }
 
@@ -55,7 +67,7 @@ export class ShotLayer {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const shot = this.live[i]
       shot.age += dt
-      const done = shot.kind === WeaponKind.Bullet ? shot.age >= TRACER_LIFE : shot.age >= shot.flight
+      const done = shot.kind === WeaponKind.Bullet ? shot.age >= TRACER_LIFE : shot.age >= shot.flight + 0.4
       if (done) {
         if (shot.kind === WeaponKind.Shell) onImpact?.(shot.aimX, shot.aimZ, shot.kind)
         this.scene.remove(shot.object)

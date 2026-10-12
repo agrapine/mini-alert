@@ -7,7 +7,7 @@ export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]):
   if (!goal) return false
   if (!paths.isWalkable(goal.x, goal.y, unit.id)) {
     const blocker = occupant(paths, goal, units, unit.id)
-    if (!blocker || blocker.path.length === 0) unit.path = []
+    if (!blocker || blocker.path.length === 0) unit.commitPath([])
     return false
   }
 
@@ -16,7 +16,7 @@ export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]):
   if (other && isHeadOn(unit, other)) {
     const passed = passPath(unit, other, paths, goal)
     if (passed && paths.isWalkable(passed[0].x, passed[0].y, unit.id)) {
-      unit.path = passed
+      unit.commitPath(passed)
       return true
     }
   } else if (other && other.path.length > 0) {
@@ -29,7 +29,7 @@ export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]):
   if (reroute === null || reroute.length === 0) return false
   if (!paths.isPassable(reroute[0].x, reroute[0].y, unit.id)) return false
   if (reroute[0].x === next.x && reroute[0].y === next.y) return false
-  unit.path = reroute
+  unit.commitPath(reroute)
   return true
 }
 

@@ -10,9 +10,9 @@ import { Net } from './client/net.ts'
 import { bindInput, commandAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
-import { layoutCities, populationOf, projectCity, type CityLayout } from './shared/cities.ts'
+import { populationOf } from './shared/cities.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
-import { ServerMessageKind, type ClientPort, type WorldSnapshot } from './shared/protocol.ts'
+import { ClientMessageKind, ServerEventKind, type ClientPort } from './shared/protocol.ts'
 import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UNIT_TYPES, UnitTypeId } from './shared/unit-types.ts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
@@ -183,17 +183,25 @@ function claimName(serverName: string) {
   claimedName = saved
   net.sendLobby({ kind: LobbyClientKind.SetName, name: saved })
 }
-net.onGame = (message) => {
+net.onGame = (frame) => {
   const previous = replica.playerId
-  replica.apply(message)
-  if (message.kind === ServerMessageKind.Welcome && spectating && message.playerId !== previous) {
+  const hadWorld = replica.world
+  replica.apply(frame)
+  const welcome = frame.events.find((event) => event.kind === ServerEventKind.Welcome)
+  if (welcome && spectating && welcome.playerId !== previous) {
     live.view?.forgetVision()
     player.select(null)
     aimed = false
     paintVision()
+    if (replica.world) mountWorld()
+    return
   }
-  if (message.kind === ServerMessageKind.World) mountWorld()
-  else if (message.kind === ServerMessageKind.Units) aimOnce()
+  if (!hadWorld && replica.world) mountWorld()
+  else if (replica.consumeMapChange() && live.view && replica.world) {
+    live.view.noteMap(replica.world, replica.settledLayouts())
+  }
+  if (frame.events.some((event) => event.kind === ServerEventKind.Snapshot)) aimOnce()
+  if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
 }
 net.connect()
 
@@ -342,35 +350,19 @@ if (buildBar) {
 
 const COUNT_SECONDS = 0.15
 let shownCredits = replica.credits
-let cityLayouts: CityLayout[] = []
-let evolvedCities: CityLayout[] = []
-let shownStamp: string[] = []
-let laidOut: WorldSnapshot | null = null
 
 function heldCities(): { cities: number; population: number } {
   const playerId = replica.playerId
-  const world = replica.world
-  if (playerId === null || !world) return { cities: 0, population: 0 }
-  if (world !== laidOut) {
-    laidOut = world
-    cityLayouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
-    evolvedCities = cityLayouts.slice()
-    shownStamp = cityLayouts.map(() => '')
-  }
+  if (playerId === null || !replica.world) return { cities: 0, population: 0 }
+  const settled = replica.settledLayouts()
   let cities = 0
   let population = 0
-  for (let i = 0; i < cityLayouts.length; i++) {
+  for (let i = 0; i < settled.length; i++) {
     const state = replica.cities[i]
-    const grown = state?.grown ?? 0
-    const sites = state?.sites ?? []
-    const stamp = `${grown}:${sites.map((site) => `${site.at},${site.x},${site.y},${site.model},${site.yaw}`).join('.')}`
-    if (shownStamp[i] !== stamp) {
-      evolvedCities[i] = projectCity(cityLayouts[i], grown, world.terrain, world.width, world.height, sites)
-      shownStamp[i] = stamp
-    }
-    if (state?.ownerId !== playerId) continue
+    const layout = settled[i]
+    if (!state || !layout || state.ownerId !== playerId) continue
     cities += 1
-    population += populationOf(evolvedCities[i], state.ruins)
+    population += populationOf(layout, state.ruins)
   }
   return { cities, population }
 }
@@ -539,14 +531,18 @@ const frame = (now: number) => {
   last = now
   const view = live.view
   if (view) {
+    if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
+    if (replica.consumeMapChange() && replica.world) view.noteMap(replica.world, replica.settledLayouts())
     view.update(frameDt)
     refreshHud(frameDt)
     view.render(
       replica.units,
       player.selected(),
       replica.takeShots(),
+      replica.takeHits(),
       replica.playerId,
       replica.cities,
+      replica.settledLayouts(),
       replica.primaryFactoryId,
       replica.rally,
       replica.cleared,

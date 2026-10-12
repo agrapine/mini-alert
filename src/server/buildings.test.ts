@@ -276,6 +276,28 @@ describe('buildings', () => {
     expect(game.primaryFactory(human.id)).toBe(0)
   })
 
+  it('sends the next unit to an open tile beside an occupied waypoint', () => {
+    const game = new Game(new World(28, 28))
+    const human = game.addPlayer()
+    seat(game, human.id, 10, 8)
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
+    game.finishBuild(human.id)
+    const rally = { x: 20, y: 8 }
+    expect(game.setRally(human.id, rally)).toBe(true)
+    const parked = game.spawn(human, UnitTypeId.Scout, rally, 0)
+    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    game.tick(SCOUT.buildTime)
+    const scout = game.units.find((unit) => unit.typeId === UnitTypeId.Scout && unit.id !== parked.id)
+    expect(scout).toBeDefined()
+    if (!scout) return
+    const goal = scout.path.at(-1)
+    expect(goal).toBeDefined()
+    if (!goal) return
+    expect(goal).not.toEqual(rally)
+    expect(Math.abs(goal.x - rally.x) + Math.abs(goal.y - rally.y)).toBe(1)
+    expect(game.rally(human.id)).toEqual(rally)
+  })
+
   it('prices a city building from that city and uses a grown building', () => {
     expect(buildingCost(1)).toBe(100)
     expect(buildingCost(5)).toBe(100)

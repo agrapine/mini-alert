@@ -1,33 +1,21 @@
 import { consider, type Brain } from './scenarios.ts'
 import { clampAiPace, AI_PACE_DEFAULT } from '../shared/lobby.ts'
-import {
-  ServerMessageKind,
-  type CityState,
-  type ClientPort,
-  type ServerMessage,
-  type TrainJob,
-  type UnitSnapshot,
-  type WorldSnapshot,
-} from '../shared/protocol.ts'
+import type { ClientPort } from '../shared/protocol.ts'
+import { Replica } from '../client/replica.ts'
 
 const THINK_SECONDS = 1.6
 
 export class AiPlayer {
-  private seenId = 0
-  private world: WorldSnapshot | null = null
-  private units: UnitSnapshot[] = []
-  private training: TrainJob[] = []
-  private cities: CityState[] = []
-  private credits = 0
+  private readonly replica = new Replica()
   private pace = AI_PACE_DEFAULT
   private elapsed = 0
 
   get playerId(): number {
-    return this.seenId
+    return this.replica.playerId ?? 0
   }
 
   constructor(private readonly port: ClientPort) {
-    this.port.onServer((message) => this.hear(message))
+    this.port.onServer((message) => this.replica.apply(message))
   }
 
   setPace(pace: number) {
@@ -35,6 +23,7 @@ export class AiPlayer {
   }
 
   update(dt: number) {
+    this.replica.advance(dt)
     this.elapsed += dt
     if (this.elapsed < THINK_SECONDS / this.pace) return
     this.elapsed = 0
@@ -42,38 +31,23 @@ export class AiPlayer {
   }
 
   private act() {
-    const world = this.world
-    if (!world || this.seenId === 0) return
+    const world = this.replica.world
+    const playerId = this.replica.playerId
+    if (!world || playerId === null) return
     const brain: Brain = {
-      playerId: this.seenId,
+      playerId,
       width: world.width,
       height: world.height,
       seed: world.seed,
-      credits: this.credits,
+      credits: this.replica.credits,
       towns: world.towns,
-      units: this.units,
-      training: this.training,
-      cities: this.cities,
+      units: this.replica.units,
+      training: this.replica.training,
+      cities: this.replica.cities,
       terrain: world.terrain,
+      layouts: this.replica.settledLayouts(),
     }
     const budget = Math.max(1, Math.round(this.pace * 2))
     for (const order of consider(brain, budget)) this.port.send(order)
-  }
-
-  private hear(message: ServerMessage) {
-    if (message.kind === ServerMessageKind.Welcome) {
-      this.seenId = message.playerId
-      return
-    }
-    if (message.kind === ServerMessageKind.World) {
-      this.world = message
-      return
-    }
-    if (message.kind === ServerMessageKind.Units) {
-      this.units = message.units
-      this.credits = message.credits
-      this.training = message.training
-      this.cities = message.cities
-    }
   }
 }

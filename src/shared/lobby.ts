@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from './protocol.ts'
+import type { ClientMessage, ServerFrame } from './protocol.ts'
 
 export const enum Channel {
   Lobby = 1,
@@ -242,5 +242,5 @@ export type WireToServer = {
 
 export type WireToClient = {
   channel: Channel
-  message: LobbyServerMessage | ServerMessage
+  message: LobbyServerMessage | ServerFrame
 }

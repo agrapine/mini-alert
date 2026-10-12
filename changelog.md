@@ -1,5 +1,9 @@
 # Changelog
 
+## current
+
+- Factory waypoint keeps sending new units to the nearest open tile once the point itself is taken.
+
 ## 0.3
 
 - Cities and trees can be destroyed. 

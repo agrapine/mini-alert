@@ -1,10 +1,12 @@
+import { logGameIn, logGameOut, logGameUndecodable, logLobbyIn, logLobbyOut } from './debug-net.ts'
 import { ensureSeatToken } from './seat.ts'
+import { decodeServerFrame, encodeClientMessage } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
-import { type ClientMessage, type ServerMessage } from '../shared/protocol.ts'
+import { type ClientMessage, type ServerFrame } from '../shared/protocol.ts'
 
 export class Net {
   onLobby: (message: LobbyServerMessage) => void = () => {}
-  onGame: (message: ServerMessage) => void = () => {}
+  onGame: (message: ServerFrame) => void = () => {}
   onOpen: () => void = () => {}
   onClose: () => void = () => {}
 
@@ -15,6 +17,7 @@ export class Net {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
     const seat = encodeURIComponent(ensureSeatToken())
     const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${seat}`)
+    socket.binaryType = 'arraybuffer'
     this.socket = socket
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return
@@ -22,11 +25,39 @@ export class Net {
       this.onOpen()
     })
     socket.addEventListener('message', (event) => {
-      if (this.socket !== socket || typeof event.data !== 'string') return
-      const wire = readWire(event.data)
-      if (!wire) return
-      if (wire.channel === Channel.Lobby) this.onLobby(wire.message as LobbyServerMessage)
-      else if (wire.channel === Channel.Game) this.onGame(wire.message as ServerMessage)
+      if (this.socket !== socket) return
+      if (typeof event.data === 'string') {
+        const wire = readWire(event.data)
+        if (!wire) return
+        if (wire.channel === Channel.Lobby) {
+          const message = wire.message as LobbyServerMessage
+          logLobbyIn(message)
+          this.onLobby(message)
+        }
+        return
+      }
+      const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : null
+      if (!bytes && event.data instanceof Blob) {
+        void event.data.arrayBuffer().then((buffer) => {
+          if (this.socket !== socket) return
+          const frame = decodeServerFrame(new Uint8Array(buffer))
+          if (!frame) {
+            logGameUndecodable(buffer.byteLength)
+            return
+          }
+          logGameIn(frame)
+          this.onGame(frame)
+        })
+        return
+      }
+      if (!bytes) return
+      const frame = decodeServerFrame(bytes)
+      if (!frame) {
+        logGameUndecodable(bytes.byteLength)
+        return
+      }
+      logGameIn(frame)
+      this.onGame(frame)
     })
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return
@@ -39,16 +70,18 @@ export class Net {
   }
 
   sendLobby(message: LobbyClientMessage) {
-    this.send(Channel.Lobby, message)
+    if (this.socket?.readyState !== WebSocket.OPEN) return
+    logLobbyOut(message)
+    this.socket.send(JSON.stringify({ channel: Channel.Lobby, message }))
   }
 
   sendGame(message: ClientMessage) {
-    this.send(Channel.Game, message)
-  }
-
-  private send(channel: Channel, message: LobbyClientMessage | ClientMessage) {
     if (this.socket?.readyState !== WebSocket.OPEN) return
-    this.socket.send(JSON.stringify({ channel, message }))
+    logGameOut(message)
+    const payload = encodeClientMessage(message)
+    const copy = new ArrayBuffer(payload.byteLength)
+    new Uint8Array(copy).set(payload)
+    this.socket.send(copy)
   }
 }
 

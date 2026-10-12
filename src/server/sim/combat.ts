@@ -1,5 +1,5 @@
 import { CITY_SIGHT } from '../../shared/cities.ts'
-import type { ShotEvent } from '../../shared/protocol.ts'
+import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
 import { seesPoint, type CitySight, type SightSource } from '../../shared/vision.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
@@ -101,14 +101,17 @@ export function engage(
   return shots
 }
 
-export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: number, blasts: Blast[] = []) {
+export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: number, blasts: Blast[] = []): ShotHit[] {
+  const hits: ShotHit[] = []
   for (let i = impacts.length - 1; i >= 0; i--) {
     const impact = impacts[i]
     if (impact.time > time) continue
     impacts.splice(i, 1)
     strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash)
     if (impact.shell) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
+    hits.push({ kind: WeaponKind.Shell, aimX: impact.x, aimZ: impact.z })
   }
+  return hits
 }
 
 const RANGE_SCATTER = 0.035

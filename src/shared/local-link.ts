@@ -1,7 +1,7 @@
-import type { ClientMessage, ClientPort, ServerMessage, ServerPort } from './protocol.ts'
+import type { ClientMessage, ClientPort, ServerFrame, ServerPort } from './protocol.ts'
 
 export function createLocalLink(playerId: number): { client: ClientPort; server: ServerPort } {
-  let onServer: ((message: ServerMessage) => void) | null = null
+  let onServer: ((message: ServerFrame) => void) | null = null
   let onClient: ((message: ClientMessage) => void) | null = null
 
   return {

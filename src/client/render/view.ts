@@ -1,18 +1,18 @@
-import { BoxGeometry, CanvasTexture, DoubleSide, Group, Mesh, MeshBasicMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
-import type { CityState, MapPoint, ShotEvent, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { citySightOrigin, layoutCities, projectCity, settledCity, type CityLayout } from '../../shared/cities.ts'
+import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
+import type { CityState, MapPoint, ShotEvent, ShotHit, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
+import { citySightOrigin, type CityLayout } from '../../shared/cities.ts'
 import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
 import { friendsOf } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
-import { buildIsland } from './island.ts'
 import { Minimap, type MinimapCommand } from './minimap.ts'
 import { loadProps } from './props.ts'
 import { Stage, cameraYaw } from './stage.ts'
 import { Particles } from './particles.ts'
 import { ShotLayer } from './shots.ts'
-import { TILE_TOP, buildTerrain } from './terrain.ts'
+import { TILE_TOP } from './terrain.ts'
+import { buildSurface } from './island.ts'
 import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from './units/vehicle.ts'
 
 const WRECK_HOLD = 4
@@ -43,8 +43,8 @@ export class GameView {
   private cities: CityLayer | null = null
   private props: Group | null = null
   private fog: Fog | null = null
-  private world: WorldSnapshot | null = null
-  private cityBases: CityLayout[] | null = null
+  private surface: Group | null = null
+  private propsEpoch = -1
   private readonly placement: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
@@ -91,44 +91,63 @@ export class GameView {
   }
 
   mountTerrain(world: WorldSnapshot) {
-    this.world = world
-    this.cityBases = null
     const root = document.querySelector<HTMLElement>('#minimap')
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
     this.fog = new Fog(this.stage.scene, world.width, world.height)
-    if (world.coast.length > 0) {
-      this.stage.scene.add(buildIsland(world))
-      if (root && map && marks) {
-        this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
-      }
-      void loadProps(world).then((props) => {
-        this.props = props
-        this.stage.scene.add(props)
-        this.clearGround(this.pendingCleared, false)
-      })
-      this.cities = new CityLayer()
-      void this.cities.load(world).then(() => this.stage.scene.add(this.cities!.root))
-      return
+    const sea = new Mesh(
+      new PlaneGeometry(world.width, world.height),
+      new MeshStandardMaterial({ color: new Color(0x7fcee8), roughness: 0.4, metalness: 0 }),
+    )
+    sea.rotation.x = -Math.PI / 2
+    sea.position.set(world.width / 2, 0, world.height / 2)
+    this.stage.scene.add(sea)
+    this.presentSurface(world)
+    if (root && map && marks) {
+      this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
     }
-    if (root) root.hidden = true
-    this.stage.scene.add(buildTerrain(world))
+    this.cities = new CityLayer()
+    void this.cities.load().then(() => this.stage.scene.add(this.cities!.root))
+    this.noteProps(world)
   }
 
-  private ownedCitySights(playerId: number, states: readonly CityState[]) {
-    const world = this.world
-    if (!world) return []
-    if (!this.cityBases) {
-      this.cityBases = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
+  noteMap(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+    this.presentSurface(world)
+    this.minimap?.retile(world, layouts)
+    this.cities?.present(layouts, this.pendingCities)
+    this.noteProps(world)
+  }
+
+  private presentSurface(world: WorldSnapshot) {
+    if (this.surface) {
+      this.stage.scene.remove(this.surface)
+      disposeGroup(this.surface)
     }
+    this.surface = buildSurface(world)
+    this.stage.scene.add(this.surface)
+  }
+
+  private noteProps(world: WorldSnapshot) {
+    const epoch = knownStamp(world)
+    if (epoch === this.propsEpoch) return
+    this.propsEpoch = epoch
+    void loadProps(world).then((props) => {
+      if (this.propsEpoch !== epoch) return
+      if (this.props) this.stage.scene.remove(this.props)
+      this.props = props
+      this.stage.scene.add(props)
+      this.clearGround(this.pendingCleared, false)
+    })
+  }
+
+  private pendingCities: readonly (CityState | null)[] = []
+
+  private ownedCitySights(playerId: number, states: readonly (CityState | null)[], layouts: readonly (CityLayout | null)[]) {
     const sights = []
-    for (let index = 0; index < this.cityBases.length; index++) {
+    for (let index = 0; index < layouts.length; index++) {
       const state = states[index]
-      if (!state || state.ownerId !== playerId) continue
-      const layout = settledCity(
-        projectCity(this.cityBases[index], state.grown, world.terrain, world.width, world.height, state.sites ?? []),
-        state.ruins,
-      )
+      const layout = layouts[index]
+      if (!state || !layout || state.ownerId !== playerId) continue
       sights.push({ ownerId: playerId, ...citySightOrigin(layout) })
     }
     return sights
@@ -276,8 +295,10 @@ export class GameView {
     units: readonly UnitSnapshot[],
     selected: readonly UnitSnapshot[],
     shots: readonly ShotEvent[] = [],
+    hits: readonly ShotHit[] = [],
     playerId: number | null = null,
-    cities: readonly CityState[] = [],
+    cities: readonly (CityState | null)[] = [],
+    layouts: readonly (CityLayout | null)[] = [],
     primaryFactoryId = 0,
     rally: TileCoord | null = null,
     cleared: readonly TileCoord[] = [],
@@ -358,13 +379,15 @@ export class GameView {
 
     for (const drop of yields) this.particles.collect(drop.x, drop.y)
     const impact = (x: number, z: number, kind: WeaponKind) => this.particles.hit(x, z, kind)
-    this.shots.spawn(shots, impact)
+    this.shots.spawn(shots)
+    this.shots.strike(hits, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
-    const friends = playerId === null ? [] : friendsOf(living, playerId, this.ownedCitySights(playerId, cities))
+    this.pendingCities = cities
+    const friends = playerId === null ? [] : friendsOf(living, playerId, this.ownedCitySights(playerId, cities, layouts))
     this.fog?.update(this.shotDt, friends)
     this.fog?.setView(cameraYaw)
-    this.cities?.sync(cities)
+    this.cities?.present(layouts, cities)
     this.clearGround(cleared)
     this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, primaryFactoryId, rally)
     this.stage.draw()
@@ -534,6 +557,25 @@ function growRings(pool: Mesh[], source: Mesh, count: number, scene: { add(mesh:
     pool.push(mesh)
   }
   return pool
+}
+
+function disposeGroup(group: Group) {
+  const materials = new Set<{ dispose(): void }>()
+  group.traverse((child) => {
+    const mesh = child as Mesh
+    mesh.geometry?.dispose()
+    const material = mesh.material as { dispose(): void } | { dispose(): void }[] | undefined
+    if (!material) return
+    if (Array.isArray(material)) for (const item of material) materials.add(item)
+    else materials.add(material)
+  })
+  for (const material of materials) material.dispose()
+}
+
+function knownStamp(world: WorldSnapshot): number {
+  let count = 0
+  for (const bit of world.known) count += bit
+  return count
 }
 
 function circleHitsRect(

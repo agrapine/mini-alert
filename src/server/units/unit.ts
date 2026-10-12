@@ -1,10 +1,9 @@
+import { driveMotion, MotionResult, stepMotion, type MotionState } from '../../shared/motion.ts'
 import { tileCenter, type TileCoord } from '../../shared/tiles.ts'
 import type { UnitType } from '../../shared/unit-types.ts'
 import type { PathFinder } from '../path/pathfinder.ts'
-import { approach, clamp, wrapAngle } from '../sim/drive.ts'
+import { clamp, wrapAngle } from '../sim/drive.ts'
 import { redirect } from '../sim/steering.ts'
-
-const ARRIVE = 0.38
 
 export abstract class Unit {
   id: number
@@ -23,6 +22,7 @@ export abstract class Unit {
   attackId: number | null = null
   attackPoint: { x: number; z: number } | null = null
   path: TileCoord[] = []
+  route = 0
   progress = 1
   bill: number
 
@@ -40,34 +40,60 @@ export abstract class Unit {
     this.bill = type.cost
   }
 
-  abstract drive(dt: number): void
+  drive(dt: number): void {
+    const state = motionOf(this)
+    driveMotion(state, this.type, dt)
+    this.facing = state.facing
+    this.speed = state.speed
+  }
+
+  commitPath(path: readonly TileCoord[]): void {
+    if (samePath(this.path, path)) return
+    this.path = path.map((tile) => ({ x: tile.x, y: tile.y }))
+    this.route++
+  }
 
   orderMove(tile: TileCoord, paths: PathFinder): boolean {
     if (this.type.topSpeed <= 0) return false
     const path = paths.findPath(this.tile, tile, this.id)
     if (path === null) return false
-    this.path = path
+    this.commitPath(path)
     return true
   }
 
   step(dt: number, paths: PathFinder, units: readonly Unit[]) {
     if (this.type.topSpeed <= 0) return
     this.pursue(dt, paths, units)
-    if (this.path.length === 0) {
-      this.speed = approach(this.speed, 0, this.type.acceleration * dt)
-      this.integrate(dt, paths, units)
-      return
+    if (this.path.length > 0) {
+      const next = this.path[0]
+      if (!paths.isWalkable(next.x, next.y, this.id)) redirect(this, paths, units)
     }
 
-    const next = this.path[0]
-    if (!paths.isWalkable(next.x, next.y, this.id) && !redirect(this, paths, units)) {
-      this.speed = approach(this.speed, 0, this.type.acceleration * dt)
+    const state = motionOf(this)
+    const stalled = this.speed === 0
+    const occupied = (x: number, y: number) => !paths.isWalkable(x, y, this.id)
+    const result = stepMotion(state, this.type, dt, occupied)
+    if (result === MotionResult.Denied) {
+      this.speed = 0
+      this.facing = state.facing
+      if (!stalled) this.route++
+      redirect(this, paths, units)
       return
     }
-
-    this.drive(dt)
-    this.integrate(dt, paths, units)
-    this.consumeWaypoints()
+    const entered = { x: state.tileX, y: state.tileY }
+    const changing = entered.x !== this.tile.x || entered.y !== this.tile.y
+    if (changing && !paths.claim(this, entered, this.type.footprint)) {
+      this.speed = 0
+      this.facing = state.facing
+      if (!stalled) this.route++
+      redirect(this, paths, units)
+      return
+    }
+    this.pos.x = state.x
+    this.pos.z = state.z
+    this.facing = state.facing
+    this.speed = state.speed
+    this.path = state.path
   }
 
   private pursue(dt: number, paths: PathFinder, units: readonly Unit[]) {
@@ -84,7 +110,7 @@ export abstract class Unit {
     const dist = Math.hypot(target.pos.x - this.pos.x, target.pos.z - this.pos.z)
     const range = this.type.weapon.range
     if (dist <= range) {
-      this.path = []
+      this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.face(target, dt)
       return
     }
@@ -105,7 +131,7 @@ export abstract class Unit {
     const dist = Math.hypot(point.x - this.pos.x, point.z - this.pos.z)
     const range = this.type.weapon.range
     if (dist <= range || this.type.topSpeed <= 0) {
-      this.path = []
+      this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.facePoint(point, dt)
       return
     }
@@ -131,86 +157,26 @@ export abstract class Unit {
     this.facing = wrapAngle(this.facing + clamp(err, -2.5 * dt, 2.5 * dt))
   }
 
-  protected aimPoint(): { x: number; z: number } | null {
-    if (this.path.length === 0) return null
-    let index = 0
-    while (index < this.path.length - 1) {
-      const prev = index === 0 ? this.tile : this.path[index - 1]
-      const curr = this.path[index]
-      const next = this.path[index + 1]
-      const same =
-        curr.x - prev.x === next.x - curr.x && curr.y - prev.y === next.y - curr.y
-      if (!same) break
-      index++
-    }
-    return tileCenter(this.path[index])
-  }
+}
 
-  protected headingError(aim: { x: number; z: number }): number {
-    const desired = Math.atan2(aim.x - this.pos.x, aim.z - this.pos.z)
-    return wrapAngle(desired - this.facing)
+function motionOf(unit: Unit): MotionState {
+  return {
+    x: unit.pos.x,
+    z: unit.pos.z,
+    facing: unit.facing,
+    speed: unit.speed,
+    tileX: unit.tile.x,
+    tileY: unit.tile.y,
+    path: unit.path,
   }
+}
 
-  protected trackedDrive(dt: number) {
-    const aim = this.aimPoint()
-    if (!aim) return
-    const err = this.headingError(aim)
-    const step = clamp(err, -this.type.turnRate * dt, this.type.turnRate * dt)
-    this.facing = wrapAngle(this.facing + step)
-    const limit = Math.abs(this.speed) > 0.15 ? 0.75 : 0.35
-    const target = Math.abs(err) <= limit ? this.cruiseSpeed(1) : 0
-    this.speed = approach(this.speed, target, this.type.acceleration * dt)
+function samePath(left: readonly TileCoord[], right: readonly TileCoord[]): boolean {
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) {
+    if (left[i].x !== right[i].x || left[i].y !== right[i].y) return false
   }
-
-  protected cruiseSpeed(direction: number): number {
-    const goal = this.path[this.path.length - 1]
-    if (!goal) return 0
-    const center = tileCenter(goal)
-    const dist = Math.hypot(center.x - this.pos.x, center.z - this.pos.z)
-    let mag = this.type.topSpeed
-    const stopping = (this.speed * this.speed) / (2 * this.type.acceleration)
-    if (dist < stopping + 0.2) mag = Math.min(mag, Math.max(0.45, dist * 1.6))
-    return mag * direction
-  }
-
-  private integrate(dt: number, paths: PathFinder, units: readonly Unit[]) {
-    const dist = this.speed * dt
-    if (Math.abs(dist) < 1e-8) return
-    const nx = this.pos.x + Math.sin(this.facing) * dist
-    const nz = this.pos.z + Math.cos(this.facing) * dist
-    const entered = { x: Math.floor(nx), y: Math.floor(nz) }
-    const changing = entered.x !== this.tile.x || entered.y !== this.tile.y
-    if (changing && !paths.claim(this, entered, this.type.footprint)) {
-      this.speed = 0
-      redirect(this, paths, units)
-      return
-    }
-    this.pos.x = nx
-    this.pos.z = nz
-  }
-
-  private consumeWaypoints() {
-    const dir = this.speed < -0.02 ? -1 : 1
-    const hx = Math.sin(this.facing) * dir
-    const hz = Math.cos(this.facing) * dir
-    while (this.path.length > 0) {
-      const center = tileCenter(this.path[0])
-      const dx = center.x - this.pos.x
-      const dz = center.z - this.pos.z
-      const dist = Math.hypot(dx, dz)
-      const ahead = dx * hx + dz * hz
-      if (this.path.length === 1) {
-        if (dist < ARRIVE && Math.abs(this.speed) < 0.85) this.path.shift()
-        break
-      }
-      const onTile = Math.floor(this.pos.x) === this.path[0].x && Math.floor(this.pos.z) === this.path[0].y
-      if (dist < 0.4 || (onTile && ahead < 0.15) || (ahead < -0.05 && dist < 0.85)) {
-        this.path.shift()
-        continue
-      }
-      break
-    }
-  }
+  return true
 }
 
 function approachPoint(unit: Unit, point: { x: number; z: number }, paths: PathFinder): TileCoord | null {

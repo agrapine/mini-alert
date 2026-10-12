@@ -6,6 +6,4 @@ export class Structure extends Unit {
   constructor(id: number, ownerId: number, type: UnitType, tile: TileCoord, facing: number) {
     super(id, ownerId, type, tile, facing)
   }
-
-  drive(): void {}
 }

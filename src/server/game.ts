@@ -1,5 +1,5 @@
 import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, CITY_MODELS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
-import type { CitySite, CityState, MapPoint, ShotEvent, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
+import type { CitySite, CityState, MapPoint, ShotEvent, ShotHit, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
 import { Terrain, type TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
@@ -82,6 +82,7 @@ export class Game {
   private growClock = 0
   private incomeClock = 0
   private yields: MapPoint[] = []
+  private landed: ShotHit[] = []
   private growthTerrain: number[] | null = null
   private readonly fallen: TileCoord[] = []
 
@@ -118,6 +119,10 @@ export class Game {
     const y = Math.floor(town.y)
     const city = this.cities.find((candidate) => cityContains(candidate.layout, x, y))
     if (city) city.ownerId = playerId
+  }
+
+  cityLayouts(): CityLayout[] {
+    return this.cities.map((city) => city.layout)
   }
 
   cityStates(): CityState[] {
@@ -176,6 +181,12 @@ export class Game {
     const yields = this.yields
     this.yields = []
     return yields
+  }
+
+  takeHits(): ShotHit[] {
+    const hits = this.landed
+    this.landed = []
+    return hits
   }
 
   hasFinishedFactory(playerId: number): boolean {
@@ -404,7 +415,11 @@ export class Game {
     this.time += dt
     const blasts: Blast[] = []
     const shots = engage(this.units, dt, this.time, this.impacts, this.citySights(), blasts, this.buildingTargets())
-    applyImpacts(this.units, this.impacts, this.time, blasts)
+    const hits = applyImpacts(this.units, this.impacts, this.time, blasts)
+    for (const shot of shots) {
+      if (shot.flight === 0) hits.push({ kind: shot.kind, aimX: shot.aimX, aimZ: shot.aimZ })
+    }
+    this.landed = hits
     this.blast(blasts)
     this.removeDead()
     this.advanceCaptures(dt)
@@ -451,10 +466,14 @@ export class Game {
       z: unit.pos.z,
       facing: unit.facing,
       turretYaw: unit.type.weapon.turretRate > 0 ? unit.turretYaw : unit.facing,
+      speed: unit.speed,
       health: unit.health,
       tileX: unit.tile.x,
       tileY: unit.tile.y,
-      goal: unit.path.length > 0 ? unit.path[unit.path.length - 1] : null,
+      path: unit.path.map((tile) => ({ x: tile.x, y: tile.y })),
+      goal: unit.path.length > 0 ? { ...unit.path[unit.path.length - 1] } : null,
+      attackId: unit.attackId,
+      attackPoint: unit.attackPoint ? { x: unit.attackPoint.x, z: unit.attackPoint.z } : null,
       progress: unit.progress,
     }
   }
@@ -780,9 +799,26 @@ export class Game {
     const exit = this.exitTile(factory)
     if (!exit) return false
     const unit = this.spawn(owner, typeId, exit.tile, exit.facing)
-    const goal = this.rallies.get(playerId) ?? exit.rally
-    if (goal.x !== exit.tile.x || goal.y !== exit.tile.y) unit.orderMove(goal, this.pathfinder)
+    const rally = this.rallies.get(playerId) ?? exit.rally
+    const goal = this.openNear(rally)
+    if (goal && (goal.x !== unit.tile.x || goal.y !== unit.tile.y)) unit.orderMove(goal, this.pathfinder)
     return true
+  }
+
+  private openNear(target: TileCoord): TileCoord | null {
+    let best: TileCoord | null = null
+    let bestScore = Infinity
+    for (let dy = -SPAWN_REACH; dy <= SPAWN_REACH; dy++) {
+      for (let dx = -SPAWN_REACH; dx <= SPAWN_REACH; dx++) {
+        const tile = { x: target.x + dx, y: target.y + dy }
+        if (!this.pathfinder.isWalkable(tile.x, tile.y, -1)) continue
+        const score = dx * dx + dy * dy
+        if (score >= bestScore) continue
+        best = tile
+        bestScore = score
+      }
+    }
+    return best
   }
 
   private factoryPace(playerId: number): number {

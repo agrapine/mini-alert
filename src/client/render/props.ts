@@ -70,6 +70,7 @@ function scatter(world: WorldSnapshot, props: Map<PropName, Group>): Group {
   const { width, height, terrain, seed } = world
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
+      if (world.known[y * width + x] === 0) continue
       const tile = terrain[y * width + x]
       const n = hash(x, y, seed)
       const yaw = ((n % 360) * Math.PI) / 180

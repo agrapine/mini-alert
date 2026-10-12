@@ -16,8 +16,8 @@ import {
   Vector3,
 } from 'three'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { layoutCities, NEUTRAL_CITY, projectCity, settledCity, StreetKind, type CityLayout } from '../../shared/cities.ts'
-import type { CityState, WorldSnapshot } from '../../shared/protocol.ts'
+import { NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
+import type { CityState } from '../../shared/protocol.ts'
 import { TILE_TOP } from './terrain.ts'
 
 import buildingAUrl from '../../../assets/city/building-a.obj?url'
@@ -87,6 +87,8 @@ type CityView = {
 type Kit = {
   streetsMaterial: MeshStandardMaterial
   neutralMaterial: MeshStandardMaterial
+  texture: MeshStandardMaterial['map']
+  swatches: DataTexture
   buildings: Group[]
   streets: Group[]
 }
@@ -94,13 +96,11 @@ type Kit = {
 export class CityLayer {
   readonly root = new Group()
   private views: CityView[] = []
-  private pending: readonly CityState[] = []
-  private world: WorldSnapshot | null = null
+  private pendingLayouts: readonly (CityLayout | null)[] = []
+  private pendingStates: readonly (CityState | null)[] = []
   private kit: Kit | null = null
 
-  async load(world: WorldSnapshot) {
-    this.world = world
-    const layouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
+  async load() {
     const texture = await new TextureLoader().loadAsync(textureUrl)
     texture.colorSpace = SRGBColorSpace
     texture.flipY = true
@@ -109,81 +109,78 @@ export class CityLayer {
     const buildings = await Promise.all(BUILDING_URLS.map((url) => loadFitted(url, 'building')))
     const streets = await Promise.all(STREET_URLS.map((url, index) => loadFitted(url, index >= StreetKind.Lamp ? 'prop' : 'road')))
     const neutralMaterial = teamMaterial(texture, swatches, { value: 0 }, new Vector3(1, 1, 1))
-    this.kit = { streetsMaterial, neutralMaterial, buildings, streets }
-    for (const layout of layouts) {
-      const owner = { value: 0 }
-      const team = new Vector3(1, 1, 1)
-      const buildingMaterial = teamMaterial(texture, swatches, owner, team)
-      const cluster = new Group()
-      const trackMaterial = new MeshBasicMaterial({
-        color: NEUTRAL_CITY,
-        transparent: true,
-        opacity: 0.22,
-        depthTest: false,
-        depthWrite: false,
-      })
-      const ringMaterial = new MeshBasicMaterial({
-        color: NEUTRAL_CITY,
-        transparent: true,
-        opacity: 0.95,
-        depthTest: false,
-        depthWrite: false,
-      })
-      const track = new Mesh(ringGeometry(layout.span, 1, TRACK_BAND), trackMaterial)
-      track.rotation.x = -Math.PI / 2
-      track.visible = false
-      track.renderOrder = 12
-      const ring = new Mesh(ringGeometry(layout.span, 0.001, ARC_BAND), ringMaterial)
-      ring.rotation.x = -Math.PI / 2
-      ring.visible = false
-      ring.renderOrder = 13
-      cluster.add(track, ring)
-      const view: CityView = {
-        base: layout,
-        projected: layout,
-        layout,
-        grown: 0,
-        owner,
-        team,
-        cluster,
-        track,
-        trackMaterial,
-        ring,
-        ringMaterial,
-        shown: 0,
-        buildingMaterial,
-        ruinKey: '',
-        siteKey: '',
-      }
-      this.fill(view)
-      this.root.add(cluster)
-      this.views.push(view)
-    }
-    this.sync(this.pending)
+    this.kit = { streetsMaterial, neutralMaterial, texture, swatches, buildings, streets }
+    this.present(this.pendingLayouts, this.pendingStates)
   }
 
-  sync(states: readonly CityState[]) {
-    this.pending = states
-    const world = this.world
-    if (!world || !this.kit) return
-    for (let index = 0; index < this.views.length; index++) {
-      const view = this.views[index]
-      const grown = states[index]?.grown ?? 0
-      const ruins = states[index]?.ruins ?? []
-      const sites = states[index]?.sites ?? []
-      const ruinKey = ruins.map((tile) => `${tile.x},${tile.y}`).join('|')
-      const siteKey = sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-      if (grown === view.grown && ruinKey === view.ruinKey && siteKey === view.siteKey) continue
-      if (grown !== view.grown || siteKey !== view.siteKey) {
-        view.projected = projectCity(view.base, grown, world.terrain, world.width, world.height, sites)
-        view.grown = grown
-        view.siteKey = siteKey
+  present(layouts: readonly (CityLayout | null)[], states: readonly (CityState | null)[]) {
+    this.pendingLayouts = layouts
+    this.pendingStates = states
+    const kit = this.kit
+    if (!kit) return
+    for (let index = 0; index < layouts.length; index++) {
+      const layout = layouts[index]
+      if (!layout) continue
+      const stamp = layoutStamp(layout)
+      let view = this.views[index]
+      if (!view) {
+        view = this.makeView(layout, kit)
+        this.views[index] = view
+        this.root.add(view.cluster)
       }
-      view.ruinKey = ruinKey
-      view.layout = settledCity(view.projected, ruins)
+      if (view.siteKey === stamp) continue
+      view.layout = layout
+      view.siteKey = stamp
       this.fill(view)
     }
     this.apply(states)
+  }
+
+  private makeView(layout: CityLayout, kit: Kit): CityView {
+    const owner = { value: 0 }
+    const team = new Vector3(1, 1, 1)
+    const buildingMaterial = teamMaterial(kit.texture, kit.swatches, owner, team)
+    const cluster = new Group()
+    const trackMaterial = new MeshBasicMaterial({
+      color: NEUTRAL_CITY,
+      transparent: true,
+      opacity: 0.22,
+      depthTest: false,
+      depthWrite: false,
+    })
+    const ringMaterial = new MeshBasicMaterial({
+      color: NEUTRAL_CITY,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    })
+    const track = new Mesh(ringGeometry(layout.span, 1, TRACK_BAND), trackMaterial)
+    track.rotation.x = -Math.PI / 2
+    track.visible = false
+    track.renderOrder = 12
+    const ring = new Mesh(ringGeometry(layout.span, 0.001, ARC_BAND), ringMaterial)
+    ring.rotation.x = -Math.PI / 2
+    ring.visible = false
+    ring.renderOrder = 13
+    cluster.add(track, ring)
+    return {
+      base: layout,
+      projected: layout,
+      layout,
+      grown: 0,
+      owner,
+      team,
+      cluster,
+      track,
+      trackMaterial,
+      ring,
+      ringMaterial,
+      shown: 0,
+      buildingMaterial,
+      ruinKey: '',
+      siteKey: '',
+    }
   }
 
   private fill(view: CityView) {
@@ -247,11 +244,11 @@ export class CityLayer {
     view.ring.position.set(center.x, TILE_TOP + 1.42, center.z)
   }
 
-  private apply(states: readonly CityState[]) {
+  private apply(states: readonly (CityState | null)[]) {
     for (let i = 0; i < this.views.length; i++) {
       const view = this.views[i]
       const state = states[i]
-      if (!state) continue
+      if (!view || !state) continue
       view.owner.value = state.color > 0 ? 1 : 0
       if (state.color > 0) view.team.set((state.color >> 16) / 255, ((state.color >> 8) & 255) / 255, (state.color & 255) / 255)
       const active = state.progress > 0.001 && state.challengerId > 0
@@ -268,6 +265,12 @@ export class CityLayer {
       view.ring.geometry = ringGeometry(reach, state.progress, ARC_BAND)
     }
   }
+}
+
+function layoutStamp(layout: CityLayout): string {
+  const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model},${building.yaw}`).join(';')
+  const streets = layout.streets.map((street) => `${street.x},${street.y},${street.kind}`).join(';')
+  return `${layout.tiles.length}:${buildings}:${streets}`
 }
 
 const TRACK_BAND = 0.1

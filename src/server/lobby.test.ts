@@ -11,13 +11,13 @@ import {
   type WaitingRoom,
   type Faction,
 } from '../shared/lobby.ts'
-import { ServerMessageKind, type ServerMessage } from '../shared/protocol.ts'
+import { ServerEventKind, type ServerEvent, type ServerFrame } from '../shared/protocol.ts'
 import { Game } from './game.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 
-function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerMessage[] } {
+function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerFrame[] } {
   const lobby: LobbyServerMessage[] = []
-  const game: ServerMessage[] = []
+  const game: ServerFrame[] = []
   return {
     lobby,
     game,
@@ -32,6 +32,10 @@ function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerMessag
 
 function settled(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+function gameEvents(sock: { game: ServerFrame[] }): ServerEvent[] {
+  return sock.game.flatMap((frame) => frame.events)
 }
 
 function latest<T extends LobbyServerMessage>(sock: { lobby: LobbyServerMessage[] }, kind: T['kind']): T {
@@ -100,8 +104,8 @@ describe('lobby', () => {
     expect(playing.status).toBe(RoomStatus.Playing)
     expect(playing.spectating).toBe(true)
     expect(playing.factions).toHaveLength(2)
-    expect(guestSock.game.some((message) => message.kind === ServerMessageKind.World)).toBe(true)
-    expect(guestSock.game.some((message) => message.kind === ServerMessageKind.Welcome)).toBe(true)
+    expect(gameEvents(guestSock).some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)
+    expect(gameEvents(guestSock).some((event) => event.kind === ServerEventKind.Welcome)).toBe(true)
     const hostLobby = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
     expect(hostLobby.spectating).toBe(false)
 
@@ -111,13 +115,13 @@ describe('lobby', () => {
     expect(hall.games[0]?.slots[0]?.name).toBe('Ada')
     lobby.onLobby(watcher, { kind: LobbyClientKind.JoinGame, gameId: created.gameId })
     expect(latest<GameLobbyState>(laterSock, LobbyServerKind.GameLobby).spectating).toBe(true)
-    expect(laterSock.game.some((message) => message.kind === ServerMessageKind.World)).toBe(true)
+    expect(gameEvents(laterSock).some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)
 
     const view = playing.factions[1]?.playerId
     expect(view).toBeTypeOf('number')
     if (view === undefined) return
     lobby.onLobby(guest, { kind: LobbyClientKind.ViewAs, playerId: view })
-    const welcome = guestSock.game.filter((message) => message.kind === ServerMessageKind.Welcome)
+    const welcome = gameEvents(guestSock).filter((event) => event.kind === ServerEventKind.Welcome)
     expect(welcome.at(-1)).toMatchObject({ playerId: view })
   })
 
@@ -162,7 +166,7 @@ describe('lobby', () => {
     const foeLobby = latest<GameLobbyState>(foeSock, LobbyServerKind.GameLobby)
     expect(foeLobby.spectating).toBe(true)
     expect(foeLobby.seatId).toBe(loser.playerId)
-    const watched = foeSock.game.filter((message) => message.kind === ServerMessageKind.Welcome).at(-1)
+    const watched = gameEvents(foeSock).filter((event) => event.kind === ServerEventKind.Welcome).at(-1)
     expect(watched).toMatchObject({ playerId: started.seatId })
 
     lobby.onLobby(foe, { kind: LobbyClientKind.LeaveRoom })
@@ -386,8 +390,8 @@ describe('lobby', () => {
     const resumed = latest<GameLobbyState>(againSock, LobbyServerKind.GameLobby)
     expect(resumed.spectating).toBe(false)
     expect(resumed.seatId).toBe(seat)
-    expect(againSock.game.some((message) => message.kind === ServerMessageKind.World)).toBe(true)
-    expect(againSock.game.some((message) => message.kind === ServerMessageKind.Welcome && message.playerId === seat)).toBe(true)
+    expect(gameEvents(againSock).some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)
+    expect(gameEvents(againSock).some((event) => event.kind === ServerEventKind.Welcome && event.playerId === seat)).toBe(true)
 
     const otherSock = fake()
     const other = lobby.connect(otherSock, token)

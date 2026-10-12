@@ -1,5 +1,5 @@
 import type { CityState, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
-import { layoutCities, NEUTRAL_CITY, projectCity, type CityLayout } from '../../shared/cities.ts'
+import { NEUTRAL_CITY, type CityLayout } from '../../shared/cities.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
@@ -12,15 +12,12 @@ export type MinimapCommand = (
 ) => boolean
 
 export class Minimap {
-  private readonly world: WorldSnapshot
+  private world: WorldSnapshot
   private readonly base: Uint8ClampedArray
   private readonly pristine: Uint8ClampedArray
-  private readonly layouts: CityLayout[]
-  private evolved: CityLayout[]
-  private shownGrown: number[]
-  private shownSites: string[]
+  private layouts: readonly (CityLayout | null)[]
   private hover: ((tile: TileCoord | null) => void) | null = null
-  private cityStates: readonly CityState[] = []
+  private cityStates: readonly (CityState | null)[] = []
   private readonly image: ImageData
   private readonly ctx: CanvasRenderingContext2D
   private tracking = false
@@ -44,10 +41,7 @@ export class Minimap {
     this.image = painted.image
     this.base = painted.base
     this.pristine = new Uint8ClampedArray(painted.base)
-    this.layouts = layoutCities(world.towns, world.seed, world.terrain, world.width, world.height)
-    this.evolved = this.layouts.slice()
-    this.shownGrown = this.layouts.map(() => 0)
-    this.shownSites = this.layouts.map(() => '')
+    this.layouts = []
     this.root.addEventListener('pointerdown', this.onPointerDown)
     this.root.addEventListener('pointermove', this.onPointerMove)
     this.root.addEventListener('pointerup', this.onPointerUp)
@@ -57,6 +51,13 @@ export class Minimap {
 
   setHover(hover: (tile: TileCoord | null) => void) {
     this.hover = hover
+  }
+
+  retile(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+    this.world = world
+    this.layouts = layouts
+    paintInto(this.pristine, world)
+    this.base.set(this.pristine)
   }
 
   setCommand(command: MinimapCommand) {
@@ -121,7 +122,7 @@ export class Minimap {
     selectedIds: ReadonlySet<number>,
     viewport: readonly { x: number; z: number }[],
     fog?: Float32Array,
-    cities: readonly CityState[] = [],
+    cities: readonly (CityState | null)[] = [],
     primaryFactoryId = 0,
     rally: TileCoord | null = null,
   ) {
@@ -175,16 +176,8 @@ export class Minimap {
     const { width } = this.world
     for (let i = 0; i < this.layouts.length; i++) {
       const state = this.cityStates[i]
-      if (!state) continue
-      const grown = state.grown ?? 0
-      const sites = state.sites ?? []
-      const siteKey = sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-      if (this.shownGrown[i] !== grown || this.shownSites[i] !== siteKey) {
-        this.evolved[i] = projectCity(this.layouts[i], grown, this.world.terrain, this.world.width, this.world.height, sites)
-        this.shownGrown[i] = grown
-        this.shownSites[i] = siteKey
-      }
-      const layout = this.evolved[i]
+      const layout = this.layouts[i]
+      if (!state || !layout) continue
       const color = state.color > 0 ? state.color : NEUTRAL_CITY
       const r = (color >> 16) & 255
       const g = (color >> 8) & 255
@@ -309,6 +302,14 @@ function paintTerrain(
   for (let y = 0; y < world.height; y++) {
     for (let x = 0; x < world.width; x++) {
       const index = y * world.width + x
+      if (world.known[index] === 0) {
+        const pixel = index * 4
+        image.data[pixel] = 12
+        image.data[pixel + 1] = 16
+        image.data[pixel + 2] = 20
+        image.data[pixel + 3] = 255
+        continue
+      }
       const terrain = world.terrain[index] as Terrain
       const shore = isMinimapShore(world.terrain, world.width, world.height, x, y)
       const [r, g, b] = minimapRgb(terrain, shore)
@@ -324,6 +325,29 @@ function paintTerrain(
   for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255
   ctx.putImageData(image, 0, 0)
   return { ctx, image, base }
+}
+
+function paintInto(target: Uint8ClampedArray, world: WorldSnapshot) {
+  for (let y = 0; y < world.height; y++) {
+    for (let x = 0; x < world.width; x++) {
+      const index = y * world.width + x
+      const pixel = index * 4
+      if (world.known[index] === 0) {
+        target[pixel] = 12
+        target[pixel + 1] = 16
+        target[pixel + 2] = 20
+        target[pixel + 3] = 255
+        continue
+      }
+      const terrain = world.terrain[index] as Terrain
+      const shore = isMinimapShore(world.terrain, world.width, world.height, x, y)
+      const [r, g, b] = minimapRgb(terrain, shore)
+      target[pixel] = r
+      target[pixel + 1] = g
+      target[pixel + 2] = b
+      target[pixel + 3] = 255
+    }
+  }
 }
 
 function cssColor(color: number): string {

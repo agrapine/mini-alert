@@ -3,13 +3,15 @@ import { Buffer } from 'node:buffer'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type RawData } from 'ws'
+import { decodeClientMessage, encodeServerFrame } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
-import type { ClientMessage } from '../shared/protocol.ts'
+import { SIM_STEP } from '../shared/motion.ts'
+import type { ClientMessage, ServerFrame } from '../shared/protocol.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { serveClient } from './static.ts'
 
 const PORT = Number(process.env.PORT) || 8787
-const STEP = 1 / 30
+const STEP = SIM_STEP
 const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist')
 
 const lobby = new Lobby()
@@ -24,11 +26,16 @@ sockets.on('connection', (socket, request) => {
       send(socket, Channel.Lobby, message)
     },
     sendGame(message) {
-      send(socket, Channel.Game, message)
+      sendGame(socket, message)
     },
   }
   const member = lobby.connect(link, seatQuery(request.url))
-  socket.on('message', (data) => {
+  socket.on('message', (data, isBinary) => {
+    if (isBinary) {
+      const message = decodeClientMessage(bytesOf(data))
+      if (message) lobby.onGame(member, message)
+      return
+    }
     const wire = readWire(data)
     if (!wire) return
     if (wire.channel === Channel.Lobby) lobby.onLobby(member, wire.message as LobbyClientMessage)
@@ -51,6 +58,18 @@ function seatQuery(url: string | undefined): string | null {
 function send(socket: { readyState: number; send(data: string): void }, channel: Channel, message: unknown) {
   if (socket.readyState !== 1) return
   socket.send(JSON.stringify({ channel, message }))
+}
+
+function sendGame(socket: { readyState: number; send(data: Uint8Array): void }, message: ServerFrame) {
+  if (socket.readyState !== 1) return
+  socket.send(encodeServerFrame(message))
+}
+
+function bytesOf(data: RawData): Uint8Array {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data))
+  if (typeof data === 'string') return Buffer.from(data)
+  return new Uint8Array(data)
 }
 
 function textOf(data: RawData): string {

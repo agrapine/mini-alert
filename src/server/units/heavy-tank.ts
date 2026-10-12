@@ -6,8 +6,4 @@ export class HeavyTank extends Unit {
   constructor(id: number, ownerId: number, type: UnitType, tile: TileCoord, facing: number) {
     super(id, ownerId, type, tile, facing)
   }
-
-  drive(dt: number) {
-    this.trackedDrive(dt)
-  }
 }
