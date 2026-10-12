@@ -14,9 +14,9 @@ const HELP = `# Shortcuts
 - **Primary factory** — select a factory, then click it again. New units come out of that one. A star marks it
 - **Waypoint** — with a factory selected, click the ground. Finished units move there
 - **Ranges** — hold Ctrl or ⌘ with one unit selected to show its attack range and sight
-- **Pan** — \`WASD\`, arrow keys, middle-drag, hold Space and drag, or move the pointer within 25px of the screen edge
+- **Pan** — \`WASD\`, arrow keys, middle-drag, hold Space and drag, move the pointer within 25px of the screen edge, or drag with two fingers
 - **Turn** — \`Q\` and \`E\` rotate the camera 45°
-- **Zoom** — mouse wheel
+- **Zoom** — mouse wheel, or pinch with two fingers
 - **Minimap** — drag to move the camera. A click orders selected units as if you clicked that tile. With nothing selected, a click moves the camera
 
 # Rules

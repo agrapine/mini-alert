@@ -34,10 +34,14 @@ export function bindInput(
   let pointerY = 0
   let groundAttack = false
 
+  const touches = new Map<number, { x: number; y: number }>()
+  let pinch: { x: number; y: number; dist: number } | null = null
+  let swallowTouch = false
+
   const syncEdge = (event: PointerEvent) => {
     const target = event.target
     const blocked = target instanceof Element && target.closest('button, a, input, textarea, #minimap, #sheet, #outcome, .dropdown, .flyout') !== null
-    if (panning || document.body.classList.contains('lobby') || blocked) {
+    if (event.pointerType === 'touch' || pinch || panning || document.body.classList.contains('lobby') || blocked) {
       view.setEdgePan(0, 0)
       return
     }
@@ -124,6 +128,76 @@ export function bindInput(
     view.setBoxPreview(false)
   }
 
+  const fingerPoints = () => [...touches.values()]
+
+  const beginPinch = (event: PointerEvent) => {
+    const points = fingerPoints()
+    if (points.length < 2) return
+    swallowTouch = true
+    panning = false
+    hideBox()
+    view.setHovered([])
+    view.setEdgePan(0, 0)
+    canvas.setPointerCapture(event.pointerId)
+    let x = 0
+    let y = 0
+    for (const point of points) {
+      x += point.x
+      y += point.y
+    }
+    const first = points[0]!
+    const second = points[1]!
+    pinch = {
+      x: x / points.length,
+      y: y / points.length,
+      dist: Math.hypot(first.x - second.x, first.y - second.y),
+    }
+  }
+
+  const stepPinch = () => {
+    if (!pinch) return
+    const points = fingerPoints()
+    if (points.length < 2) return
+    let x = 0
+    let y = 0
+    for (const point of points) {
+      x += point.x
+      y += point.y
+    }
+    x /= points.length
+    y /= points.length
+    const first = points[0]!
+    const second = points[1]!
+    const dist = Math.hypot(first.x - second.x, first.y - second.y)
+    view.panByPixels(pinch.x, pinch.y, x, y)
+    const spread = pinch.dist - dist
+    if (Math.abs(spread) > 0.5) view.zoomAt(spread, x, y)
+    pinch = { x, y, dist }
+  }
+
+  const endTouch = (pointerId: number) => {
+    touches.delete(pointerId)
+    if (touches.size < 2) pinch = null
+  }
+
+  const blockPageZoom = (event: Event) => event.preventDefault()
+  document.addEventListener('gesturestart', blockPageZoom)
+  document.addEventListener('gesturechange', blockPageZoom)
+  document.addEventListener(
+    'touchstart',
+    (event) => {
+      if (event.touches.length > 1) event.preventDefault()
+    },
+    { passive: false },
+  )
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      if (event.touches.length > 1) event.preventDefault()
+    },
+    { passive: false },
+  )
+
   const boxIds = (x: number, y: number) =>
     view.unitsInRect(originX, originY, x, y, replica.units, replica.playerId)
 
@@ -131,6 +205,14 @@ export function bindInput(
   canvas.addEventListener('auxclick', (event) => event.preventDefault())
 
   canvas.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'touch') {
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touches.size >= 2) {
+        beginPinch(event)
+        event.preventDefault()
+        return
+      }
+    }
     if (event.button === 0 && spaceDown) {
       beginPan(event)
       return
@@ -160,6 +242,14 @@ export function bindInput(
   })
 
   canvas.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch' && touches.has(event.pointerId)) {
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (pinch) {
+        stepPinch()
+        event.preventDefault()
+        return
+      }
+    }
     view.setZoomCursor(event.clientX, event.clientY)
     pointerX = event.clientX
     if ((player.placingType() !== null || player.raisingCity()) && !panning) showGhost(event.clientX, event.clientY)
@@ -192,6 +282,16 @@ export function bindInput(
   })
 
   canvas.addEventListener('pointerup', (event) => {
+    if (event.pointerType === 'touch') {
+      endTouch(event.pointerId)
+      if (swallowTouch) {
+        hideBox()
+        panning = false
+        if (touches.size === 0) swallowTouch = false
+        refreshCursor(event.clientX, event.clientY)
+        return
+      }
+    }
     if (event.button === 1 || (event.button === 0 && spaceDown)) {
       panning = false
       refreshCursor(event.clientX, event.clientY)
@@ -219,7 +319,10 @@ export function bindInput(
     refreshCursor(event.clientX, event.clientY)
   })
 
-  canvas.addEventListener('pointercancel', () => {
+  canvas.addEventListener('pointercancel', (event) => {
+    endTouch(event.pointerId)
+    if (touches.size === 0) swallowTouch = false
+    pinch = null
     panning = false
     hideBox()
     view.setHovered([])

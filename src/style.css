@@ -5,6 +5,14 @@ body {
   background: #14160f;
   overflow: hidden;
   color-scheme: dark;
+  overscroll-behavior: none;
+}
+
+body.match {
+  touch-action: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 #view {
@@ -294,6 +302,7 @@ body {
   background: rgba(18, 20, 14, 0.94);
   border-left: 1px solid #2c3324;
   user-select: none;
+  touch-action: none;
 }
 
 #minimap {
@@ -863,6 +872,52 @@ body.match #lobby {
 
 .lobby-preview[hidden] {
   display: none;
+}
+
+@media (max-width: 960px) {
+  #side {
+    width: 104px;
+    gap: 4px;
+    padding: 4px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+  }
+
+  #hud {
+    right: 112px;
+    gap: 8px 10px;
+  }
+
+  .stat span {
+    font-size: 18px;
+  }
+
+  .stat svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  #orders {
+    gap: 4px;
+  }
+
+  .tile {
+    padding: 2px;
+    gap: 1px;
+    font-size: 9px;
+  }
+
+  .tile .pie {
+    inset: 3px;
+  }
+
+  .tile .badge {
+    top: 1px;
+    right: 1px;
+    min-width: 12px;
+    height: 12px;
+    font-size: 9px;
+    line-height: 10px;
+  }
 }
 
 @media (max-width: 960px) {

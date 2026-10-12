@@ -6,6 +6,7 @@
 - Credits cap at 10,000 plus 500 per population. Losing population throws away anything above the new cap.
 - Structures require population
 - Unit rebalancing
+- Phones get a narrow order bar. Two fingers pan and pinch the map; the page itself does not zoom
 
 ## 0.3
 
