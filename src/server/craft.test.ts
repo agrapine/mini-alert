@@ -128,4 +128,24 @@ describe('craft', () => {
     expect(jet.tile.y).toBeGreaterThanOrEqual(airport.tile.y)
     expect(jet.tile.y).toBeLessThan(airport.tile.y + 4)
   })
+
+  it('holds jet rockets until the plane is in the air', () => {
+    const game = new Game(new World(24, 16))
+    const human = game.addPlayer()
+    const enemy = game.addPlayer()
+    const jet = game.spawn(human, UnitTypeId.Jet, { x: 8, y: 4 }, 0)
+    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 8, y: 8 }, 0)
+    foe.health = 500
+    jet.tile = { x: 8, y: 4 }
+    jet.pos = { x: 8.5, z: 4.5 }
+    jet.facing = 0
+    jet.flight = Flight.Ground
+    jet.altitude = 0
+    expect(game.tick(STEP).some((shot) => shot.kind === WeaponKind.Rocket)).toBe(false)
+    expect(jet.rounds).toBe(JET.weapon.magazine)
+    jet.flight = Flight.Cruise
+    jet.altitude = 2.6
+    jet.facing = 0
+    expect(game.tick(STEP).some((shot) => shot.kind === WeaponKind.Rocket)).toBe(true)
+  })
 })

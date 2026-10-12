@@ -12,6 +12,11 @@ export const enum Flight {
 export const PLANE_ALTITUDE = 2.6
 export const ROTOR_ALTITUDE = 1.5
 export const CLIMB_RATE = 1.6
+export const FLIGHT_CLEARANCE = 1
+
+export function planeInFlight(flight: Flight, altitude: number): boolean {
+  return flight !== Flight.Ground && altitude >= FLIGHT_CLEARANCE
+}
 export const RUNWAY_LENGTH = 4
 export const RUNWAY_WIDTH = 2
 

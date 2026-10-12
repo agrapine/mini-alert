@@ -11,6 +11,7 @@
 - Jets carry five rockets. A rocket accelerates, and it splashes harder than a shell. An empty jet returns to the airport that launched it to reload.
 - Cruisers turn a little faster, reach a higher top speed, and fire out to 15. Jets see out to 21.
 - Scouts are 30% slower.
+- Jets fire only after they have left the ground.
 
 ## 0.3
 

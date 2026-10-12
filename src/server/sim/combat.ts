@@ -1,7 +1,8 @@
 import { flightTime } from '../../shared/ballistics.ts'
 import { CITY_SIGHT } from '../../shared/cities.ts'
+import { planeInFlight } from '../../shared/flight.ts'
 import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
-import { WeaponKind } from '../../shared/unit-types.ts'
+import { Locomotion, WeaponKind } from '../../shared/unit-types.ts'
 import { seesPoint, type CitySight, type SightSource } from '../../shared/vision.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
 import type { Unit } from '../units/unit.ts'
@@ -67,6 +68,7 @@ export function engage(
     const gun = weapon.turretRate > 0 ? unit.turretYaw : aim
     const dist = target ? distance(unit, target) : Math.hypot(aimX - unit.pos.x, aimZ - unit.pos.z)
     const aligned = Math.abs(wrapAngle(desired - gun)) <= weapon.aimTolerance
+    if (unit.type.locomotion === Locomotion.Plane && !planeInFlight(unit.flight, unit.altitude)) continue
     if (dist > weapon.range || !aligned || unit.rounds <= 0 || unit.cooldown > 0) continue
 
     unit.rounds -= 1

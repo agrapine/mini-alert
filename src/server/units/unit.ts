@@ -1,4 +1,4 @@
-import { Flight, joinPaths, onRunway, runwayEnd } from '../../shared/flight.ts'
+import { Flight, joinPaths, onRunway, planeInFlight, runwayEnd } from '../../shared/flight.ts'
 import { footprintCovers } from '../../shared/footprint.ts'
 import { driveMotion, flightLine, MotionResult, stepMotion, type MotionState } from '../../shared/motion.ts'
 import { tileCenter, type TileCoord } from '../../shared/tiles.ts'
@@ -165,6 +165,10 @@ export abstract class Unit {
     this.rounds = weapon.magazine
   }
 
+  private airborne(): boolean {
+    return this.type.locomotion !== Locomotion.Plane || planeInFlight(this.flight, this.altitude)
+  }
+
   private onHomePad(): boolean {
     if (!this.home) return false
     return onRunway(this.tile.x, this.tile.y, this.home.x, this.home.y)
@@ -180,7 +184,7 @@ export abstract class Unit {
     }
     const dist = Math.hypot(target.pos.x - this.pos.x, target.pos.z - this.pos.z)
     const range = this.type.weapon.range
-    if (dist <= range) {
+    if (dist <= range && this.airborne()) {
       this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.face(target, dt)
       return true
@@ -202,7 +206,7 @@ export abstract class Unit {
     if (!point) return false
     const dist = Math.hypot(point.x - this.pos.x, point.z - this.pos.z)
     const range = this.type.weapon.range
-    if (dist <= range || this.type.topSpeed <= 0) {
+    if ((dist <= range || this.type.topSpeed <= 0) && this.airborne()) {
       this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.facePoint(point, dt)
       return true
