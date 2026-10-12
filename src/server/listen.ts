@@ -8,6 +8,7 @@ import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
 import { SIM_STEP } from '../shared/motion.ts'
 import type { ClientMessage, ServerFrame } from '../shared/protocol.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
+import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
 import { serveClient } from './static.ts'
 
 const PORT = Number(process.env.PORT) || 8787
@@ -15,6 +16,14 @@ const STEP = SIM_STEP
 const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist')
 
 const lobby = new Lobby()
+loadSaves(lobby)
+lobby.onSave = () => {
+  try {
+    saveSaves(lobby)
+  } catch (err) {
+    console.error('save failed', err)
+  }
+}
 const httpServer = createServer((req, res) => {
   serveClient(clientRoot, req, res)
 })
@@ -45,6 +54,17 @@ sockets.on('connection', (socket, request) => {
 })
 
 setInterval(() => lobby.tick(STEP), STEP * 1000)
+setInterval(() => lobby.onSave(), saveIntervalMs())
+
+let closed = false
+function shutdown() {
+  if (closed) return
+  closed = true
+  lobby.onSave()
+  process.exit(0)
+}
+process.once('SIGINT', shutdown)
+process.once('SIGTERM', shutdown)
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`server listening on ${PORT}`)

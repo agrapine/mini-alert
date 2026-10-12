@@ -8,7 +8,7 @@ import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player } from './player.ts'
 import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
 import { applyImpacts, engage, type Blast, type Impact } from './sim/combat.ts'
-import type { World } from './world.ts'
+import { World } from './world.ts'
 
 export type Scenery = {
   coast: MapPoint[]
@@ -89,6 +89,31 @@ export class Game {
   constructor(world: World) {
     this.world = world
     this.pathfinder = new PathFinder(world)
+  }
+
+  static fromState(fields: Record<string, unknown>): Game {
+    const world = fields.world
+    if (!(world instanceof World)) throw new Error('saved game has no world')
+    const game = new Game(world)
+    game.install(fields)
+    return game
+  }
+
+  private install(fields: Record<string, unknown>) {
+    const target = this as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(fields)) {
+      if (key === 'world' || key === 'pathfinder') continue
+      target[key] = value
+    }
+    this.reseat()
+  }
+
+  private reseat() {
+    for (const unit of this.units) {
+      if (unit.health <= 0) continue
+      this.fillFootprint(unit)
+    }
+    this.syncBlocks()
   }
 
   addPlayer(color?: number): Player {

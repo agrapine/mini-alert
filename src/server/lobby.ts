@@ -29,6 +29,9 @@ import type { RemotePlay } from './host.ts'
 import { ServerHost } from './host.ts'
 import { seatIsland, spreadTowns } from './island-match.ts'
 import { generateIsland, type Island } from './mapgen/generate.ts'
+import { pack, unpack } from './persist.ts'
+import './state.ts'
+import { Game } from './game.ts'
 
 const CHAT_LIMIT = 40
 const NAME_LIMIT = 16
@@ -84,13 +87,126 @@ type GameRoom = {
   aiPace: number
 }
 
+export type HallSave = {
+  nextId: number
+  nextGame: number
+  hallChat: ChatLine[]
+  members: { id: number; token: string; name: string; gameId: number | null; admin: boolean }[]
+}
+
 export class Lobby {
+  onSave: () => void = () => {}
   private nextId = 1
   private nextGame = 1
   private readonly members = new Map<number, Member>()
   private readonly tokens = new Map<string, number>()
   private readonly games = new Map<number, GameRoom>()
   private readonly hallChat: ChatLine[] = []
+
+  gameIds(): number[] {
+    return [...this.games.keys()]
+  }
+
+  savedHall(): HallSave {
+    return {
+      nextId: this.nextId,
+      nextGame: this.nextGame,
+      hallChat: this.hallChat.slice(),
+      members: [...this.members.values()].map((member) => ({
+        id: member.id,
+        token: member.token,
+        name: member.name,
+        gameId: member.gameId,
+        admin: member.admin,
+      })),
+    }
+  }
+
+  saveGame(id: number): unknown {
+    const room = this.games.get(id)
+    if (!room) throw new Error(`missing game ${id}`)
+    return this.packRoom(room)
+  }
+
+  loadHall(data: unknown) {
+    if (!data || typeof data !== 'object') return
+    const hall = data as Partial<HallSave>
+    if (typeof hall.nextId === 'number') this.nextId = hall.nextId
+    if (typeof hall.nextGame === 'number') this.nextGame = hall.nextGame
+    if (Array.isArray(hall.hallChat)) this.hallChat.push(...hall.hallChat)
+    if (!Array.isArray(hall.members)) return
+    for (const member of hall.members) {
+      if (!member || typeof member.id !== 'number' || typeof member.token !== 'string') continue
+      this.members.set(member.id, {
+        id: member.id,
+        token: member.token,
+        name: typeof member.name === 'string' && member.name ? member.name : `Player ${member.id}`,
+        socket: null,
+        gameId: typeof member.gameId === 'number' ? member.gameId : null,
+        admin: member.admin === true,
+      })
+      this.tokens.set(member.token, member.id)
+      this.nextId = Math.max(this.nextId, member.id + 1)
+    }
+  }
+
+  loadGame(data: unknown): boolean {
+    const body = unpack(data) as Record<string, unknown>
+    const id = body.id
+    if (typeof id !== 'number') return false
+    const saved = body.match as { factions?: Faction[]; owners?: Map<number, number>; sim?: unknown } | null
+    const room = body as unknown as GameRoom
+    room.generating = false
+    room.match = null
+    if (saved) {
+      if (!(saved.sim instanceof Game) || !Array.isArray(saved.factions) || !(saved.owners instanceof Map)) return false
+      room.match = this.boot(saved.sim, saved.factions, saved.owners, room.aiPace)
+    } else if (room.status === RoomStatus.Playing) return false
+    this.games.set(id, room)
+    this.nextGame = Math.max(this.nextGame, id + 1)
+    return true
+  }
+
+  loadDone() {
+    for (const game of this.games.values()) this.nextGame = Math.max(this.nextGame, game.id + 1)
+    for (const member of this.members.values()) {
+      this.nextId = Math.max(this.nextId, member.id + 1)
+      if (member.gameId !== null && !this.games.has(member.gameId)) member.gameId = null
+    }
+  }
+
+  private checkpoint() {
+    try {
+      this.onSave()
+    } catch (err) {
+      console.error('save failed', err)
+    }
+  }
+
+  private packRoom(room: GameRoom): unknown {
+    const body = pack(room, ['match'])
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('save room')
+    const record = body as Record<string, unknown>
+    const match = room.match
+    record.match = match
+      ? { factions: match.factions, owners: pack(match.owners), sim: pack(match.host.game) }
+      : null
+    return record
+  }
+
+  private boot(game: Game, factions: Faction[], owners: Map<number, number>, pace: number): Match {
+    const host = new ServerHost(game)
+    for (const faction of factions) {
+      if (!faction.ai || faction.defeated) continue
+      const player = game.player(faction.playerId)
+      if (!player) continue
+      const port = host.join(player)
+      host.addAi(new AiPlayer(port))
+      host.sync(player.id)
+    }
+    if (typeof pace === 'number') host.setAiPace(pace)
+    return { host, factions, seats: new Map(), owners }
+  }
 
   connect(socket: LobbySocket, token?: string | null): LobbyMember {
     const clean = cleanToken(token)
@@ -187,6 +303,7 @@ export class Lobby {
     game.memberIds.push(client.id)
     this.refreshWaiting()
     this.queueGenerate(game)
+    this.checkpoint()
   }
 
   private joinGame(client: Member, gameId: unknown) {
@@ -343,6 +460,7 @@ export class Lobby {
     this.refreshGame(game)
     this.refreshWaiting()
     for (const seat of seats.values()) seat.sync()
+    this.checkpoint()
   }
 
   private say(client: Member, value: unknown) {
@@ -417,6 +535,7 @@ export class Lobby {
       member.gameId = null
     }
     this.refreshWaiting()
+    this.checkpoint()
   }
 
   private forfeit(game: GameRoom, client: Member) {
@@ -455,15 +574,20 @@ export class Lobby {
     const seat = game.match?.seats.get(client.id)
     seat?.close()
     game.match?.seats.delete(client.id)
+    let removed = false
     if (game.status === RoomStatus.Waiting) {
       for (const slot of game.slots) {
         if (slot.kind === SlotKind.Human && slot.clientId === client.id) this.open(slot)
       }
       if (game.hostId === client.id) this.transferHost(game)
-      if (game.memberIds.length === 0) this.games.delete(game.id)
+      if (game.memberIds.length === 0) {
+        this.games.delete(game.id)
+        removed = true
+      }
     } else this.onRoomChanged(game)
     this.refreshGame(game)
     if (tell) client.socket?.send(this.waitingState(client))
+    if (removed) this.checkpoint()
   }
 
   private reenter(client: Member) {
@@ -576,11 +700,13 @@ export class Lobby {
         rollback?.()
         this.refreshGame(game)
         this.refreshWaiting()
+        this.checkpoint()
         return
       }
       this.publishPreview(game)
       this.refreshGame(game)
       this.refreshWaiting()
+      this.checkpoint()
     })
   }
 
