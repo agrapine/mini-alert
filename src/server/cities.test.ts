@@ -247,7 +247,7 @@ describe('cities', () => {
     expect(neutral.cityStates()[0].grown).toBe(0)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 0, y: 19 })).toBe(false)
     let guard = 0
-    while (game.creditIncome(human.id) < TURRET.supply && guard < 12) {
+    while (game.creditIncome(human.id) / CREDIT_PER_POPULATION < TURRET.supply && guard < 12) {
       game.tick(CITY_GROW_SECONDS)
       guard += 1
     }

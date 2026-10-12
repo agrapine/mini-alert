@@ -23,7 +23,7 @@ const HELP = `# Shortcuts
 
 ## Credits
 
-You start with 10,000. Every 10 seconds, each city you hold pays **1** per building. A city pays nothing while an enemy unit is nearby.
+You start with 10,000. Every 10 seconds, each city you hold pays **2** per building. A city pays nothing while an enemy unit is nearby.
 
 ## Cities
 

@@ -107,7 +107,7 @@ describe('buildings', () => {
     if (!road) return
     const holder = game.spawn(human, UnitTypeId.Scout, { x: road.x, y: road.y }, 0)
     let guard = 0
-    while (game.creditIncome(human.id) < SCOUT.supply + MED_TANK.supply + SCOUT.supply && guard < 8) {
+    while (game.creditIncome(human.id) / CREDIT_PER_POPULATION < SCOUT.supply + MED_TANK.supply + SCOUT.supply && guard < 8) {
       game.tick(CITY_GROW_SECONDS)
       guard += 1
     }
@@ -125,7 +125,7 @@ describe('buildings', () => {
     expect(human.credits).toBeCloseTo(paid)
   })
 
-  it('pays one credit per population every ten seconds, unless an enemy is near', () => {
+  it('pays two credits per population every ten seconds, unless an enemy is near', () => {
     const width = 16
     const height = 16
     const tiles = new Uint8Array(width * height).fill(Terrain.Land)
