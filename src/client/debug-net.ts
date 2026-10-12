@@ -74,11 +74,18 @@ const UNIT_TYPE: Record<number, string> = {
   [UnitTypeId.Artillery]: 'Artillery',
   [UnitTypeId.Factory]: 'Factory',
   [UnitTypeId.Turret]: 'Turret',
+  [UnitTypeId.Jet]: 'Jet',
+  [UnitTypeId.Gunship]: 'Gunship',
+  [UnitTypeId.Cruiser]: 'Cruiser',
+  [UnitTypeId.Airport]: 'Airport',
+  [UnitTypeId.Helipad]: 'Helipad',
+  [UnitTypeId.Shipyard]: 'Shipyard',
 }
 
 const WEAPON: Record<number, string> = {
   [WeaponKind.Bullet]: 'Bullet',
   [WeaponKind.Shell]: 'Shell',
+  [WeaponKind.Rocket]: 'Rocket',
 }
 
 if (window.debugNet === undefined) window.debugNet = false

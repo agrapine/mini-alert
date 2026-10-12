@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { CITY_GROW_SECONDS, CITY_MODELS, buildingCost, canPlaceCityBuilding, layoutCities, populationOf, projectCity } from '../shared/cities.ts'
-import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
+import { AIRPORT, ARTILLERY, FACTORY, HEAVY_TANK, HELIPAD, MED_TANK, SCOUT, SHIPYARD, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
-import { CREDIT_PER_POPULATION, INCOME_SECONDS } from './player.ts'
+import { CREDIT_PER_POPULATION, INCOME_SECONDS, STARTING_CREDITS, creditCap } from './player.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { World } from './world.ts'
 
@@ -33,6 +33,7 @@ describe('buildings', () => {
     const game = new Game(new World(16, 16))
     const human = game.addPlayer()
     seat(game, human.id, 4, 10)
+    growPop(game, human.id, TURRET.supply + FACTORY.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
     quiet(game, 4, 10)
@@ -58,6 +59,9 @@ describe('buildings', () => {
     const game = new Game(new World(16, 16))
     const human = game.addPlayer()
     seat(game, human.id, 10, 4)
+    growPop(game, human.id, FACTORY.supply + SCOUT.supply * 2)
+    const people = game.creditIncome(human.id) / CREDIT_PER_POPULATION
+    const earned = (seconds: number) => (seconds / INCOME_SECONDS) * CREDIT_PER_POPULATION * people
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
     expect(human.credits).toBe(10_000 - FACTORY.cost)
@@ -71,20 +75,21 @@ describe('buildings', () => {
     expect(game.trainingFor(human.id)).toHaveLength(2)
     expect(game.trainingFor(human.id)[0]?.progress).toBeCloseTo(0.5 * pace)
     expect(game.trainingFor(human.id)[1]?.progress).toBe(0)
-    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 0.5 * pace)
+    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 0.5 * pace + earned(SCOUT.buildTime / 2))
     game.tick(SCOUT.buildTime / 2)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(1)
     expect(game.trainingFor(human.id)[0]?.progress).toBeCloseTo(0.25)
     game.tick(SCOUT.buildTime)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(2)
     expect(game.trainingFor(human.id)).toHaveLength(0)
-    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 2)
+    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 2 + earned(SCOUT.buildTime * 2))
   })
 
   it('cancels the latest queued build and leaves credits already spent', () => {
     const game = new Game(new World(16, 16))
     const human = game.addPlayer()
     seat(game, human.id, 4, 10)
+    growPop(game, human.id, TURRET.supply + FACTORY.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
     quiet(game, 4, 10)
@@ -107,7 +112,11 @@ describe('buildings', () => {
     if (!road) return
     const holder = game.spawn(human, UnitTypeId.Scout, { x: road.x, y: road.y }, 0)
     let guard = 0
-    while (game.creditIncome(human.id) / CREDIT_PER_POPULATION < SCOUT.supply + MED_TANK.supply + SCOUT.supply && guard < 8) {
+    while (
+      game.creditIncome(human.id) / CREDIT_PER_POPULATION <
+        FACTORY.supply + SCOUT.supply + MED_TANK.supply + SCOUT.supply &&
+      guard < 40
+    ) {
       game.tick(CITY_GROW_SECONDS)
       guard += 1
     }
@@ -155,6 +164,23 @@ describe('buildings', () => {
     expect(game.takeYields()).toEqual([])
   })
 
+  it('caps stored credits by population and drops the surplus when that population falls', () => {
+    const game = new Game(new World(16, 16))
+    const human = game.addPlayer()
+    seat(game, human.id, 8, 2)
+    const people = game.creditIncome(human.id) / CREDIT_PER_POPULATION
+    expect(people).toBeGreaterThan(0)
+    human.credits = creditCap(people) + 800
+    game.tick(0)
+    expect(human.credits).toBe(creditCap(people))
+    game.tick(INCOME_SECONDS)
+    expect(human.credits).toBe(creditCap(people))
+    const foe = game.addPlayer()
+    game.claimCity({ x: 8.5, y: 2.5 }, foe.id)
+    expect(human.credits).toBe(STARTING_CREDITS)
+    expect(foe.credits).toBe(STARTING_CREDITS)
+  })
+
   it('refuses to train more units than the population', () => {
     const width = 24
     const height = 24
@@ -164,11 +190,14 @@ describe('buildings', () => {
     game.bindCities()
     const human = game.addPlayer()
     game.claimCity({ x: 6, y: 6 }, human.id)
-    const population = populationOf(layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), width, height)[0])
-    expect(population).toBeGreaterThan(0)
+    growPop(game, human.id, FACTORY.supply + 1)
+    const population = game.creditIncome(human.id) / CREDIT_PER_POPULATION
+    expect(population).toBeGreaterThan(FACTORY.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
     game.finishBuild(human.id)
-    for (let i = 0; i < population; i++) game.spawn(human, UnitTypeId.Scout, { x: 18, y: i }, 0)
+    const room = population - FACTORY.supply
+    expect(room).toBeGreaterThan(0)
+    for (let i = 0; i < room; i++) game.spawn(human, UnitTypeId.Scout, { x: 18, y: i }, 0)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(false)
     const scout = game.units.find((unit) => unit.typeId === UnitTypeId.Scout)
     expect(scout).toBeDefined()
@@ -188,12 +217,14 @@ describe('buildings', () => {
     game.bindCities()
     const human = game.addPlayer()
     game.claimCity({ x: 6, y: 6 }, human.id)
-    const population = populationOf(layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), width, height)[0])
-    expect(population).toBeGreaterThanOrEqual(MED_TANK.supply)
+    growPop(game, human.id, FACTORY.supply + MED_TANK.supply)
+    const population = game.creditIncome(human.id) / CREDIT_PER_POPULATION
+    const room = population - FACTORY.supply
+    expect(room).toBeGreaterThanOrEqual(MED_TANK.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
     game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(population >= MED_TANK.supply * 2)
+    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(room >= MED_TANK.supply * 2)
     expect(game.trySpawn(human.id, UnitTypeId.Artillery)).toBe(false)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 14, y: 14 })).toBe(false)
     expect(SCOUT.supply).toBe(1)
@@ -201,6 +232,10 @@ describe('buildings', () => {
     expect(ARTILLERY.supply).toBe(3)
     expect(HEAVY_TANK.supply).toBe(4)
     expect(TURRET.supply).toBe(2)
+    expect(FACTORY.supply).toBe(4)
+    expect(HELIPAD.supply).toBe(4)
+    expect(SHIPYARD.supply).toBe(8)
+    expect(AIRPORT.supply).toBe(12)
   })
 
   it('rejects a footprint that overlaps an occupied tile', () => {
@@ -239,6 +274,7 @@ describe('buildings', () => {
     const game = new Game(new World(24, 24))
     const human = game.addPlayer()
     seat(game, human.id, 10, 8)
+    growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 12, y: 6 })).toBe(true)
     game.finishBuild(human.id)
@@ -252,6 +288,7 @@ describe('buildings', () => {
     const game = new Game(new World(28, 28))
     const human = game.addPlayer()
     seat(game, human.id, 10, 8)
+    growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 12, y: 6 })).toBe(true)
     game.finishBuild(human.id)
@@ -280,6 +317,7 @@ describe('buildings', () => {
     const game = new Game(new World(28, 28))
     const human = game.addPlayer()
     seat(game, human.id, 10, 8)
+    growPop(game, human.id, FACTORY.supply + SCOUT.supply * 2)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
     game.finishBuild(human.id)
     const rally = { x: 20, y: 8 }
@@ -418,6 +456,23 @@ function legalPlot(game: Game, index: number): { x: number; y: number } | null {
     }
   }
   return null
+}
+
+function growPop(game: Game, playerId: number, people: number) {
+  const index = game.cityStates().findIndex((state) => state.ownerId === playerId)
+  const layout = game.cityLayouts()[index]
+  const spot = layout?.streets.find((street) => street.kind < 6) ?? layout?.tiles[0]
+  const owner = game.player(playerId)
+  if (!spot || !owner) return
+  const holder = game.spawn(owner, UnitTypeId.Scout, { x: spot.x, y: spot.y }, 0)
+  let guard = 0
+  while (game.creditIncome(playerId) / CREDIT_PER_POPULATION < people && guard < 80) {
+    game.tick(CITY_GROW_SECONDS)
+    guard += 1
+  }
+  holder.health = 0
+  game.tick(0)
+  owner.credits = 10_000
 }
 
 function quiet(game: Game, x: number, y: number) {

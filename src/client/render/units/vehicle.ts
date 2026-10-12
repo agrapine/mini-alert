@@ -10,10 +10,11 @@ import {
   type Material,
 } from 'three'
 import type { UnitSnapshot } from '../../../shared/protocol.ts'
-import { UNIT_TYPES, UnitTypeId } from '../../../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId, Locomotion } from '../../../shared/unit-types.ts'
 import { PITCH, cameraYaw } from '../stage.ts'
 import { TILE_TOP } from '../terrain.ts'
 import { createArtillery } from './artillery.ts'
+import { createAirport, createCruiser, createGunship, createHelipad, createJet, createShipyard } from './craft.ts'
 import { createFactory } from './factory.ts'
 import { createHeavyTank } from './heavy-tank.ts'
 import { createMedTank } from './med-tank.ts'
@@ -40,12 +41,24 @@ function meshFor(unit: UnitSnapshot): Group {
       return createFactory(unit)
     case UnitTypeId.Turret:
       return createTurret(unit)
+    case UnitTypeId.Jet:
+      return createJet(unit)
+    case UnitTypeId.Gunship:
+      return createGunship(unit)
+    case UnitTypeId.Cruiser:
+      return createCruiser(unit)
+    case UnitTypeId.Airport:
+      return createAirport(unit)
+    case UnitTypeId.Helipad:
+      return createHelipad(unit)
+    case UnitTypeId.Shipyard:
+      return createShipyard(unit)
   }
 }
 
 export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean) {
   const bodyHeight = meshNumber(group, 'bodyHeight', 0.44)
-  group.position.set(unit.x, TILE_TOP + bodyHeight / 2, unit.z)
+  group.position.set(unit.x, TILE_TOP + lift(unit) + bodyHeight / 2, unit.z)
   group.rotation.y = unit.facing
   const turret = group.getObjectByName('turret')
   if (turret) turret.rotation.y = wrapAngle(unit.turretYaw - unit.facing)
@@ -62,6 +75,13 @@ export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean
     material.emissive.set(selected ? 0x3a2e10 : 0x000000)
     material.emissiveIntensity = selected ? 0.45 : 0
   })
+}
+
+function lift(unit: UnitSnapshot): number {
+  const type = UNIT_TYPES[unit.typeId]
+  if (type.locomotion === Locomotion.Rotor || type.locomotion === Locomotion.Plane) return unit.altitude ?? 0
+  if (type.locomotion === Locomotion.Hull) return -0.06
+  return 0
 }
 
 export function unitSpan(group: Group): number {

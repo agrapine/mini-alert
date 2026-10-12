@@ -15,7 +15,7 @@ import {
   type WorldSnapshot,
 } from '../shared/protocol.ts'
 import { Terrain, isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
-import { UNIT_TYPES } from '../shared/unit-types.ts'
+import { domainOf, Locomotion, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 
 const CATCHUP_STEPS = 8
 
@@ -144,9 +144,10 @@ export class Replica {
   }
 
   occupant(tile: TileCoord): UnitSnapshot | undefined {
-    return this.units.find((unit) =>
-      footprintCovers(unit.tileX, unit.tileY, UNIT_TYPES[unit.typeId].footprint, tile),
-    )
+    return this.units.find((unit) => {
+      const span = spanOf(UNIT_TYPES[unit.typeId])
+      return footprintCovers(unit.tileX, unit.tileY, span.x, span.y, tile)
+    })
   }
 
   isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
@@ -162,9 +163,35 @@ export class Replica {
     return !tileOccupied(this.units, tile, skip)
   }
 
-  nearCity(origin: TileCoord, footprint: number): boolean {
+  canCommand(tile: TileCoord, selected: readonly UnitSnapshot[]): boolean {
+    const world = this.world
+    if (!world) return false
+    if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return false
+    const movers = selected.filter((unit) => (UNIT_TYPES[unit.typeId]?.topSpeed ?? 0) > 0)
+    if (movers.length === 0) return false
+    const domains = new Set(movers.map((unit) => domainOf(UNIT_TYPES[unit.typeId])))
+    if (domains.size === 1 && domains.has(MoveDomain.Air)) return true
+    if (domains.size === 1 && domains.has(MoveDomain.Water)) {
+      const terrain = world.terrain[index]
+      if (terrain !== Terrain.Water && terrain !== Terrain.Lake) return false
+      return !tileOccupied(this.units, tile, movers.map((unit) => unit.id))
+    }
+    return this.isOpen(tile, movers.map((unit) => unit.id))
+  }
+
+  homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
+    if (unit.ownerId !== this.playerId) return false
+    const jets = selected.some((other) => other.typeId === UnitTypeId.Jet)
+    const guns = selected.some((other) => other.typeId === UnitTypeId.Gunship)
+    if (jets && unit.typeId === UnitTypeId.Airport) return true
+    return guns && unit.typeId === UnitTypeId.Helipad
+  }
+
+  nearCity(origin: TileCoord, footprint: number, spanY = footprint): boolean {
     const owned = this.settledLayouts().filter((layout, index) => layout && this.cities[index]?.ownerId === this.playerId)
-    return footprintNearCity(owned.filter((layout): layout is CityLayout => layout !== null), origin, footprint)
+    return footprintNearCity(owned.filter((layout): layout is CityLayout => layout !== null), origin, footprint, spanY)
   }
 
   canRaise(tile: TileCoord): boolean {
@@ -292,13 +319,21 @@ export class Replica {
     unit.health = next.health
     unit.progress = next.progress
     unit.color = next.color
+    unit.home = next.home ? { x: next.home.x, y: next.home.y } : null
+    unit.returning = next.returning ?? false
+    unit.flight = next.flight ?? 0
+    unit.altitude = next.altitude ?? 0
+    unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
   }
 
   private stepUnits(dt: number) {
     const occupied = new Map<string, number>()
     for (const unit of this.units) {
       if (unit.health <= 0) continue
-      stamp(occupied, unit.id, unit.tileX, unit.tileY, UNIT_TYPES[unit.typeId]?.footprint ?? 1)
+      const type = UNIT_TYPES[unit.typeId]
+      if (!type || domainOf(type) === MoveDomain.Air) continue
+      const span = spanOf(type)
+      stamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
     }
     for (const unit of this.units) {
       const type = UNIT_TYPES[unit.typeId]
@@ -311,11 +346,19 @@ export class Replica {
         tileX: unit.tileX,
         tileY: unit.tileY,
         path: unit.path,
+        homeX: unit.home?.x,
+        homeY: unit.home?.y,
+        returning: unit.returning,
+        flight: unit.flight,
+        altitude: unit.altitude,
+        orbitX: unit.orbit?.x,
+        orbitY: unit.orbit?.y,
       }
-      stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, x, y))
+      stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
+      const span = spanOf(type)
       if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
-        clearStamp(occupied, unit.id, unit.tileX, unit.tileY, type.footprint)
-        stamp(occupied, unit.id, state.tileX, state.tileY, type.footprint)
+        clearStamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
+        stamp(occupied, unit.id, state.tileX, state.tileY, span.x, span.y)
       }
       unit.x = state.x
       unit.z = state.z
@@ -324,11 +367,22 @@ export class Replica {
       unit.tileX = state.tileX
       unit.tileY = state.tileY
       unit.path = state.path
+      unit.returning = state.returning ?? false
+      unit.flight = state.flight ?? 0
+      unit.altitude = state.altitude ?? 0
+      unit.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
       unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
     }
   }
 
-  private tileBlocked(occupied: ReadonlyMap<string, number>, self: number, x: number, y: number): boolean {
+  private tileBlocked(
+    occupied: ReadonlyMap<string, number>,
+    self: number,
+    locomotion: Locomotion,
+    x: number,
+    y: number,
+  ): boolean {
+    if (locomotion === Locomotion.Plane || locomotion === Locomotion.Rotor) return false
     const holder = occupied.get(`${x},${y}`)
     if (holder !== undefined && holder !== self) return true
     const world = this.world
@@ -336,7 +390,9 @@ export class Replica {
     if (x < 0 || y < 0 || x >= world.width || y >= world.height) return true
     const index = y * world.width + x
     if (world.known[index] === 0) return false
-    return !isWalkableTerrain(world.terrain[index])
+    const terrain = world.terrain[index]
+    if (locomotion === Locomotion.Hull) return terrain !== Terrain.Water && terrain !== Terrain.Lake
+    return !isWalkableTerrain(terrain)
   }
 
   private installMap(map: MapData, replace: boolean) {
@@ -439,15 +495,15 @@ export class Replica {
   }
 }
 
-function stamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, footprint: number) {
-  for (let dy = 0; dy < footprint; dy++) {
-    for (let dx = 0; dx < footprint; dx++) occupied.set(`${tileX + dx},${tileY + dy}`, id)
+function stamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, spanX: number, spanY = spanX) {
+  for (let dy = 0; dy < spanY; dy++) {
+    for (let dx = 0; dx < spanX; dx++) occupied.set(`${tileX + dx},${tileY + dy}`, id)
   }
 }
 
-function clearStamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, footprint: number) {
-  for (let dy = 0; dy < footprint; dy++) {
-    for (let dx = 0; dx < footprint; dx++) {
+function clearStamp(occupied: Map<string, number>, id: number, tileX: number, tileY: number, spanX: number, spanY = spanX) {
+  for (let dy = 0; dy < spanY; dy++) {
+    for (let dx = 0; dx < spanX; dx++) {
       const key = `${tileX + dx},${tileY + dy}`
       if (occupied.get(key) === id) occupied.delete(key)
     }

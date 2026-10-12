@@ -25,6 +25,9 @@
       </div>
       <button type="button" data-open="changelog">Changelog</button>
       <button type="button" data-open="help">Help</button>
+      <button type="button" id="fullscreen" aria-label="Full screen" title="Full screen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+      </button>
     </nav>
     <div id="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
@@ -35,20 +38,31 @@
         <div id="sheet-body"></div>
       </div>
     </div>
-    <div id="minimap">
-      <canvas id="minimap-map"></canvas>
-      <canvas id="minimap-marks"></canvas>
-    </div>
     <div id="hud">
-      <p id="ledger">
+      <div class="stat" title="Credits">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="16" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/><ellipse cx="12" cy="12" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/><ellipse cx="12" cy="8" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
         <span id="credits"></span>
+      </div>
+      <div class="stat" title="Units">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="13" width="6" height="6" rx="1" fill="currentColor"/><rect x="9" y="5" width="6" height="6" rx="1" fill="currentColor"/><rect x="15" y="13" width="6" height="6" rx="1" fill="currentColor"/></svg>
         <span id="forces"></span>
-        <span id="realm"></span>
-      </p>
-      <p id="status"></p>
+      </div>
+      <div class="stat" title="Population">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="2.2" fill="currentColor"/><circle cx="16" cy="9" r="1.8" fill="currentColor"/><path d="M4.5 18c.6-2.6 2.4-4 4.5-4s3.9 1.4 4.5 4M13 18c.4-2 1.7-3.2 3.3-3.2 1.5 0 2.7 1 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span id="population"></span>
+      </div>
+      <div class="stat" title="Cities">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10l5-3v13M9 20V7l6-3v16M15 20V9l5 2v9M3 20h18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        <span id="cities"></span>
+      </div>
     </div>
-    <div id="build"></div>
-    <div id="spawn"></div>
+    <aside id="side">
+      <div id="minimap">
+        <canvas id="minimap-map"></canvas>
+        <canvas id="minimap-marks"></canvas>
+      </div>
+      <div id="orders"></div>
+    </aside>
     <div id="vision" hidden></div>
     <div id="legend" hidden></div>
     <div id="outcome" hidden>

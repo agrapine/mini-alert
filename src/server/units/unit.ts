@@ -1,6 +1,8 @@
-import { driveMotion, MotionResult, stepMotion, type MotionState } from '../../shared/motion.ts'
+import { Flight, joinPaths, onRunway, runwayEnd } from '../../shared/flight.ts'
+import { footprintCovers } from '../../shared/footprint.ts'
+import { driveMotion, flightLine, MotionResult, stepMotion, type MotionState } from '../../shared/motion.ts'
 import { tileCenter, type TileCoord } from '../../shared/tiles.ts'
-import type { UnitType } from '../../shared/unit-types.ts'
+import { domainOf, Locomotion, MoveDomain, spanOf, UnitTypeId, WeaponKind, type UnitType } from '../../shared/unit-types.ts'
 import type { PathFinder } from '../path/pathfinder.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
 import { redirect } from '../sim/steering.ts'
@@ -23,6 +25,11 @@ export abstract class Unit {
   attackPoint: { x: number; z: number } | null = null
   path: TileCoord[] = []
   route = 0
+  home: TileCoord | null = null
+  returning = false
+  flight = Flight.Ground
+  altitude = 0
+  orbit: TileCoord | null = null
   progress = 1
   bill: number
 
@@ -53,25 +60,58 @@ export abstract class Unit {
     this.route++
   }
 
-  orderMove(tile: TileCoord, paths: PathFinder): boolean {
+  orderMove(tile: TileCoord, paths: PathFinder, units: readonly Unit[] = []): boolean {
     if (this.type.topSpeed <= 0) return false
-    const path = paths.findPath(this.tile, tile, this.id)
-    if (path === null) return false
+    if (domainOf(this.type) === MoveDomain.Air) return this.orderAir(tile, paths, units)
+    this.returning = false
+    this.orbit = null
+    const path = paths.findPath(this.tile, tile, this.id, domainOf(this.type))
+    if (path === null || path.length === 0) return false
     this.commitPath(path)
     return true
   }
 
+  private orderAir(tile: TileCoord, paths: PathFinder, units: readonly Unit[]): boolean {
+    if (!paths.inBounds(tile.x, tile.y)) return false
+    const pad = padAt(this, tile, units)
+    const grounded = this.flight === Flight.Ground || this.flight === Flight.Landing || this.altitude < 0.25
+    const path = pad ? this.landPath(pad.tile) : this.departPath(tile, grounded)
+    if (path.length === 0) return false
+    this.returning = pad !== null
+    this.orbit = pad === null && this.type.locomotion === Locomotion.Plane ? { x: tile.x, y: tile.y } : null
+    if (pad) this.home = { x: pad.tile.x, y: pad.tile.y }
+    this.flight = grounded ? Flight.Takeoff : Flight.Cruise
+    this.commitPath(path)
+    return true
+  }
+
+  private departPath(tile: TileCoord, grounded: boolean): TileCoord[] {
+    if (this.type.locomotion === Locomotion.Plane && this.home && grounded) {
+      return joinPaths(flightLine(this.tile, runwayEnd(this.home)), flightLine(runwayEnd(this.home), tile))
+    }
+    return flightLine(this.tile, tile)
+  }
+
+  private landPath(pad: TileCoord): TileCoord[] {
+    if (this.type.locomotion !== Locomotion.Plane) return flightLine(this.tile, pad)
+    const approach = { x: pad.x, y: Math.max(0, pad.y - 6) }
+    return joinPaths(flightLine(this.tile, approach), flightLine(approach, runwayEnd(pad)))
+  }
+
   step(dt: number, paths: PathFinder, units: readonly Unit[]) {
     if (this.type.topSpeed <= 0) return
-    this.pursue(dt, paths, units)
-    if (this.path.length > 0) {
+    const rearming = this.recallForRockets(paths, units)
+    const engaging = rearming ? false : this.pursue(dt, paths, units)
+    const domain = domainOf(this.type)
+    const air = domain === MoveDomain.Air
+    if (!air && this.path.length > 0) {
       const next = this.path[0]
-      if (!paths.isWalkable(next.x, next.y, this.id)) redirect(this, paths, units)
+      if (!paths.isWalkable(next.x, next.y, this.id, domain)) redirect(this, paths, units)
     }
 
-    const state = motionOf(this)
+    const state = motionOf(this, !engaging)
     const stalled = this.speed === 0
-    const occupied = (x: number, y: number) => !paths.isWalkable(x, y, this.id)
+    const occupied = air ? undefined : (x: number, y: number) => !paths.isWalkable(x, y, this.id, domain)
     const result = stepMotion(state, this.type, dt, occupied)
     if (result === MotionResult.Denied) {
       this.speed = 0
@@ -82,7 +122,9 @@ export abstract class Unit {
     }
     const entered = { x: state.tileX, y: state.tileY }
     const changing = entered.x !== this.tile.x || entered.y !== this.tile.y
-    if (changing && !paths.claim(this, entered, this.type.footprint)) {
+    if (air) {
+      this.tile = entered
+    } else if (changing && !paths.claim(this, entered, this.type.footprint, domain)) {
       this.speed = 0
       this.facing = state.facing
       if (!stalled) this.route++
@@ -93,56 +135,87 @@ export abstract class Unit {
     this.pos.z = state.z
     this.facing = state.facing
     this.speed = state.speed
+    this.returning = state.returning ?? false
+    this.flight = state.flight ?? Flight.Ground
+    this.altitude = state.altitude ?? 0
+    this.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
     this.path = state.path
+    this.rearmRockets()
   }
 
-  private pursue(dt: number, paths: PathFinder, units: readonly Unit[]) {
-    if (this.attackPoint) {
-      this.pursuePoint(dt, paths)
-      return
+  private recallForRockets(paths: PathFinder, units: readonly Unit[]): boolean {
+    const weapon = this.type.weapon
+    if (weapon.kind !== WeaponKind.Rocket || this.rounds > 0) return false
+    if (this.flight === Flight.Ground && this.onHomePad()) return true
+    if (!this.home || this.returning || this.flight === Flight.Landing) return true
+    const end = runwayEnd(this.home)
+    const goal = this.path[this.path.length - 1]
+    if (!goal || goal.x !== end.x || goal.y !== end.y) {
+      this.attackId = null
+      this.attackPoint = null
+      this.orderMove(this.home, paths, units)
     }
-    if (this.attackId === null) return
+    return true
+  }
+
+  private rearmRockets(): void {
+    const weapon = this.type.weapon
+    if (weapon.kind !== WeaponKind.Rocket || this.rounds >= weapon.magazine) return
+    if (this.flight !== Flight.Ground || !this.onHomePad()) return
+    this.rounds = weapon.magazine
+  }
+
+  private onHomePad(): boolean {
+    if (!this.home) return false
+    return onRunway(this.tile.x, this.tile.y, this.home.x, this.home.y)
+  }
+
+  private pursue(dt: number, paths: PathFinder, units: readonly Unit[]): boolean {
+    if (this.attackPoint) return this.pursuePoint(dt, paths)
+    if (this.attackId === null) return false
     const target = units.find((unit) => unit.id === this.attackId)
     if (!target || target.health <= 0 || target.ownerId === this.ownerId) {
       this.attackId = null
-      return
+      return false
     }
     const dist = Math.hypot(target.pos.x - this.pos.x, target.pos.z - this.pos.z)
     const range = this.type.weapon.range
     if (dist <= range) {
       this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.face(target, dt)
-      return
+      return true
     }
     const goal = this.path[this.path.length - 1]
     const goalCenter = goal ? tileCenter(goal) : null
     const goalHolds =
       goalCenter !== null && Math.hypot(goalCenter.x - target.pos.x, goalCenter.z - target.pos.z) <= range
-    if (goalHolds) return
+    if (goalHolds) return false
     const tile = approachTile(this, target, paths)
-    if (!tile) return
-    if (goal && goal.x === tile.x && goal.y === tile.y) return
+    if (!tile) return false
+    if (goal && goal.x === tile.x && goal.y === tile.y) return false
     this.orderMove(tile, paths)
+    return false
   }
 
-  private pursuePoint(dt: number, paths: PathFinder) {
+  private pursuePoint(dt: number, paths: PathFinder): boolean {
     const point = this.attackPoint
-    if (!point) return
+    if (!point) return false
     const dist = Math.hypot(point.x - this.pos.x, point.z - this.pos.z)
     const range = this.type.weapon.range
     if (dist <= range || this.type.topSpeed <= 0) {
       this.commitPath([])
       if (this.type.weapon.turretRate === 0) this.facePoint(point, dt)
-      return
+      return true
     }
     const goal = this.path[this.path.length - 1]
     const goalCenter = goal ? tileCenter(goal) : null
     const goalHolds = goalCenter !== null && Math.hypot(goalCenter.x - point.x, goalCenter.z - point.z) <= range
-    if (goalHolds) return
+    if (goalHolds) return false
     const tile = approachPoint(this, point, paths)
-    if (!tile) return
-    if (goal && goal.x === tile.x && goal.y === tile.y) return
+    if (!tile) return false
+    if (goal && goal.x === tile.x && goal.y === tile.y) return false
     this.orderMove(tile, paths)
+    return false
   }
 
   private facePoint(point: { x: number; z: number }, dt: number) {
@@ -159,7 +232,7 @@ export abstract class Unit {
 
 }
 
-function motionOf(unit: Unit): MotionState {
+function motionOf(unit: Unit, loiter = true): MotionState {
   return {
     x: unit.pos.x,
     z: unit.pos.z,
@@ -168,7 +241,25 @@ function motionOf(unit: Unit): MotionState {
     tileX: unit.tile.x,
     tileY: unit.tile.y,
     path: unit.path,
+    homeX: unit.home?.x,
+    homeY: unit.home?.y,
+    returning: unit.returning,
+    flight: unit.flight,
+    altitude: unit.altitude,
+    orbitX: unit.orbit?.x,
+    orbitY: unit.orbit?.y,
+    loiter,
   }
+}
+
+function padAt(unit: Unit, tile: TileCoord, units: readonly Unit[]): Unit | null {
+  const want = unit.type.locomotion === Locomotion.Plane ? UnitTypeId.Airport : UnitTypeId.Helipad
+  for (const other of units) {
+    if (other.ownerId !== unit.ownerId || other.typeId !== want || other.health <= 0) continue
+    const span = spanOf(other.type)
+    if (footprintCovers(other.tile.x, other.tile.y, span.x, span.y, tile)) return other
+  }
+  return null
 }
 
 function samePath(left: readonly TileCoord[], right: readonly TileCoord[]): boolean {
@@ -189,7 +280,7 @@ function approachPoint(unit: Unit, point: { x: number; z: number }, paths: PathF
   for (let dy = -reach; dy <= reach; dy++) {
     for (let dx = -reach; dx <= reach; dx++) {
       const tile = { x: tx + dx, y: ty + dy }
-      if (!paths.isWalkable(tile.x, tile.y, unit.id)) continue
+      if (!paths.isWalkable(tile.x, tile.y, unit.id, domainOf(unit.type))) continue
       const center = tileCenter(tile)
       const toTarget = Math.hypot(center.x - point.x, center.z - point.z)
       if (toTarget > range) continue
@@ -210,7 +301,7 @@ function approachTile(unit: Unit, target: Unit, paths: PathFinder): TileCoord | 
   for (let dy = -reach; dy <= reach; dy++) {
     for (let dx = -reach; dx <= reach; dx++) {
       const tile = { x: target.tile.x + dx, y: target.tile.y + dy }
-      if (!paths.isWalkable(tile.x, tile.y, unit.id)) continue
+      if (!paths.isWalkable(tile.x, tile.y, unit.id, domainOf(unit.type))) continue
       const center = tileCenter(tile)
       const toTarget = Math.hypot(center.x - target.pos.x, center.z - target.pos.z)
       const toSelf = Math.hypot(center.x - unit.pos.x, center.z - unit.pos.z)

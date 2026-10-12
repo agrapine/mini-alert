@@ -161,6 +161,11 @@ export type UnitSnapshot = {
   attackId: number | null
   attackPoint: { x: number; z: number } | null
   progress: number
+  home?: TileCoord | null
+  returning?: boolean
+  flight?: number
+  altitude?: number
+  orbit?: TileCoord | null
 }
 
 export type ShotEvent = {

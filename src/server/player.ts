@@ -2,7 +2,12 @@ import { playerColor } from '../shared/players.ts'
 
 export const STARTING_CREDITS = 10_000
 export const CREDIT_PER_POPULATION = 5
-export const INCOME_SECONDS = 10
+export const CREDIT_CAP_PER_POPULATION = 500
+export const INCOME_SECONDS = 2
+
+export function creditCap(population: number): number {
+  return STARTING_CREDITS + CREDIT_CAP_PER_POPULATION * Math.max(0, population)
+}
 
 export class Player {
   readonly id: number

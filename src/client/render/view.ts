@@ -27,7 +27,6 @@ type Wreck = {
 
 export class GameView {
   private readonly stage: Stage
-  private readonly status: HTMLElement
   private readonly units = new Map<number, Group>()
   private readonly selectionRings: Mesh[] = []
   private readonly hoverRings: Mesh[] = []
@@ -55,8 +54,7 @@ export class GameView {
   private shotDt = 0
   private pendingCleared: readonly TileCoord[] = []
 
-  constructor(canvas: HTMLCanvasElement, status: HTMLElement, mapWidth: number, mapHeight: number) {
-    this.status = status
+  constructor(canvas: HTMLCanvasElement, mapWidth: number, mapHeight: number) {
     this.stage = new Stage(canvas, mapWidth, mapHeight)
     this.shots = new ShotLayer(this.stage.scene)
     this.particles = new Particles(this.stage.scene)
@@ -183,6 +181,10 @@ export class GameView {
 
   setPanAxis(x: number, z: number) {
     this.stage.setPanAxis(x, z)
+  }
+
+  setEdgePan(x: number, z: number) {
+    this.stage.setEdgePan(x, z)
   }
 
   nudgeYaw(direction: number) {
@@ -346,29 +348,6 @@ export class GameView {
     this.placeOrders(goals)
     this.placePrimary(living, primaryFactoryId)
     this.placeRally(rally)
-
-    if (selected.length === 1) {
-      const unit = selected[0]
-      const moving = unit.goal ? ' · moving' : ''
-      const label = UNIT_TYPES[unit.typeId].label
-      const factory =
-        unit.typeId === UnitTypeId.Factory
-          ? unit.id === primaryFactoryId
-            ? ' · primary'
-            : ' · click again for primary'
-          : ''
-      const waypoint =
-        unit.typeId === UnitTypeId.Factory
-          ? rally
-            ? ` · waypoint ${rally.x},${rally.y}`
-            : ' · click ground for a waypoint'
-          : ''
-      this.status.textContent = `${label} ${unit.id} · tile ${unit.tileX},${unit.tileY}${moving}${factory}${waypoint}`
-    } else if (selected.length > 1) {
-      this.status.textContent = `${selected.length} selected`
-    } else {
-      this.status.textContent = 'No unit selected'
-    }
 
     const hovered = this.hoveredIds.flatMap((id) => {
       if (!this.boxPreview && selectedIds.has(id)) return []

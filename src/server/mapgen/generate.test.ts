@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { blockerHoles, blockerTiles, smoothShore } from '../../shared/shore.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import { isWalkableTerrain, Terrain } from '../../shared/tiles.ts'
-import { SCOUT, UnitTypeId } from '../../shared/unit-types.ts'
+import { CITY_GROW_SECONDS } from '../../shared/cities.ts'
+import { FACTORY, SCOUT, UnitTypeId } from '../../shared/unit-types.ts'
 import { createIslandMatch } from '../island-match.ts'
+import { CREDIT_PER_POPULATION } from '../player.ts'
 import { MAX_HOPS, countyHops, fillWaterCracks, generateIsland } from './generate.ts'
 
 const island = generateIsland(1)
@@ -114,6 +116,19 @@ describe('island match', () => {
     expect(bots[0]?.typeId).toBe(UnitTypeId.Scout)
     for (const unit of game.units) {
       expect(isWalkableTerrain(game.world.terrainAt(unit.tile.x, unit.tile.y))).toBe(true)
+    }
+    const holder = humans[0]
+    const home = game.cityStates().findIndex((state) => state.ownerId === human.id)
+    const layout = game.cityLayouts()[home]
+    const spot = layout?.buildings[0] ?? layout?.tiles[0]
+    if (holder && spot) {
+      holder.tile = { x: spot.x, y: spot.y }
+      holder.pos = { x: spot.x + 0.5, z: spot.y + 0.5 }
+    }
+    let guard = 0
+    while (game.creditIncome(human.id) / CREDIT_PER_POPULATION < FACTORY.supply + SCOUT.supply && guard < 40) {
+      game.tick(CITY_GROW_SECONDS)
+      guard += 1
     }
     let placed = false
     for (let y = 0; y < game.world.height && !placed; y++) {

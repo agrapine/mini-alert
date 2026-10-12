@@ -4,11 +4,12 @@ import type { GameView } from '../render/view.ts'
 import { canPlaceFootprint } from '../../shared/footprint.ts'
 import type { UnitSnapshot } from '../../shared/protocol.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
-import { UNIT_TYPES } from '../../shared/unit-types.ts'
+import { MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../../shared/unit-types.ts'
 import { cursorFor } from './cursor.ts'
 import { bindPanKeys } from './keys.ts'
 
 const DRAG_SELECT_PX = 8
+const EDGE_PX = 25
 
 export function bindInput(
   canvas: HTMLCanvasElement,
@@ -32,6 +33,25 @@ export function bindInput(
   let pointerX = 0
   let pointerY = 0
   let groundAttack = false
+
+  const syncEdge = (event: PointerEvent) => {
+    const target = event.target
+    const blocked = target instanceof Element && target.closest('button, a, input, textarea, #minimap, #sheet, #outcome, .dropdown, .flyout') !== null
+    if (panning || document.body.classList.contains('lobby') || blocked) {
+      view.setEdgePan(0, 0)
+      return
+    }
+    let x = 0
+    let z = 0
+    if (event.clientX <= EDGE_PX) x = -1
+    else if (event.clientX >= window.innerWidth - EDGE_PX) x = 1
+    if (event.clientY <= EDGE_PX) z = -1
+    else if (event.clientY >= window.innerHeight - EDGE_PX) z = 1
+    view.setEdgePan(x, z)
+  }
+  window.addEventListener('pointermove', syncEdge)
+  window.addEventListener('blur', () => view.setEdgePan(0, 0))
+  document.documentElement.addEventListener('pointerleave', () => view.setEdgePan(0, 0))
 
   const refreshCursor = (clientX: number, clientY: number) => {
     if (panning) canvas.style.cursor = 'grabbing'
@@ -63,13 +83,14 @@ export function bindInput(
       view.showPlacement(null)
       return
     }
-    const footprint = UNIT_TYPES[typeId].footprint
+    const span = spanOf(UNIT_TYPES[typeId])
+    const domain = typeId === UnitTypeId.Shipyard ? MoveDomain.Water : MoveDomain.Ground
     const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
     const cells: { x: number; y: number; open: boolean }[] = []
-    for (let dy = 0; dy < footprint; dy++) {
-      for (let dx = 0; dx < footprint; dx++) {
+    for (let dy = 0; dy < span.y; dy++) {
+      for (let dx = 0; dx < span.x; dx++) {
         const tile = { x: origin.x + dx, y: origin.y + dy }
-        const onMap = canPlaceFootprint(tile, 1, world.width, world.height, terrainAt, replica.units)
+        const onMap = canPlaceFootprint(tile, 1, world.width, world.height, terrainAt, replica.units, 1, domain)
         cells.push({
           x: tile.x,
           y: tile.y,
@@ -287,9 +308,10 @@ function placeAt(tile: TileCoord, replica: Replica, player: Commander, view: Gam
   const world = replica.world
   if (typeId === null || !world) return
   const terrainAt = (x: number, y: number) => world.terrain[y * world.width + x] as Terrain
-  const footprint = UNIT_TYPES[typeId].footprint
-  if (!canPlaceFootprint(tile, footprint, world.width, world.height, terrainAt, replica.units)) return
-  if (!replica.nearCity(tile, footprint)) return
+  const span = spanOf(UNIT_TYPES[typeId])
+  const domain = typeId === UnitTypeId.Shipyard ? MoveDomain.Water : MoveDomain.Ground
+  if (!canPlaceFootprint(tile, span.x, world.width, world.height, terrainAt, replica.units, span.y, domain)) return
+  if (!replica.nearCity(tile, span.x, span.y)) return
   player.placeBuilding(tile)
   view.showPlacement(null)
 }
@@ -311,12 +333,16 @@ function applyClick(
   } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
     player.orderAttack(standing.id)
     view.ping(standing.x, standing.z, true)
+  } else if (picked && picked.ownerId === replica.playerId && replica.homePad(picked, player.selected())) {
+    const pad = { x: picked.tileX, y: picked.tileY }
+    player.orderMove(pad)
+    view.ping(pad.x + 0.5, pad.y + 0.5, false)
   } else if (picked && picked.ownerId === replica.playerId) {
     player.select(picked.id)
   } else if (tile && player.factorySelected() && replica.isOpen(tile, [])) {
     player.setRally(tile)
     view.ping(tile.x + 0.5, tile.y + 0.5, false)
-  } else if (tile && player.commanding() && replica.isOpen(tile, player.selected().map((unit) => unit.id))) {
+  } else if (tile && player.commanding() && replica.canCommand(tile, player.selected())) {
     player.orderMove(tile)
     view.ping(tile.x + 0.5, tile.y + 0.5, false)
   }

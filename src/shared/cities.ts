@@ -71,8 +71,9 @@ export function footprintNearCity(
   cities: readonly { buildings: readonly { x: number; y: number }[] }[],
   origin: { x: number; y: number },
   footprint: number,
+  spanY = footprint,
 ): boolean {
-  for (let dy = 0; dy < footprint; dy++) {
+  for (let dy = 0; dy < spanY; dy++) {
     for (let dx = 0; dx < footprint; dx++) {
       const x = origin.x + dx
       const y = origin.y + dy
@@ -89,7 +90,7 @@ export function footprintNearCity(
       if (!close) return false
     }
   }
-  return footprint > 0
+  return footprint > 0 && spanY > 0
 }
 
 export function settledCity(layout: CityLayout, ruins: readonly TileCoord[] = []): CityLayout {

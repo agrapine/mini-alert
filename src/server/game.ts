@@ -1,10 +1,11 @@
 import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, CITY_MODELS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
 import type { CitySite, CityState, MapPoint, ShotEvent, ShotHit, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
-import { Terrain, type TileCoord } from '../shared/tiles.ts'
-import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
+import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
+import { Flight } from '../shared/flight.ts'
+import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
-import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player } from './player.ts'
+import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
 import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
 import { applyImpacts, engage, type Blast, type Impact } from './sim/combat.ts'
@@ -143,7 +144,11 @@ export class Game {
     const x = Math.floor(town.x)
     const y = Math.floor(town.y)
     const city = this.cities.find((candidate) => cityContains(candidate.layout, x, y))
-    if (city) city.ownerId = playerId
+    if (!city || city.ownerId === playerId) return
+    const previous = city.ownerId
+    city.ownerId = playerId
+    const loser = this.players.get(previous)
+    if (loser) this.capCredits(loser)
   }
 
   cityLayouts(): CityLayout[] {
@@ -229,9 +234,11 @@ export class Game {
     const type = UNIT_TYPES[typeId]
     if (!owner || type.topSpeed > 0) return false
     if (type.supply > 0 && this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
-    if (!this.footprintFree(tile, type.footprint)) return false
+    const span = spanOf(type)
+    const domain = typeId === UnitTypeId.Shipyard ? MoveDomain.Water : MoveDomain.Ground
+    if (!this.footprintFree(tile, span.x, domain, span.y)) return false
     const owned = this.cities.filter((city) => city.ownerId === playerId).map((city) => this.live(city))
-    if (!footprintNearCity(owned, tile, type.footprint)) return false
+    if (!footprintNearCity(owned, tile, span.x, span.y)) return false
     const unit = this.spawn(owner, typeId, tile, 0)
     unit.bill = type.cost
     unit.progress = 0
@@ -361,7 +368,7 @@ export class Game {
   trySpawn(playerId: number, typeId: UnitTypeId): boolean {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
-    if (!owner || type.topSpeed <= 0 || !this.hasFinishedFactory(playerId)) return false
+    if (!owner || type.topSpeed <= 0 || !this.hasFinished(playerId, yardOf(typeId))) return false
     if (this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
     const queue = this.training.get(playerId) ?? []
     queue.push({ typeId, progress: 0 })
@@ -383,16 +390,18 @@ export class Game {
 
   spawn(owner: Player, typeId: UnitTypeId, tile: TileCoord, facing = 0): Unit {
     const type = UNIT_TYPES[typeId]
-    const spot = type.topSpeed > 0 ? this.openSpawn(tile, type.footprint) : tile
-    if (!spot || !this.footprintFree(spot, type.footprint)) {
+    const domain = typeId === UnitTypeId.Shipyard ? MoveDomain.Water : domainOf(type)
+    const pad = domain === MoveDomain.Water ? MoveDomain.Water : MoveDomain.Ground
+    const span = spanOf(type)
+    const spot = type.topSpeed > 0 ? this.openSpawn(tile, span.x, pad, span.y) : tile
+    if (!spot || !this.footprintFree(spot, span.x, pad, span.y)) {
       throw new Error(`cannot spawn on ${tile.x},${tile.y}`)
     }
     const unit = createUnit(this.nextUnitId++, owner.id, type, spot, facing)
-    const span = type.footprint
-    unit.pos = { x: spot.x + span / 2, z: spot.y + span / 2 }
+    unit.pos = { x: spot.x + span.x / 2, z: spot.y + span.y / 2 }
     this.units.push(unit)
     owner.addUnit(unit.id)
-    this.fillFootprint(unit)
+    if (domain !== MoveDomain.Air) this.fillFootprint(unit)
     return unit
   }
 
@@ -401,7 +410,7 @@ export class Game {
     if (!unit) return false
     unit.attackId = null
     unit.attackPoint = null
-    return unit.orderMove(tile, this.pathfinder)
+    return unit.orderMove(tile, this.pathfinder, this.units)
   }
 
   orderAttack(playerId: number, unitId: number, targetId: number): boolean {
@@ -450,6 +459,7 @@ export class Game {
     this.advanceCaptures(dt)
     this.advanceGrowth(dt)
     this.advanceTraining(dt)
+    this.capAllCredits()
     return shots
   }
 
@@ -500,6 +510,11 @@ export class Game {
       attackId: unit.attackId,
       attackPoint: unit.attackPoint ? { x: unit.attackPoint.x, z: unit.attackPoint.z } : null,
       progress: unit.progress,
+      home: unit.home ? { x: unit.home.x, y: unit.home.y } : null,
+      returning: unit.returning,
+      flight: unit.flight,
+      altitude: unit.altitude,
+      orbit: unit.orbit ? { x: unit.orbit.x, y: unit.orbit.y } : null,
     }
   }
 
@@ -563,8 +578,18 @@ export class Game {
           const origin = citySightOrigin(this.live(city))
           this.yields.push({ x: origin.x, y: origin.z })
         }
+        this.capCredits(player)
       }
     }
+  }
+
+  private capCredits(player: Player) {
+    const cap = creditCap(this.population(player.id))
+    if (player.credits > cap) player.credits = cap
+  }
+
+  private capAllCredits() {
+    for (const player of this.players.values()) this.capCredits(player)
   }
 
   private advanceGrowth(dt: number) {
@@ -792,7 +817,7 @@ export class Game {
           continue
         }
         const type = UNIT_TYPES[job.typeId]
-        const duration = type.buildTime / this.factoryPace(playerId)
+        const duration = type.buildTime / this.yardPace(playerId, yardOf(job.typeId))
         const before = job.progress
         job.progress = this.fund(owner, type.cost, before, duration, left)
         const gained = job.progress - before
@@ -819,14 +844,25 @@ export class Game {
   private releaseTrainee(playerId: number, typeId: UnitTypeId): boolean {
     const owner = this.players.get(playerId)
     if (!owner) return false
-    const factory = this.exitFactory(playerId)
-    if (!factory) return false
-    const exit = this.exitTile(factory)
+    const type = UNIT_TYPES[typeId]
+    const yard = this.exitYard(playerId, yardOf(typeId))
+    if (!yard) return false
+    const domain = domainOf(type)
+    if (domain === MoveDomain.Air) {
+      const unit = this.placeMobile(owner, typeId, yard.tile, 0)
+      unit.home = { x: yard.tile.x, y: yard.tile.y }
+      unit.flight = Flight.Ground
+      unit.altitude = 0
+      return true
+    }
+    const exit = this.exitTile(yard, domain === MoveDomain.Water ? MoveDomain.Water : MoveDomain.Ground)
     if (!exit) return false
     const unit = this.spawn(owner, typeId, exit.tile, exit.facing)
-    const rally = this.rallies.get(playerId) ?? exit.rally
-    const goal = this.openNear(rally)
-    if (goal && (goal.x !== unit.tile.x || goal.y !== unit.tile.y)) unit.orderMove(goal, this.pathfinder)
+    if (domain === MoveDomain.Ground) {
+      const rally = this.rallies.get(playerId) ?? exit.rally
+      const goal = this.openNear(rally)
+      if (goal && (goal.x !== unit.tile.x || goal.y !== unit.tile.y)) unit.orderMove(goal, this.pathfinder)
+    }
     return true
   }
 
@@ -846,10 +882,23 @@ export class Game {
     return best
   }
 
-  private factoryPace(playerId: number): number {
+  private hasFinished(playerId: number, typeId: UnitTypeId): boolean {
+    return this.units.some(
+      (unit) => unit.ownerId === playerId && unit.typeId === typeId && unit.health > 0 && unit.progress >= 1,
+    )
+  }
+
+  private exitYard(playerId: number, typeId: UnitTypeId): Unit | undefined {
+    if (typeId === UnitTypeId.Factory) return this.exitFactory(playerId)
+    return this.units.find(
+      (unit) => unit.ownerId === playerId && unit.typeId === typeId && unit.health > 0 && unit.progress >= 1,
+    )
+  }
+
+  private yardPace(playerId: number, typeId: UnitTypeId): number {
     let count = 0
     for (const unit of this.units) {
-      if (unit.ownerId !== playerId || unit.typeId !== UnitTypeId.Factory || unit.health <= 0 || unit.progress < 1) continue
+      if (unit.ownerId !== playerId || unit.typeId !== typeId || unit.health <= 0 || unit.progress < 1) continue
       count += 1
     }
     return 1 + FACTORY_BUILD_BONUS * count
@@ -870,44 +919,52 @@ export class Game {
     return this.units.find(ready)
   }
 
-  private openSpawn(target: TileCoord, footprint: number): TileCoord | null {
+  private placeMobile(owner: Player, typeId: UnitTypeId, tile: TileCoord, facing: number): Unit {
+    const unit = createUnit(this.nextUnitId++, owner.id, UNIT_TYPES[typeId], tile, facing)
+    unit.pos = tileCenter(tile)
+    this.units.push(unit)
+    owner.addUnit(unit.id)
+    return unit
+  }
+
+  private openSpawn(target: TileCoord, spanX: number, domain = MoveDomain.Ground, spanY = spanX): TileCoord | null {
     for (const step of spawnSteps()) {
       const tile = { x: target.x + step.x, y: target.y + step.y }
-      if (this.footprintFree(tile, footprint)) return tile
+      if (this.footprintFree(tile, spanX, domain, spanY)) return tile
     }
     return null
   }
 
-  private footprintFree(origin: TileCoord, footprint: number): boolean {
-    for (let dy = 0; dy < footprint; dy++) {
-      for (let dx = 0; dx < footprint; dx++) {
-        if (!this.pathfinder.isWalkable(origin.x + dx, origin.y + dy, -1)) return false
+  private footprintFree(origin: TileCoord, spanX: number, domain = MoveDomain.Ground, spanY = spanX): boolean {
+    for (let dy = 0; dy < spanY; dy++) {
+      for (let dx = 0; dx < spanX; dx++) {
+        if (!this.pathfinder.isWalkable(origin.x + dx, origin.y + dy, -1, domain)) return false
       }
     }
-    return footprint > 0
+    return spanX > 0 && spanY > 0
   }
 
   private fillFootprint(unit: Unit) {
-    const span = unit.type.footprint
-    for (let dy = 0; dy < span; dy++) {
-      for (let dx = 0; dx < span; dx++) {
+    const span = spanOf(unit.type)
+    for (let dy = 0; dy < span.y; dy++) {
+      for (let dx = 0; dx < span.x; dx++) {
         this.pathfinder.setOccupant(unit.tile.x + dx, unit.tile.y + dy, unit.id, unit.type.topSpeed > 0)
       }
     }
   }
 
-  private exitTile(factory: Unit): { tile: TileCoord; facing: number; rally: TileCoord } | null {
-    const span = factory.type.footprint
+  private exitTile(factory: Unit, domain = MoveDomain.Ground): { tile: TileCoord; facing: number; rally: TileCoord } | null {
+    const span = spanOf(factory.type)
     const origin = factory.tile
     for (let ring = 1; ring <= SPAWN_REACH; ring++) {
       const y0 = origin.y - ring
-      const y1 = origin.y + span - 1 + ring
+      const y1 = origin.y + span.y - 1 + ring
       const x0 = origin.x - ring
-      const x1 = origin.x + span - 1 + ring
+      const x1 = origin.x + span.x - 1 + ring
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const onRing = x === x0 || x === x1 || y === y0 || y === y1
-          if (!onRing || !this.pathfinder.isWalkable(x, y, -1)) continue
+          if (!onRing || !this.pathfinder.isWalkable(x, y, -1, domain)) continue
           const dx = Math.sign(x + 0.5 - factory.pos.x)
           const dy = Math.sign(y + 0.5 - factory.pos.z)
           const rally = {

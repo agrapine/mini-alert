@@ -17,7 +17,7 @@ import {
 } from '../shared/protocol.ts'
 import type { CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
-import { UNIT_TYPES } from '../shared/unit-types.ts'
+import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
 import { friendsOf, growExplored, stampSight } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import type { Game } from './game.ts'
@@ -362,9 +362,9 @@ export class ServerHost {
     stampSight(width, height, friends, revealed, memory.visible)
     for (const unit of units) {
       if (unit.ownerId !== playerId || unit.health <= 0) continue
-      const footprint = UNIT_TYPES[unit.typeId].footprint
-      for (let dy = 0; dy < footprint; dy++) {
-        for (let dx = 0; dx < footprint; dx++) {
+      const span = spanOf(UNIT_TYPES[unit.typeId])
+      for (let dy = 0; dy < span.y; dy++) {
+        for (let dx = 0; dx < span.x; dx++) {
           const x = unit.tileX + dx
           const y = unit.tileY + dy
           if (x < 0 || y < 0 || x >= width || y >= height) continue

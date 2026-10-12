@@ -136,6 +136,7 @@ function fight(brain: Brain, zone: Zone): ClientMessage[] {
 function build(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
   const standing = factory(brain)
   if (!standing) {
+    if (supplyUsed(brain) + FACTORY.supply > population(brain)) return []
     const spot = siteNear(brain, layouts, { x: zone.x, y: zone.y }, FACTORY.footprint)
     if (!spot) return []
     return [{ kind: ClientMessageKind.PlaceBuilding, typeId: UnitTypeId.Factory, tile: spot }]

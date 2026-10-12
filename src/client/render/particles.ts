@@ -37,6 +37,18 @@ const SHELL_HIT = {
   starColor: 0xffe2a8,
 }
 
+const ROCKET_HIT = {
+  count: 22,
+  speed: 3.2,
+  life: 0.55,
+  gravity: 7,
+  color: 0xff5a18,
+  size: 0.16,
+  star: 1.05,
+  starLife: 0.4,
+  starColor: 0xfff0c0,
+}
+
 const BULLET_HIT = {
   count: 7,
   speed: 1.6,
@@ -77,7 +89,7 @@ export class Particles {
   }
 
   hit(x: number, z: number, kind: WeaponKind) {
-    const style = kind === WeaponKind.Shell ? SHELL_HIT : BULLET_HIT
+    const style = kind === WeaponKind.Rocket ? ROCKET_HIT : kind === WeaponKind.Shell ? SHELL_HIT : BULLET_HIT
     this.bursts.push(new Burst(this.scene, x, TILE_TOP + 0.22, z, style))
   }
 

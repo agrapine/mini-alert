@@ -5,7 +5,7 @@ import { MAP_VERSION } from './mapgen/version.ts'
 import './state.ts'
 
 /** Seconds between full-state writes. Override with the SAVE_SECONDS environment variable. */
-export const SAVE_SECONDS = 10
+export const SAVE_SECONDS = 30
 
 const retain = new Map<string, Set<string>>()
 

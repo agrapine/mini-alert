@@ -111,6 +111,15 @@ message UnitMotionMsg {
   float attack_x = 17;
   float attack_z = 18;
   bool attacking_ground = 19;
+  bool home_set = 20;
+  int32 home_x = 21;
+  int32 home_y = 22;
+  bool returning = 23;
+  uint32 flight = 24;
+  float altitude = 25;
+  bool orbit_set = 26;
+  int32 orbit_x = 27;
+  int32 orbit_y = 28;
 }
 
 message WelcomeMsg {

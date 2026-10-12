@@ -1,11 +1,13 @@
 import type { TileCoord } from '../../shared/tiles.ts'
+import { domainOf } from '../../shared/unit-types.ts'
 import type { PathFinder } from '../path/pathfinder.ts'
 import type { Unit } from '../units/unit.ts'
 
 export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]): boolean {
+  const domain = domainOf(unit.type)
   const goal = unit.path[unit.path.length - 1]
   if (!goal) return false
-  if (!paths.isWalkable(goal.x, goal.y, unit.id)) {
+  if (!paths.isWalkable(goal.x, goal.y, unit.id, domain)) {
     const blocker = occupant(paths, goal, units, unit.id)
     if (!blocker || blocker.path.length === 0) unit.commitPath([])
     return false
@@ -15,7 +17,7 @@ export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]):
   const other = occupant(paths, next, units, unit.id)
   if (other && isHeadOn(unit, other)) {
     const passed = passPath(unit, other, paths, goal)
-    if (passed && paths.isWalkable(passed[0].x, passed[0].y, unit.id)) {
+    if (passed && paths.isWalkable(passed[0].x, passed[0].y, unit.id, domain)) {
       unit.commitPath(passed)
       return true
     }
@@ -25,9 +27,9 @@ export function redirect(unit: Unit, paths: PathFinder, units: readonly Unit[]):
 
   if (other && isIdle(other) && shove(other, unit, paths)) return false
 
-  const reroute = paths.findPath(unit.tile, goal, unit.id)
+  const reroute = paths.findPath(unit.tile, goal, unit.id, domain)
   if (reroute === null || reroute.length === 0) return false
-  if (!paths.isPassable(reroute[0].x, reroute[0].y, unit.id)) return false
+  if (!paths.isPassable(reroute[0].x, reroute[0].y, unit.id, domain)) return false
   if (reroute[0].x === next.x && reroute[0].y === next.y) return false
   unit.commitPath(reroute)
   return true
@@ -42,9 +44,9 @@ function passPath(unit: Unit, other: Unit, paths: PathFinder, goal: TileCoord): 
     { x: unit.tile.x + dy, y: unit.tile.y - dx },
   ]
   for (const side of sides) {
-    if (!paths.isWalkable(side.x, side.y, unit.id)) continue
+    if (!paths.isWalkable(side.x, side.y, unit.id, domainOf(unit.type))) continue
     if (side.x === goal.x && side.y === goal.y) return [side]
-    const rest = paths.findPath(side, goal, unit.id)
+    const rest = paths.findPath(side, goal, unit.id, domainOf(unit.type))
     if (rest === null) continue
     return [side, ...rest]
   }
@@ -75,7 +77,7 @@ function shove(blocker: Unit, mover: Unit, paths: PathFinder): boolean {
     { x: blocker.tile.x - 1, y: blocker.tile.y + 1 },
     { x: blocker.tile.x - 1, y: blocker.tile.y - 1 },
   ]
-  const open = around.filter((tile) => paths.isWalkable(tile.x, tile.y, blocker.id))
+  const open = around.filter((tile) => paths.isWalkable(tile.x, tile.y, blocker.id, domainOf(blocker.type)))
   open.sort((a, b) => Number(reserved.has(tileKey(a))) - Number(reserved.has(tileKey(b))))
   for (const tile of open) {
     if (blocker.orderMove(tile, paths)) return true

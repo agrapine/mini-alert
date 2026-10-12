@@ -10,11 +10,11 @@ const HELP = `# Shortcuts
 - **Select several** — drag a box around them
 - **Move** — with units selected, click open ground
 - **Attack** — click an enemy. Hold Ctrl or ⌘ and click the ground to shell that spot. Units also fire at enemies they can see
-- **Build** — Factory or Turret goes on open ground beside a city you own. Building places one of the houses a city grows, only on a tile that city could grow. The price appears when you aim at that city. Right-click cancels
+- **Build** — Factory, Turret, Airport, or Helipad goes on open ground beside a city you own. A shipyard goes on water beside a city you own. Building places one of the houses a city grows, only on a tile that city could grow. The price appears when you aim at that city. Right-click cancels
 - **Primary factory** — select a factory, then click it again. New units come out of that one. A star marks it
 - **Waypoint** — with a factory selected, click the ground. Finished units move there
 - **Ranges** — hold Ctrl or ⌘ with one unit selected to show its attack range and sight
-- **Pan** — \`WASD\`, arrow keys, middle-drag, or hold Space and drag
+- **Pan** — \`WASD\`, arrow keys, middle-drag, hold Space and drag, or move the pointer within 25px of the screen edge
 - **Turn** — \`Q\` and \`E\` rotate the camera 45°
 - **Zoom** — mouse wheel
 - **Minimap** — drag to move the camera. A click orders selected units as if you clicked that tile. With nothing selected, a click moves the camera
@@ -23,26 +23,26 @@ const HELP = `# Shortcuts
 
 ## Credits
 
-You start with 10,000. Every 10 seconds, each city you hold pays **2** per building. A city pays nothing while an enemy unit is nearby.
+You start with 10,000. Every 10 seconds, each city you hold pays **2** per building. A city pays nothing while an enemy unit is nearby. You cannot hold more than 10,000 plus 500 for each population. Income stops there, and losing population throws away anything above the new limit.
 
 ## Cities
 
 Move a unit onto any city tile, including a street, and hold it to capture. A ring shows progress. A city resists for five seconds per building. Each unit wears that down by its unit count each second, so a scout takes five seconds on a one-building city and a heavy tank takes a quarter of that. If both sides stand on a city, the capture pauses. Leave, and the progress fades slowly until it is gone. The owner or another commander standing there pushes it back at the same rate they would capture.
 
-Cities grow on their own, adding streets and buildings. Each city has a hall that stays neutral and cannot be destroyed. Population is the number of buildings still standing, including the hall. Your army cannot grow past that population. Scouts count as 1, medium tanks and turrets as 2, artillery as 3, and heavy tanks as 4. The unit count turns red when it is over, and training stops. Guns and shells bring down the other buildings. When the last of those falls, the city is neutral again. A street more than four tiles from a standing building comes up with it.
+Cities grow on their own, adding streets and buildings. Each city has a hall that stays neutral and cannot be destroyed. Population is the number of buildings still standing, including the hall. Your army cannot grow past that population. Scouts count as 1, medium tanks, turrets, jets, and cruisers as 2, artillery and gunships as 3, and heavy tanks, factories, and helipads as 4. Shipyards count as 8 and airports as 12. The unit count turns red when it is over, and training and construction stop. Guns and shells bring down the other buildings. When the last of those falls, the city is neutral again. A street more than four tiles from a standing building comes up with it.
 
 ## Building
 
-Factories and turrets take time to finish, and they can only be placed beside a city you own. A building is the same kind a city grows on its own, and it can only go on a tile that city could grow one. It appears at once and takes the full price. Aim at the city and the price appears: 100 while that city has 6 buildings or fewer, and after that 100 times how many buildings it has beyond 5. It adds 1 population. A finished factory can train scouts, medium tanks, heavy tanks, and artillery. Each finished factory adds 25% to that training speed. Credits are spent while a unit or structure is built, and construction pauses if you run out. [−] cancels the latest queued unit of that type.
+Factories, airports, helipads, and turrets take time to finish, and they can only be placed on open ground beside a city you own. A shipyard goes on water beside a city you own. An airport, helipad, or shipyard can be placed only after a factory is finished. An airport is a 2×4 landing strip. A building is the same kind a city grows on its own, and it can only go on a tile that city could grow one. It appears at once and takes the full price. Aim at the city and the price appears: 100 while that city has 6 buildings or fewer, and after that 100 times how many buildings it has beyond 5. It adds 1 population. A finished factory trains scouts, medium tanks, heavy tanks, and artillery. An airport trains jets, a helipad trains gunships, and a shipyard trains cruisers onto the water beside it. Each finished yard of that kind adds 25% to that training speed. A build tile appears once that unit can be made. Click it to queue one, and click again to queue another. The corner number is the queue once more than the one being built is waiting, for units and for structures. Shift-click or right-click drops the latest queued order of that type. Credits are spent while a unit or structure is built, and construction pauses if you run out.
 
-Vehicles and turrets shoot enemies and buildings of a city another commander holds. They leave neutral cities alone. Shots scatter more at long range, and more again when the shooter is moving. Shells splash, knock down trees, and bring down those buildings and streets. Artillery reaches farther and is easy to lose. Scouts are fast and light. Tanks turn in place. A friendly unit with nothing to do steps off a tile another unit needs; a unit already on its way is left to move, and the one behind waits.
+Jets roll down the landing strip, climb, and circle the ordered tile until you send them back. Each carries five rockets. A rocket climbs as it flies, and it hits harder and wider than a shell. When the rack is empty the jet returns to the airport that launched it and lands to reload. Click the airport to send one home early. Gunships climb off the helipad, hover, and turn before they fly. Click the helipad to bring one back down. Cruisers spin in place, then pick up speed slowly, and they only travel on water. Vehicles and turrets shoot enemies and buildings of a city another commander holds. They leave neutral cities alone. Shots scatter more at long range, and more again when the shooter is moving. Shells splash, knock down trees, and bring down those buildings and streets. Artillery reaches farther and is easy to lose. Scouts are fast and light. Tanks turn in place. A friendly unit with nothing to do steps off a tile another unit needs; a unit already on its way is left to move, and the one behind waits.
 
 ## Sight
 
 Fog covers ground you have not seen. Finished units reveal a circle around them, and a city you own reveals ten tiles around its center. Enemies outside that sight stay hidden. Ground you have already walked stays dim after you look away.
 `
 
-export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
+export function bindMenu(actions: { onMusic?(on: boolean): void; onSurrender?(): void } = {}): void {
   const bar = document.querySelector<HTMLElement>('#menubar')
   const menu = document.querySelector<HTMLElement>('#menu')
   const sheet = document.querySelector<HTMLElement>('#sheet')
@@ -86,7 +86,11 @@ export function bindMenu(actions: { onMusic?(on: boolean): void } = {}): void {
       openSheet('Help', HELP)
       return
     }
-    if (target.closest('[data-dismiss]')) closeMenu()
+    if (target.closest('[data-dismiss]')) {
+      closeMenu()
+      actions.onSurrender?.()
+      return
+    }
     const toggle = target.closest<HTMLElement>('[data-toggle]')
     if (!toggle) return
     const on = toggle.getAttribute('aria-pressed') !== 'true'

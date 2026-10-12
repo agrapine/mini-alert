@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { MotionResult, stepMotion, type MotionState } from './motion.ts'
-import { SCOUT } from './unit-types.ts'
+import { Flight } from './flight.ts'
+import { flightLine, MotionResult, stepMotion, type MotionState } from './motion.ts'
+import { CRUISER, GUNSHIP, JET, SCOUT } from './unit-types.ts'
 
 function body(): MotionState {
   return {
@@ -43,5 +44,117 @@ describe('shared motion', () => {
     expect(state.z).toBe(2.5)
     expect(state.speed).toBeLessThan(SCOUT.topSpeed)
     expect(state.path[0]).toEqual({ x: 2, y: 2 })
+  })
+
+  it('rolls a jet along the strip before it climbs', () => {
+    const state = body()
+    state.x = 1.5
+    state.z = 2.5
+    state.facing = 0
+    state.flight = Flight.Ground
+    state.altitude = 0
+    state.path = [
+      { x: 1, y: 4 },
+      { x: 1, y: 6 },
+      { x: 8, y: 6 },
+    ]
+    for (let i = 0; i < 18; i++) stepMotion(state, JET, 1 / 30)
+    expect(state.altitude ?? 0).toBeLessThan(0.25)
+    expect(state.speed).toBeGreaterThan(1)
+    for (let i = 0; i < 90; i++) stepMotion(state, JET, 1 / 30)
+    expect(state.altitude ?? 0).toBeGreaterThan(1.5)
+    expect(state.flight).toBe(Flight.Cruise)
+  })
+
+  it('circles a jet around the ordered tile', () => {
+    const state = body()
+    state.x = 8.5
+    state.z = 8.5
+    state.tileX = 8
+    state.tileY = 8
+    state.facing = 0
+    state.speed = JET.topSpeed
+    state.flight = Flight.Cruise
+    state.altitude = 2.6
+    state.path = [{ x: 9, y: 8 }]
+    state.orbitX = 9
+    state.orbitY = 8
+    state.homeX = 1
+    state.homeY = 2
+    state.returning = false
+    for (let i = 0; i < 30 * 8; i++) stepMotion(state, JET, 1 / 30)
+    const dist = Math.hypot(state.x - 9.5, state.z - 8.5)
+    expect(state.returning).toBe(false)
+    expect(state.flight).toBe(Flight.Orbit)
+    expect(dist).toBeGreaterThan(3)
+    expect(dist).toBeLessThan(12)
+    expect(state.path.length).toBeGreaterThan(0)
+  })
+
+  it('lands a jet that was sent back to its strip', () => {
+    const state = body()
+    state.x = 4.5
+    state.z = 16.5
+    state.tileX = 4
+    state.tileY = 16
+    state.facing = Math.PI
+    state.speed = JET.topSpeed
+    state.altitude = 2.6
+    state.flight = Flight.Cruise
+    state.returning = true
+    state.homeX = 4
+    state.homeY = 6
+    state.path = flightLine({ x: 4, y: 16 }, { x: 4, y: 9 })
+    for (let i = 0; i < 30 * 12; i++) stepMotion(state, JET, 1 / 30)
+    expect(state.altitude ?? 0).toBeLessThan(0.2)
+    expect(state.flight).toBe(Flight.Ground)
+    expect(state.returning).toBe(false)
+    expect(Math.abs(state.speed)).toBeLessThan(0.4)
+    expect(state.tileX).toBe(4)
+    expect(state.tileY).toBeGreaterThanOrEqual(6)
+    expect(state.tileY).toBeLessThan(10)
+  })
+
+  it('lets a gunship yaw while it is still hovering', () => {
+    const state = body()
+    state.facing = 0
+    state.speed = 0
+    state.path = [{ x: 8, y: 2 }]
+    for (let i = 0; i < 12; i++) stepMotion(state, GUNSHIP, 1 / 30)
+    expect(Math.abs(state.speed)).toBeLessThan(0.2)
+    expect(Math.abs(state.facing)).toBeGreaterThan(0.4)
+    expect(state.x).toBeCloseTo(1.5)
+  })
+
+  it('climbs a gunship off the pad and sets it back down', () => {
+    const state = body()
+    state.flight = Flight.Ground
+    state.altitude = 0
+    state.path = [{ x: 8, y: 2 }]
+    for (let i = 0; i < 40; i++) stepMotion(state, GUNSHIP, 1 / 30)
+    expect(state.altitude ?? 0).toBeGreaterThan(0.8)
+    expect(state.flight).toBe(Flight.Cruise)
+    state.returning = true
+    state.homeX = 8
+    state.homeY = 2
+    state.x = 8.2
+    state.z = 2.4
+    state.speed = 0
+    for (let i = 0; i < 30 * 3; i++) stepMotion(state, GUNSHIP, 1 / 30)
+    expect(state.flight).toBe(Flight.Ground)
+    expect(state.altitude ?? 0).toBeLessThan(0.1)
+  })
+
+  it('spins a cruiser before it builds speed', () => {
+    const state = body()
+    state.facing = 0
+    state.speed = 0
+    state.path = [{ x: 8, y: 2 }]
+    for (let i = 0; i < 30; i++) stepMotion(state, CRUISER, 1 / 30)
+    expect(state.speed).toBeLessThan(0.05)
+    expect(Math.abs(state.facing)).toBeGreaterThan(0.3)
+    for (let i = 0; i < 30 * 7; i++) stepMotion(state, CRUISER, 1 / 30)
+    expect(state.speed).toBeGreaterThan(0.8)
+    expect(state.x).toBeGreaterThan(1.5)
   })
 })

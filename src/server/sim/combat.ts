@@ -1,3 +1,4 @@
+import { flightTime } from '../../shared/ballistics.ts'
 import { CITY_SIGHT } from '../../shared/cities.ts'
 import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
@@ -12,7 +13,7 @@ export type Impact = {
   ownerId: number
   damage: number
   splash: number
-  shell: boolean
+  kind: WeaponKind
 }
 
 export type Blast = {
@@ -44,7 +45,7 @@ export function engage(
     const weapon = unit.type.weapon
     unit.sinceShot += dt
     unit.cooldown = Math.max(0, unit.cooldown - dt)
-    if (unit.sinceShot >= weapon.reload && unit.rounds < weapon.magazine) {
+    if (weapon.kind !== WeaponKind.Rocket && unit.sinceShot >= weapon.reload && unit.rounds < weapon.magazine) {
       unit.rounds = weapon.magazine
     }
 
@@ -54,7 +55,7 @@ export function engage(
     const structure = ordered || target ? null : pickStructure(unit, structures, friends)
     const aim = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
     if (!ordered && !target && !structure) continue
-    const predicted = target && weapon.kind === WeaponKind.Shell ? lead(unit, target) : null
+    const predicted = target && explosive(weapon.kind) ? lead(unit, target) : null
     const aimX = ordered?.x ?? predicted?.x ?? target?.pos.x ?? structure?.x ?? unit.pos.x
     const aimZ = ordered?.z ?? predicted?.z ?? target?.pos.z ?? structure?.z ?? unit.pos.z
     const desired = Math.atan2(aimX - unit.pos.x, aimZ - unit.pos.z)
@@ -72,11 +73,11 @@ export function engage(
     unit.cooldown = weapon.fireInterval
     unit.sinceShot = 0
     const landed = scatterPoint(aimX, aimZ, shotScatter(dist, unit.speed, unit.type.topSpeed))
-    const shell = weapon.kind === WeaponKind.Shell
-    const flight = predicted?.flight ?? (shell && weapon.shellSpeed > 0 ? dist / weapon.shellSpeed : 0)
+    const accel = weapon.accel ?? 0
+    const flight = predicted?.flight ?? (explosive(weapon.kind) && weapon.shellSpeed > 0 ? flightTime(dist, weapon.shellSpeed, accel) : 0)
     if (flight === 0) {
       strike(units, landed.x, landed.z, unit.ownerId, weapon.damage, weapon.splash)
-      if (shell) blasts.push({ x: landed.x, z: landed.z, damage: weapon.damage, splash: weapon.splash })
+      if (explosive(weapon.kind)) blasts.push({ x: landed.x, z: landed.z, damage: weapon.damage, splash: weapon.splash })
     } else {
       impacts.push({
         time: time + flight,
@@ -85,7 +86,7 @@ export function engage(
         ownerId: unit.ownerId,
         damage: weapon.damage,
         splash: weapon.splash,
-        shell,
+        kind: weapon.kind,
       })
     }
     shots.push({
@@ -108,8 +109,8 @@ export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: nu
     if (impact.time > time) continue
     impacts.splice(i, 1)
     strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash)
-    if (impact.shell) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
-    hits.push({ kind: WeaponKind.Shell, aimX: impact.x, aimZ: impact.z })
+    if (explosive(impact.kind)) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
+    hits.push({ kind: impact.kind, aimX: impact.x, aimZ: impact.z })
   }
   return hits
 }
@@ -135,8 +136,23 @@ function lead(shooter: Unit, target: Unit): { x: number; z: number; flight: numb
   const vz = Math.cos(target.facing) * target.speed
   const rx = target.pos.x - shooter.pos.x
   const rz = target.pos.z - shooter.pos.z
-  const flight = interceptTime(rx, rz, vx, vz, shooter.type.weapon.shellSpeed)
+  const speed = shooter.type.weapon.shellSpeed
+  const accel = shooter.type.weapon.accel ?? 0
+  if (accel <= 0) {
+    const flight = interceptTime(rx, rz, vx, vz, speed)
+    return { x: target.pos.x + vx * flight, z: target.pos.z + vz * flight, flight }
+  }
+  let flight = flightTime(Math.hypot(rx, rz), speed, accel)
+  for (let i = 0; i < 3; i++) {
+    const aimX = target.pos.x + vx * flight
+    const aimZ = target.pos.z + vz * flight
+    flight = flightTime(Math.hypot(aimX - shooter.pos.x, aimZ - shooter.pos.z), speed, accel)
+  }
   return { x: target.pos.x + vx * flight, z: target.pos.z + vz * flight, flight }
+}
+
+function explosive(kind: WeaponKind): boolean {
+  return kind === WeaponKind.Shell || kind === WeaponKind.Rocket
 }
 
 function interceptTime(rx: number, rz: number, vx: number, vz: number, speed: number): number {
@@ -227,7 +243,7 @@ function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightS
 
 function pickStructure(unit: Unit, structures: readonly StructureTarget[], friends: readonly SightSource[]): StructureTarget | null {
   const weapon = unit.type.weapon
-  if (weapon.kind !== WeaponKind.Shell || weapon.splash <= 0) return null
+  if (!explosive(weapon.kind) || weapon.splash <= 0) return null
   const reach = Math.max(weapon.sight, weapon.range)
   const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
   let closest: StructureTarget | null = null

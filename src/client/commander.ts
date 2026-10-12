@@ -125,6 +125,11 @@ export class Commander {
     this.port.send({ kind: ClientMessageKind.CancelSpawn, typeId })
   }
 
+  cancelBuild(typeId: UnitTypeId) {
+    if (this.spectating) return
+    this.port.send({ kind: ClientMessageKind.CancelBuilding, typeId })
+  }
+
   placingType(): UnitTypeId | null {
     return this.placing
   }

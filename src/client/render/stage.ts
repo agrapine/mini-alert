@@ -45,6 +45,8 @@ export class Stage {
   private readonly projected = new Vector3()
   private axisX = 0
   private axisZ = 0
+  private edgeX = 0
+  private edgeZ = 0
   private bearing = YAW_STEP
   private bearingTarget = YAW_STEP
   private zoomTarget = 1
@@ -136,6 +138,11 @@ export class Stage {
     this.axisZ = z
   }
 
+  setEdgePan(x: number, z: number) {
+    this.edgeX = x
+    this.edgeZ = z
+  }
+
   nudgeYaw(direction: number) {
     this.bearingTarget += direction * YAW_STEP
   }
@@ -152,15 +159,17 @@ export class Stage {
       cameraYaw = this.bearing
       this.syncCamera()
     }
-    if (this.axisX !== 0 || this.axisZ !== 0) {
-      const len = Math.hypot(this.axisX, this.axisZ)
+    const panX = this.axisX + this.edgeX
+    const panZ = this.axisZ + this.edgeZ
+    if (panX !== 0 || panZ !== 0) {
+      const len = Math.hypot(panX, panZ)
       const speed = (PAN_SPEED / this.camera.zoom) * dt
       const rightX = Math.cos(this.bearing)
       const rightZ = -Math.sin(this.bearing)
       const backX = Math.sin(this.bearing)
       const backZ = Math.cos(this.bearing)
-      const x = this.axisX / len
-      const z = this.axisZ / len
+      const x = panX / len
+      const z = panZ / len
       this.moveLook((x * rightX + z * backX) * speed, (x * rightZ + z * backZ) * speed)
     }
     this.easeZoom(dt)

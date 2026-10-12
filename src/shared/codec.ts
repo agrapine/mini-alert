@@ -278,6 +278,15 @@ function encodeUnit(unit: UnitSnapshot): UnitMotionMsg {
     attackX: unit.attackPoint?.x ?? 0,
     attackZ: unit.attackPoint?.z ?? 0,
     attackingGround: unit.attackPoint !== null,
+    homeSet: unit.home != null,
+    homeX: unit.home?.x ?? 0,
+    homeY: unit.home?.y ?? 0,
+    returning: unit.returning ?? false,
+    flight: unit.flight ?? 0,
+    altitude: unit.altitude ?? 0,
+    orbitSet: unit.orbit != null,
+    orbitX: unit.orbit?.x ?? 0,
+    orbitY: unit.orbit?.y ?? 0,
   } as UnitMotionMsg
 }
 
@@ -300,6 +309,11 @@ function decodeUnit(unit: UnitMotionMsg): UnitSnapshot {
     goal: unit.goal ? decodeTile(unit.goal) : null,
     attackId: unit.attackId > 0 ? unit.attackId : null,
     attackPoint: unit.attackingGround ? { x: unit.attackX, z: unit.attackZ } : null,
+    home: unit.homeSet ? { x: unit.homeX, y: unit.homeY } : null,
+    returning: unit.returning,
+    flight: unit.flight,
+    altitude: unit.altitude,
+    orbit: unit.orbitSet ? { x: unit.orbitX, y: unit.orbitY } : null,
   }
 }
 

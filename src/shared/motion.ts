@@ -1,5 +1,6 @@
+import { CLIMB_RATE, cruiseAltitude, Flight, onRunway, orbitLoop } from './flight.ts'
 import { tileCenter, type TileCoord } from './tiles.ts'
-import type { UnitType } from './unit-types.ts'
+import { Locomotion, type UnitType } from './unit-types.ts'
 
 const ARRIVE = 0.38
 const BEHIND = (Math.PI * 2) / 3
@@ -25,6 +26,14 @@ export type MotionState = {
   tileX: number
   tileY: number
   path: TileCoord[]
+  homeX?: number
+  homeY?: number
+  returning?: boolean
+  flight?: Flight
+  altitude?: number
+  orbitX?: number
+  orbitY?: number
+  loiter?: boolean
 }
 
 export function wrapAngle(angle: number): number {
@@ -59,6 +68,9 @@ export function stepMotion(
   occupied?: (x: number, y: number) => boolean,
 ): MotionResult {
   if (type.topSpeed <= 0) return MotionResult.Moved
+  const air = type.locomotion === Locomotion.Plane || type.locomotion === Locomotion.Rotor
+  if (air) beginFlight(state, type)
+  if (air && state.path.length === 0) settleFlight(state, type)
   if (state.path.length > 0 && occupied?.(state.path[0].x, state.path[0].y)) {
     state.speed = approach(state.speed, 0, type.acceleration * dt)
     return MotionResult.Waiting
@@ -77,13 +89,18 @@ export function stepMotion(
   state.z = next.z
   state.tileX = enteredX
   state.tileY = enteredY
-  if (state.path.length > 0) consumePath(state)
+  if (state.path.length > 0) consumePath(state, type.locomotion === Locomotion.Plane && state.flight !== Flight.Landing)
+  if (air) settleFlight(state, type)
+  if (air) stepAltitude(state, type, dt)
   return MotionResult.Moved
 }
 
 export function driveMotion(state: MotionState, type: UnitType, dt: number): void {
   if (type.topSpeed <= 0 || state.path.length === 0) return
-  if (type.wheelbase > 0) steerWheels(state, type, dt)
+  if (type.locomotion === Locomotion.Plane) steerPlane(state, type, dt)
+  else if (type.locomotion === Locomotion.Rotor) steerRotor(state, type, dt)
+  else if (type.locomotion === Locomotion.Hull) steerHull(state, type, dt)
+  else if (type.locomotion === Locomotion.Wheels) steerWheels(state, type, dt)
   else steerTracks(state, type, dt)
 }
 
@@ -96,7 +113,7 @@ export function integrateMotion(state: MotionState, dt: number): { x: number; z:
   }
 }
 
-export function consumePath(state: MotionState): void {
+export function consumePath(state: MotionState, flyThrough = false): void {
   const dir = state.speed < -0.02 ? -1 : 1
   const hx = Math.sin(state.facing) * dir
   const hz = Math.cos(state.facing) * dir
@@ -107,10 +124,15 @@ export function consumePath(state: MotionState): void {
     const dist = Math.hypot(dx, dz)
     const ahead = dx * hx + dz * hz
     if (state.path.length === 1) {
-      if (dist < ARRIVE && Math.abs(state.speed) < 0.85) state.path.shift()
+      if (flyThrough && (dist < 2.2 || (dist < 6 && ahead < 0))) state.path.shift()
+      else if (dist < ARRIVE && Math.abs(state.speed) < 0.85) state.path.shift()
       break
     }
     const onTile = Math.floor(state.x) === state.path[0].x && Math.floor(state.z) === state.path[0].y
+    if (flyThrough && (ahead < 0 || dist < 1.6)) {
+      state.path.shift()
+      continue
+    }
     if (dist < 0.4 || (onTile && ahead < 0.15) || (ahead < -0.05 && dist < 0.85)) {
       state.path.shift()
       continue
@@ -119,13 +141,140 @@ export function consumePath(state: MotionState): void {
   }
 }
 
+export function flightLine(from: TileCoord, to: TileCoord): TileCoord[] {
+  const path: TileCoord[] = []
+  let x0 = from.x
+  let y0 = from.y
+  const dx = Math.abs(to.x - x0)
+  const dy = Math.abs(to.y - y0)
+  const sx = x0 < to.x ? 1 : -1
+  const sy = y0 < to.y ? 1 : -1
+  let err = dx - dy
+  while (x0 !== to.x || y0 !== to.y) {
+    const doubled = err * 2
+    if (doubled > -dy) {
+      err -= dy
+      x0 += sx
+    }
+    if (doubled < dx) {
+      err += dx
+      y0 += sy
+    }
+    path.push({ x: x0, y: y0 })
+  }
+  return path
+}
+
 function steerTracks(state: MotionState, type: UnitType, dt: number): void {
+  steerAligned(state, type, dt, Math.abs(state.speed) > 0.15 ? 0.75 : 0.35)
+}
+
+function beginFlight(state: MotionState, type: UnitType): void {
+  if ((state.flight === undefined || state.flight === Flight.Ground) && state.path.length > 0) state.flight = Flight.Takeoff
+  if (!state.returning || state.homeX === undefined || state.homeY === undefined) return
+  const padZ = state.homeY + (type.locomotion === Locomotion.Plane ? 1.5 : 0.5)
+  const dist = Math.hypot(state.x - (state.homeX + 0.5), state.z - padZ)
+  const reach = type.locomotion === Locomotion.Plane ? 6.5 : 1.6
+  if (dist < reach) state.flight = Flight.Landing
+}
+
+function settleFlight(state: MotionState, type: UnitType): void {
+  if (state.loiter === false) return
+  if (type.locomotion !== Locomotion.Plane || state.returning) return
+  if (state.path.length > 0 || state.orbitX === undefined || state.orbitY === undefined) return
+  const loop = orbitLoop({ x: state.orbitX, y: state.orbitY }, state)
+  if (loop.length === 0) return
+  state.flight = Flight.Orbit
+  state.path = loop
+}
+
+function stepAltitude(state: MotionState, type: UnitType, dt: number): void {
+  const cruise = cruiseAltitude(type.locomotion)
+  const flight = state.flight ?? Flight.Ground
+  let target = 0
+  if (flight === Flight.Cruise || flight === Flight.Orbit) target = cruise
+  else if (flight === Flight.Takeoff) {
+    const rolling = type.locomotion === Locomotion.Plane && state.speed < type.topSpeed * 0.5
+    target = rolling ? 0 : cruise
+  } else if (flight === Flight.Landing && type.locomotion === Locomotion.Plane && runwayDistance(state) > 3) {
+    target = cruise * 0.85
+  }
+  state.altitude = approach(state.altitude ?? 0, target, CLIMB_RATE * dt)
+  if (flight === Flight.Takeoff && target > 0 && state.altitude > target * 0.65) state.flight = Flight.Cruise
+  const onPad = type.locomotion !== Locomotion.Plane || parkedOnRunway(state)
+  if (flight === Flight.Landing && onPad && state.altitude < 0.08 && Math.abs(state.speed) < 0.4) {
+    state.flight = Flight.Ground
+    state.speed = 0
+    state.altitude = 0
+    state.path = []
+    state.returning = false
+    state.orbitX = undefined
+    state.orbitY = undefined
+  }
+}
+
+function runwayDistance(state: MotionState): number {
+  if (state.homeX === undefined || state.homeY === undefined) return 0
+  return Math.hypot(state.x - (state.homeX + 0.5), state.z - (state.homeY + 2))
+}
+
+function steerPlane(state: MotionState, type: UnitType, dt: number): void {
+  const goal = planeAim(state)
+  if (!goal) return
+  const err = headingError(state, tileCenter(goal))
+  state.facing = wrapAngle(state.facing + clamp(err, -type.turnRate * dt, type.turnRate * dt))
+  state.speed = approach(state.speed, planeSpeed(state, type), type.acceleration * dt)
+}
+
+function steerRotor(state: MotionState, type: UnitType, dt: number): void {
+  const climbing = state.flight === Flight.Takeoff && (state.altitude ?? 0) < 0.85
+  const landing = state.flight === Flight.Landing
+  if (!climbing && !landing) {
+    steerTracks(state, type, dt)
+    return
+  }
+  const aim = aimPoint(state)
+  if (aim) {
+    const err = headingError(state, aim)
+    state.facing = wrapAngle(state.facing + clamp(err, -type.turnRate * dt, type.turnRate * dt))
+  }
+  state.speed = approach(state.speed, 0, type.acceleration * dt)
+}
+
+function planeAim(state: MotionState): TileCoord | undefined {
+  const flight = state.flight ?? Flight.Ground
+  if ((flight === Flight.Takeoff || flight === Flight.Landing) && state.homeX !== undefined && state.homeY !== undefined) {
+    const end = { x: state.homeX, y: state.homeY + 3 }
+    if (flight === Flight.Landing || state.tileY < end.y) return end
+  }
+  if (state.path.length === 0) return undefined
+  if (flight === Flight.Orbit) return state.path[Math.min(3, state.path.length - 1)]
+  return state.path[state.path.length - 1]
+}
+
+function planeSpeed(state: MotionState, type: UnitType): number {
+  if (state.flight !== Flight.Landing) return type.topSpeed
+  if (parkedOnRunway(state) && (state.altitude ?? 0) < 0.45) return 0
+  const dist = runwayDistance(state)
+  if ((state.altitude ?? 0) < 0.35 && dist < 3) return Math.min(type.topSpeed, 2.4)
+  return Math.min(type.topSpeed * 0.55, Math.max(2.4, dist * 0.85))
+}
+
+function parkedOnRunway(state: MotionState): boolean {
+  if (state.homeX === undefined || state.homeY === undefined) return false
+  return onRunway(state.tileX, state.tileY, state.homeX, state.homeY)
+}
+
+function steerHull(state: MotionState, type: UnitType, dt: number): void {
+  steerAligned(state, type, dt, 0.12)
+}
+
+function steerAligned(state: MotionState, type: UnitType, dt: number, limit: number): void {
   const aim = aimPoint(state)
   if (!aim) return
   const err = headingError(state, aim)
   const step = clamp(err, -type.turnRate * dt, type.turnRate * dt)
   state.facing = wrapAngle(state.facing + step)
-  const limit = Math.abs(state.speed) > 0.15 ? 0.75 : 0.35
   const target = Math.abs(err) <= limit ? cruiseSpeed(state, type, 1) : 0
   state.speed = approach(state.speed, target, type.acceleration * dt)
 }

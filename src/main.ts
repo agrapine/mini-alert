@@ -13,10 +13,9 @@ import { GameView } from './client/render/view.ts'
 import { populationOf } from './shared/cities.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
 import { ClientMessageKind, ServerEventKind, type ClientPort } from './shared/protocol.ts'
-import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UNIT_TYPES, UnitTypeId } from './shared/unit-types.ts'
+import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, Locomotion, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf } from './shared/unit-types.ts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
-const status = document.querySelector<HTMLElement>('#status')
 const lobbyRoot = document.querySelector<HTMLElement>('#lobby')
 const vision = document.querySelector<HTMLElement>('#vision')
 const legend = document.querySelector<HTMLElement>('#legend')
@@ -24,11 +23,10 @@ const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-if (!canvas || !status || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
+if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
-const viewStatus = status
 const visionBar = vision
 const legendBar = legend
 const outcomeLayer = outcome
@@ -73,6 +71,9 @@ const music = new Music()
 bindMenu({
   onMusic(on) {
     music.setMuted(!on)
+  },
+  onSurrender() {
+    net.sendLobby({ kind: LobbyClientKind.LeaveRoom })
   },
 })
 document.body.classList.add('lobby')
@@ -237,7 +238,7 @@ function mountWorld() {
   if (!world) return
   showMatch()
   live.view?.dispose()
-  const view = new GameView(viewCanvas, viewStatus, world.width, world.height)
+  const view = new GameView(viewCanvas, world.width, world.height)
   live.view = view
   view.mountTerrain(world)
   view.setMinimapCommand((tile, mods) => commandAt(tile, replica, player, view, mods))
@@ -331,22 +332,25 @@ function cssColor(color: number): string {
 
 const credits = document.querySelector<HTMLElement>('#credits')
 const forces = document.querySelector<HTMLElement>('#forces')
-const realm = document.querySelector<HTMLElement>('#realm')
-const spawnBar = document.querySelector<HTMLElement>('#spawn')
-const buildBar = document.querySelector<HTMLElement>('#build')
-const spawnButtons: UnitOrder[] = []
-const buildButtons: BuildButton[] = []
-if (spawnBar) {
-  for (const type of [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY]) {
-    spawnButtons.push(createUnitOrder(spawnBar, type.id, type.label, type.cost, () => player.spawn(type.id), () => player.cancelSpawn(type.id)))
+const population = document.querySelector<HTMLElement>('#population')
+const cities = document.querySelector<HTMLElement>('#cities')
+const orders = document.querySelector<HTMLElement>('#orders')
+const fullscreen = document.querySelector<HTMLButtonElement>('#fullscreen')
+const NEEDS_FACTORY = new Set<UnitTypeId>([UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
+const tiles: OrderTile[] = []
+if (orders) {
+  for (const type of [FACTORY, TURRET, AIRPORT, HELIPAD, SHIPYARD]) {
+    tiles.push(createTile(orders, type.id, false, type.label, type.cost, () => player.armBuilding(type.id), () => player.cancelBuild(type.id)))
+  }
+  tiles.push(createTile(orders, null, false, 'Building', 0, () => player.armCity()))
+  for (const type of [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY, JET, GUNSHIP, CRUISER]) {
+    tiles.push(createTile(orders, type.id, true, type.label, type.cost, () => player.spawn(type.id), () => player.cancelSpawn(type.id)))
   }
 }
-if (buildBar) {
-  for (const type of [FACTORY, TURRET]) {
-    buildButtons.push(createBuild(buildBar, type.id, `${type.label} ${type.cost}`, () => player.armBuilding(type.id)))
-  }
-  buildButtons.push(createBuild(buildBar, null, 'Building', () => player.armCity()))
-}
+fullscreen?.addEventListener('click', () => {
+  if (document.fullscreenElement) void document.exitFullscreen()
+  else void document.documentElement.requestFullscreen()
+})
 
 const COUNT_SECONDS = 0.15
 let shownCredits = replica.credits
@@ -385,144 +389,132 @@ const refreshHud = (dt: number) => {
   let queued = 0
   for (const job of replica.training) queued += UNIT_TYPES[job.typeId].supply
   if (forces) {
-    forces.textContent = `units: ${army}`
+    forces.textContent = String(army)
     forces.classList.toggle('over', army > held.population)
   }
-  if (realm) {
-    const label = held.cities === 1 ? 'city' : 'cities'
-    realm.textContent = `${held.cities} ${label} · pop ${held.population}`
+  if (population) population.textContent = String(held.population)
+  if (cities) cities.textContent = String(held.cities)
+  const ready = new Set<number>()
+  for (const unit of own) {
+    if (unit.progress >= 1 && UNIT_TYPES[unit.typeId].topSpeed <= 0) ready.add(unit.typeId)
   }
-  const factoryReady = own.some((unit) => unit.typeId === UnitTypeId.Factory && unit.progress >= 1)
   const head = replica.training[0]
-  for (const entry of spawnButtons) {
-    let count = 0
-    for (const job of replica.training) if (job.typeId === entry.id) count += 1
-    const progress = head?.typeId === entry.id ? head.progress : 0
-    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-    paintUnit(entry, count, progress, factoryReady && room)
-  }
   const armed = player.placingType()
-  const pending = structureProgress()
+  const pending = structureQueue()
   const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
-  for (const entry of buildButtons) {
+  for (const entry of tiles) {
     if (entry.id === null) {
-      entry.label.textContent = quoted === null ? 'Building' : `Building ${quoted.toLocaleString('en-US')}`
-      paintBuild(entry, 0, player.raisingCity(), true)
+      entry.cost.textContent = costLine(quoted ?? 0, 1)
+      paintTile(entry, 0, 0, true, true, player.raisingCity())
       continue
     }
-    const supply = UNIT_TYPES[entry.id].supply
-    const room = army + queued + supply <= held.population
-    paintBuild(entry, pending.get(entry.id) ?? 0, armed === entry.id, room)
+    const training = entry.train
+    let count = 0
+    let progress = 0
+    if (training) {
+      for (const job of replica.training) if (job.typeId === entry.id) count += 1
+      progress = head?.typeId === entry.id ? head.progress : 0
+    } else {
+      const site = pending.get(entry.id)
+      count = site?.count ?? 0
+      progress = site?.progress ?? 0
+    }
+    const gate = training ? ready.has(yardOf(entry.id)) : !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
+    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    paintTile(entry, count, progress, gate && room, gate || count > 0 || progress > 0, !training && armed === entry.id)
   }
 }
 
-type UnitOrder = {
-  id: UnitTypeId
-  main: HTMLButtonElement
-  fill: HTMLElement
-  count: HTMLElement
-  minus: HTMLButtonElement
-  plus: HTMLButtonElement
-}
-
-type BuildButton = {
+type OrderTile = {
   id: UnitTypeId | null
+  train: boolean
   button: HTMLButtonElement
-  fill: HTMLElement
-  label: HTMLElement
+  ring: HTMLElement
+  badge: HTMLElement
+  cost: HTMLElement
 }
 
-function createUnitOrder(
+function createTile(
   bar: HTMLElement,
-  id: UnitTypeId,
+  id: UnitTypeId | null,
+  train: boolean,
   name: string,
   cost: number,
   onAdd: () => void,
-  onRemove: () => void,
-): UnitOrder {
-  const row = document.createElement('div')
-  row.className = 'order'
-  const main = document.createElement('button')
-  main.type = 'button'
-  main.className = 'meter'
-  const fill = document.createElement('span')
-  fill.className = 'fill'
-  const face = document.createElement('span')
-  face.className = 'face'
-  const label = document.createElement('span')
-  label.className = 'label'
-  label.textContent = `${name} ${cost}`
-  const count = document.createElement('span')
-  count.className = 'count'
-  face.append(label, count)
-  main.append(fill, face)
-  main.addEventListener('click', () => {
-    if (main.disabled) return
-    onAdd()
-  })
-  const minus = document.createElement('button')
-  minus.type = 'button'
-  minus.className = 'nudge minus'
-  minus.textContent = '[-]'
-  minus.addEventListener('click', () => {
-    if (!minus.classList.contains('on')) return
-    onRemove()
-  })
-  const plus = document.createElement('button')
-  plus.type = 'button'
-  plus.className = 'nudge plus'
-  plus.textContent = '[+]'
-  plus.addEventListener('click', () => {
-    if (!plus.classList.contains('on')) return
-    onAdd()
-  })
-  row.append(main, minus, plus)
-  bar.append(row)
-  return { id, main, fill, count, minus, plus }
-}
-
-function createBuild(bar: HTMLElement, id: UnitTypeId | null, name: string, onAdd: () => void): BuildButton {
+  onRemove?: () => void,
+): OrderTile {
   const button = document.createElement('button')
   button.type = 'button'
-  button.className = 'meter'
-  const fill = document.createElement('span')
-  fill.className = 'fill'
+  button.className = `tile ${tileKind(id)}`
+  button.title = name
+  button.hidden = train || (id !== null && NEEDS_FACTORY.has(id))
+  const pie = document.createElement('span')
+  pie.className = 'pie'
   const label = document.createElement('span')
-  label.className = 'label'
+  label.className = 'name'
   label.textContent = name
-  button.append(fill, label)
-  button.addEventListener('click', () => {
-    if (button.disabled) return
+  const price = document.createElement('span')
+  price.className = 'cost'
+  price.textContent = costLine(cost, id === null ? 1 : UNIT_TYPES[id].supply)
+  const badge = document.createElement('span')
+  badge.className = 'badge'
+  badge.hidden = true
+  button.append(pie, label, price, badge)
+  button.addEventListener('click', (event) => {
+    if (event.shiftKey) {
+      onRemove?.()
+      return
+    }
+    if (!button.classList.contains('ready')) return
     onAdd()
   })
+  button.addEventListener('contextmenu', (event) => {
+    event.preventDefault()
+    onRemove?.()
+  })
   bar.append(button)
-  return { id, button, fill, label }
+  return { id, train, button, ring: pie, badge, cost: price }
 }
 
-function paintUnit(entry: UnitOrder, count: number, progress: number, enabled: boolean) {
-  entry.fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`
-  entry.count.textContent = count > 0 ? `×${count}` : ''
-  entry.main.disabled = !enabled
-  entry.plus.classList.toggle('on', enabled)
-  entry.minus.classList.toggle('on', count > 0)
-}
-
-function paintBuild(entry: BuildButton, progress: number, armed: boolean, enabled: boolean) {
-  entry.fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`
+function paintTile(entry: OrderTile, count: number, progress: number, enabled: boolean, visible: boolean, armed = false) {
+  entry.button.hidden = !visible
+  const amount = Math.max(0, Math.min(1, progress))
+  entry.ring.style.setProperty('--p', String(amount))
+  entry.ring.classList.toggle('on', amount > 0)
+  const marked = count > 1 || (count === 1 && amount <= 0)
+  entry.badge.hidden = !marked
+  entry.badge.textContent = marked ? String(count) : ''
+  entry.button.classList.toggle('ready', enabled)
+  entry.button.classList.toggle('live', count > 0 || progress > 0 || armed)
   entry.button.classList.toggle('armed', armed)
-  entry.button.disabled = !enabled
 }
 
-function structureProgress(): Map<UnitTypeId, number> {
-  const progress = new Map<UnitTypeId, number>()
-  let active: { id: number; typeId: UnitTypeId; progress: number } | null = null
+function structureQueue(): Map<UnitTypeId, { count: number; progress: number }> {
+  const queue = new Map<UnitTypeId, { count: number; progress: number }>()
   for (const unit of replica.units) {
     if (unit.ownerId !== replica.playerId || unit.health <= 0 || unit.progress >= 1) continue
     if (UNIT_TYPES[unit.typeId].topSpeed > 0) continue
-    if (!active || unit.id < active.id) active = unit
+    const site = queue.get(unit.typeId) ?? { count: 0, progress: 0 }
+    site.count += 1
+    if (unit.progress > site.progress) site.progress = unit.progress
+    queue.set(unit.typeId, site)
   }
-  if (active) progress.set(active.typeId, active.progress)
-  return progress
+  return queue
+}
+
+function costLine(credits: number, supply: number): string {
+  const price = credits > 0 ? credits.toLocaleString('en-US') : ''
+  if (supply <= 0) return price
+  return price ? `${price} · ${supply}` : String(supply)
+}
+
+function tileKind(id: UnitTypeId | null): 'structure' | 'vehicle' | 'air' | 'boat' {
+  if (id === null) return 'structure'
+  const type = UNIT_TYPES[id]
+  if (type.topSpeed <= 0) return 'structure'
+  if (type.locomotion === Locomotion.Plane || type.locomotion === Locomotion.Rotor) return 'air'
+  if (type.locomotion === Locomotion.Hull) return 'boat'
+  return 'vehicle'
 }
 
 let last = performance.now()

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { AiPlayer } from './player.ts'
 import { Game } from '../server/game.ts'
 import { ServerHost } from '../server/host.ts'
-import { UnitTypeId } from '../shared/unit-types.ts'
+import { FACTORY, UnitTypeId } from '../shared/unit-types.ts'
+import { CREDIT_PER_POPULATION } from '../server/player.ts'
 import { World } from '../server/world.ts'
 
 function boot(game: Game, aiId: number) {
@@ -14,6 +15,16 @@ function boot(game: Game, aiId: number) {
   host.addAi(bot)
   host.sync(aiId)
   return bot
+}
+
+function padPop(game: Game, playerId: number, people: number) {
+  let added = 0
+  while (game.creditIncome(playerId) / CREDIT_PER_POPULATION < people && added < 8) {
+    added += 1
+    game.scenery.towns.push({ x: game.world.width - 1.5, y: 0.5 + (added - 1) * 5 })
+    game.bindCities()
+    for (const town of game.scenery.towns) game.claimCity(town, playerId)
+  }
 }
 
 describe('ai', () => {
@@ -42,6 +53,7 @@ describe('ai', () => {
     game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 10.5, y: 8.5 }], seed: 4 }
     game.bindCities()
     game.claimCity({ x: 10.5, y: 8.5 }, ai.id)
+    padPop(game, ai.id, FACTORY.supply)
     const bot = boot(game, ai.id)
 
     bot.update(2)

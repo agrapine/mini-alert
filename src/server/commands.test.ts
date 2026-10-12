@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ClientMessageKind } from '../shared/protocol.ts'
-import { MED_TANK, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
+import { MED_TANK, SCOUT, FACTORY, UnitTypeId } from '../shared/unit-types.ts'
+import { CITY_GROW_SECONDS } from '../shared/cities.ts'
 import { Game } from './game.ts'
+import { CREDIT_PER_POPULATION } from './player.ts'
 import { ServerHost } from './host.ts'
 import { createSkirmish } from './skirmish.ts'
 import { World } from './world.ts'
@@ -10,6 +12,23 @@ function seat(game: Game, playerId: number, x: number, y: number) {
   game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: x + 0.5, y: y + 0.5 }], seed: 11 }
   game.bindCities()
   game.claimCity({ x: x + 0.5, y: y + 0.5 }, playerId)
+}
+
+function growPop(game: Game, playerId: number, people: number) {
+  const index = game.cityStates().findIndex((state) => state.ownerId === playerId)
+  const layout = game.cityLayouts()[index]
+  const spot = layout?.streets.find((street) => street.kind < 6) ?? layout?.tiles[0]
+  const owner = game.player(playerId)
+  if (!spot || !owner) return
+  const holder = game.spawn(owner, UnitTypeId.Scout, { x: spot.x, y: spot.y }, 0)
+  let guard = 0
+  while (game.creditIncome(playerId) / CREDIT_PER_POPULATION < people && guard < 80) {
+    game.tick(CITY_GROW_SECONDS)
+    guard += 1
+  }
+  holder.health = 0
+  game.tick(0)
+  owner.credits = 10_000
 }
 
 describe('player commands', () => {
@@ -46,6 +65,7 @@ describe('player commands', () => {
     const host = new ServerHost(game)
     const humanPort = host.join(human)
     seat(game, human.id, 10, 4)
+    growPop(game, human.id, FACTORY.supply + SCOUT.supply + MED_TANK.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
     const before = game.units.length

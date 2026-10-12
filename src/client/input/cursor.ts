@@ -19,7 +19,9 @@ export function cursorFor(
   const selected = player.selected()
   if (hovered !== null) {
     const unit = replica.unit(hovered)
-    if (unit && unit.ownerId === replica.playerId) return 'pointer'
+    if (unit && unit.ownerId === replica.playerId) {
+      return player.commanding() && replica.homePad(unit, selected) ? MOVE_CURSOR : 'pointer'
+    }
     if (unit && player.commanding()) return ATTACK_CURSOR
   }
   const tile = selected.length > 0 ? view.pickTile(clientX, clientY) : null
@@ -31,7 +33,7 @@ export function cursorFor(
   if (selected.length === 0 || !tile) return 'default'
   const standing = replica.occupant(tile)
   if (standing && standing.ownerId !== replica.playerId) return ATTACK_CURSOR
-  return replica.isOpen(tile, selected.map((unit) => unit.id)) ? MOVE_CURSOR : 'not-allowed'
+  return player.commanding() && replica.canCommand(tile, selected) ? MOVE_CURSOR : 'not-allowed'
 }
 
 function reticle(color: string): string {
