@@ -1,7 +1,7 @@
 services:
   mini-alert:
     build: .
-    image: mini-alert
+    image: git.swipelab.com/agra/mini-alert:latest
     container_name: mini-alert
     restart: unless-stopped
     ports:

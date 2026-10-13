@@ -1,0 +1,35 @@
+name: image
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: mini-alert-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: docker
+    container:
+      image: node:22-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: install docker cli
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+            | tar -xz --strip-components 1 -C /usr/local/bin docker/docker
+          docker version
+      - name: build
+        run: |
+          docker build \
+            -t git.swipelab.com/agra/mini-alert:latest \
+            -t git.swipelab.com/agra/mini-alert:${GITHUB_SHA:0:10} \
+            .
+      - name: push
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          echo "$REGISTRY_TOKEN" | docker login git.swipelab.com -u agra --password-stdin
+          docker push git.swipelab.com/agra/mini-alert:latest
+          docker push git.swipelab.com/agra/mini-alert:${GITHUB_SHA:0:10}
