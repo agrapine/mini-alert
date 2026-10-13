@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Flight } from '../shared/flight.ts'
+import { bayTile, Flight } from '../shared/flight.ts'
 import { AIRPORT, CRUISER, JET, SHIPYARD, UnitTypeId, WeaponKind } from '../shared/unit-types.ts'
 import { CREDIT_PER_POPULATION } from './player.ts'
 import { Terrain } from '../shared/tiles.ts'
@@ -45,10 +45,11 @@ describe('craft', () => {
     expect(jet.flight).toBe(Flight.Ground)
     expect(game.orderMove(human.id, jet.id, { x: 22, y: 6 })).toBe(true)
     expect(jet.returning).toBe(false)
-    expect(jet.flight).toBe(Flight.Takeoff)
-    expect(jet.path.some((tile) => tile.y === airport.tile.y + 3)).toBe(true)
+    expect(jet.flight).toBe(Flight.Taxi)
+    expect(jet.bay).toBe(0)
+    expect(jet.path.some((tile) => tile.x === airport.tile.x + 1 && tile.y === airport.tile.y + 2)).toBe(true)
     let guard = 0
-    while (jet.flight !== Flight.Orbit && guard < 30 * 12) {
+    while (jet.flight !== Flight.Orbit && guard < 30 * 20) {
       game.tick(STEP)
       guard += 1
     }
@@ -116,17 +117,73 @@ describe('craft', () => {
     expect(jet.returning).toBe(true)
     const phase = () => jet.flight as Flight
     let guard = 0
-    while (phase() !== Flight.Ground && guard < 30 * 25) {
+    while (phase() !== Flight.Ground && guard < 30 * 40) {
       game.tick(STEP)
       if (phase() !== Flight.Ground) expect(jet.rounds).toBe(0)
       guard += 1
     }
     expect(phase()).toBe(Flight.Ground)
     expect(jet.rounds).toBe(JET.weapon.magazine)
-    expect(jet.tile.x).toBeGreaterThanOrEqual(airport.tile.x)
-    expect(jet.tile.x).toBeLessThan(airport.tile.x + 2)
-    expect(jet.tile.y).toBeGreaterThanOrEqual(airport.tile.y)
-    expect(jet.tile.y).toBeLessThan(airport.tile.y + 4)
+    expect(jet.bay).toBe(0)
+    expect(jet.tile).toEqual(bayTile(airport.tile, 0))
+  })
+
+  it('parks returning jets on different spots and will not train a seventh', () => {
+    const game = new Game(new World(28, 16))
+    const human = game.addPlayer()
+    seat(game, human.id, 10, 8)
+    const layout = game.cityLayouts()[0]
+    expect(layout).toBeDefined()
+    if (!layout) return
+    // Population is standing buildings. These sit off the map so six jets fit under the supply cap.
+    while (game.creditIncome(human.id) / CREDIT_PER_POPULATION < AIRPORT.supply + JET.supply * 6) {
+      layout.buildings.push({ x: -30 - layout.buildings.length, y: -30, model: 0, yaw: 0, keep: false })
+    }
+    expect(game.placeBuilding(human.id, UnitTypeId.Airport, { x: 4, y: 6 })).toBe(true)
+    game.finishBuild(human.id)
+    const airport = game.units.find((unit) => unit.typeId === UnitTypeId.Airport)
+    expect(airport).toBeDefined()
+    if (!airport) return
+    for (let i = 0; i < 6; i++) expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(true)
+    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(false)
+    game.tick(40)
+    const jets = game.units.filter((unit) => unit.typeId === UnitTypeId.Jet)
+    expect(jets).toHaveLength(6)
+    const tiles = new Set(jets.map((jet) => `${jet.tile.x},${jet.tile.y}`))
+    expect(tiles.size).toBe(6)
+    for (const jet of jets) expect(jet.tile).toEqual(bayTile(airport.tile, jet.bay))
+    const home = { x: airport.tile.x, y: airport.tile.y }
+    const [left, right] = jets
+    left.tile = { x: 18, y: 4 }
+    left.pos = { x: 18.5, z: 4.5 }
+    left.flight = Flight.Cruise
+    left.altitude = 2.6
+    left.facing = Math.PI
+    right.tile = { x: 22, y: 10 }
+    right.pos = { x: 22.5, z: 10.5 }
+    right.flight = Flight.Cruise
+    right.altitude = 2.6
+    right.facing = Math.PI
+    expect(game.orderMove(human.id, left.id, home)).toBe(true)
+    expect(game.orderMove(human.id, right.id, home)).toBe(true)
+    let taxied = false
+    let guard = 0
+    const phase = (jet: { flight: Flight }) => jet.flight as Flight
+    while ((phase(left) !== Flight.Ground || phase(right) !== Flight.Ground) && guard < 30 * 40) {
+      game.tick(STEP)
+      if (phase(left) === Flight.Taxi || phase(right) === Flight.Taxi) taxied = true
+      guard += 1
+    }
+    expect(taxied).toBe(true)
+    expect(left.flight).toBe(Flight.Ground)
+    expect(right.flight).toBe(Flight.Ground)
+    expect(left.tile).toEqual(bayTile(home, left.bay))
+    expect(right.tile).toEqual(bayTile(home, right.bay))
+    expect(left.tile).not.toEqual(right.tile)
+    expect(Math.hypot(left.pos.x - right.pos.x, left.pos.z - right.pos.z)).toBeGreaterThan(0.8)
+    left.health = 0
+    game.tick(STEP)
+    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(true)
   })
 
   it('holds jet rockets until the plane is in the air', () => {

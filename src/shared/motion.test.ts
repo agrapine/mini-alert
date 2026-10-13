@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Flight } from './flight.ts'
+import { Flight, joinPaths, rollout, runwayEnd } from './flight.ts'
 import { flightLine, MotionResult, stepMotion, type MotionState } from './motion.ts'
 import { CRUISER, GUNSHIP, JET, SCOUT } from './unit-types.ts'
 
@@ -91,11 +91,33 @@ describe('shared motion', () => {
     expect(state.path.length).toBeGreaterThan(0)
   })
 
-  it('lands a jet that was sent back to its strip', () => {
+  it('rolls a jet out from the north parking row', () => {
     const state = body()
+    const home = { x: 4, y: 6 }
     state.x = 4.5
-    state.z = 16.5
+    state.z = 8.5
     state.tileX = 4
+    state.tileY = 8
+    state.facing = Math.PI / 2
+    state.speed = 0
+    state.altitude = 0
+    state.flight = Flight.Taxi
+    state.returning = false
+    state.homeX = home.x
+    state.homeY = home.y
+    state.bay = 2
+    state.path = joinPaths(rollout({ x: 4, y: 8 }, home), flightLine(runwayEnd(home), { x: 16, y: 8 }))
+    for (let i = 0; i < 30 * 16; i++) stepMotion(state, JET, 1 / 30)
+    expect(state.flight).toBe(Flight.Cruise)
+    expect(state.altitude ?? 0).toBeGreaterThan(1.5)
+    expect(state.x).toBeGreaterThan(8)
+  })
+
+  it('lands a jet and taxis it to its parking spot', () => {
+    const state = body()
+    state.x = 5.5
+    state.z = 16.5
+    state.tileX = 5
     state.tileY = 16
     state.facing = Math.PI
     state.speed = JET.topSpeed
@@ -104,15 +126,22 @@ describe('shared motion', () => {
     state.returning = true
     state.homeX = 4
     state.homeY = 6
-    state.path = flightLine({ x: 4, y: 16 }, { x: 4, y: 9 })
-    for (let i = 0; i < 30 * 12; i++) stepMotion(state, JET, 1 / 30)
+    state.bay = 3
+    state.path = flightLine({ x: 5, y: 16 }, { x: 5, y: 8 })
+    let taxied = false
+    for (let i = 0; i < 30 * 20; i++) {
+      stepMotion(state, JET, 1 / 30)
+      if ((state.flight as Flight) === Flight.Taxi) taxied = true
+    }
+    expect(taxied).toBe(true)
     expect(state.altitude ?? 0).toBeLessThan(0.2)
     expect(state.flight).toBe(Flight.Ground)
     expect(state.returning).toBe(false)
     expect(Math.abs(state.speed)).toBeLessThan(0.4)
-    expect(state.tileX).toBe(4)
-    expect(state.tileY).toBeGreaterThanOrEqual(6)
-    expect(state.tileY).toBeLessThan(10)
+    expect(state.tileX).toBe(6)
+    expect(state.tileY).toBe(6)
+    expect(state.x).toBeCloseTo(6.5)
+    expect(state.z).toBeCloseTo(6.5)
   })
 
   it('lets a gunship yaw while it is still hovering', () => {

@@ -166,6 +166,7 @@ export type UnitSnapshot = {
   flight?: number
   altitude?: number
   orbit?: TileCoord | null
+  bay?: number
 }
 
 export type ShotEvent = {

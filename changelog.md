@@ -2,7 +2,9 @@
 
 ## 0.4
 
-- Airports, helipads, shipyars, jets, gunship, cruisers
+- New structures: Airports, helipads, shipyards, 
+- New units: jets, gunship, cruisers
+- Fight on water, air, land.
 - Credits cap at 10,000 plus 500 per population. Losing population throws away anything above the new cap.
 - Structures require population
 - Unit rebalancing

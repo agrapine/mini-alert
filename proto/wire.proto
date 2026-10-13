@@ -120,6 +120,7 @@ message UnitMotionMsg {
   bool orbit_set = 26;
   int32 orbit_x = 27;
   int32 orbit_y = 28;
+  int32 bay = 29;
 }
 
 message WelcomeMsg {

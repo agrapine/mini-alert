@@ -13,6 +13,7 @@ saves
 .tmp-saves-*
 dist-ssr
 *.local
+ai-trace.jsonl
 
 # Editor directories and files
 .vscode/*

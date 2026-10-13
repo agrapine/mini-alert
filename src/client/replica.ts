@@ -325,6 +325,7 @@ export class Replica {
     unit.flight = next.flight ?? 0
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
+    unit.bay = next.bay ?? -1
   }
 
   private stepUnits(dt: number) {
@@ -354,6 +355,7 @@ export class Replica {
         altitude: unit.altitude,
         orbitX: unit.orbit?.x,
         orbitY: unit.orbit?.y,
+        bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
       }
       stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
       const span = spanOf(type)

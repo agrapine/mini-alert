@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { AiPlayer } from './player.ts'
+import { Scenario } from './scenarios.ts'
 import { Game } from '../server/game.ts'
 import { ServerHost } from '../server/host.ts'
-import { FACTORY, UnitTypeId } from '../shared/unit-types.ts'
+import { FACTORY, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { CREDIT_PER_POPULATION } from '../server/player.ts'
+import type { TileCoord } from '../shared/tiles.ts'
 import { World } from '../server/world.ts'
 
 function boot(game: Game, aiId: number) {
@@ -63,6 +65,30 @@ describe('ai', () => {
     expect(workshop?.progress).toBe(0)
   })
 
+  it('garrisons or explores when population blocks the factory', () => {
+    const game = new Game(new World(24, 24))
+    const ai = game.addPlayer()
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 10.5, y: 8.5 }], seed: 4 }
+    game.bindCities()
+    game.claimCity({ x: 10.5, y: 8.5 }, ai.id)
+    const people = game.creditIncome(ai.id) / CREDIT_PER_POPULATION
+    const tiles = openNear(game, { x: 10, y: 8 })
+    let spawned = 0
+    while ((spawned * SCOUT.supply + FACTORY.supply <= people || spawned === 0) && spawned < tiles.length) {
+      game.spawn(ai, UnitTypeId.Scout, tiles[spawned])
+      spawned += 1
+    }
+    expect(spawned * SCOUT.supply + FACTORY.supply).toBeGreaterThan(people)
+    const bot = boot(game, ai.id)
+
+    bot.update(2)
+
+    expect(game.units.some((unit) => unit.ownerId === ai.id && unit.typeId === UnitTypeId.Factory)).toBe(false)
+    const thought = bot.lastThought
+    expect(thought?.candidates.some((candidate) => candidate.scenario === Scenario.Build && candidate.blocked === 'pop')).toBe(true)
+    expect(thought?.candidates.some((candidate) => candidate.blocked === '' && (candidate.scenario === Scenario.Garrison || candidate.scenario === Scenario.Scout))).toBe(true)
+  })
+
   it('waits longer between actions when the pace is turned down', () => {
     const game = new Game(new World(48, 48))
     const human = game.addPlayer()
@@ -78,3 +104,17 @@ describe('ai', () => {
     expect(near.attackId).toBe(foe.id)
   })
 })
+
+function openNear(game: Game, origin: TileCoord): TileCoord[] {
+  const tiles: TileCoord[] = []
+  for (let radius = 0; radius <= 8; radius++) {
+    for (let y = origin.y - radius; y <= origin.y + radius; y++) {
+      for (let x = origin.x - radius; x <= origin.x + radius; x++) {
+        if (Math.max(Math.abs(x - origin.x), Math.abs(y - origin.y)) !== radius) continue
+        if (!game.world.inBounds(x, y) || !game.pathfinder.isWalkable(x, y, -1)) continue
+        tiles.push({ x, y })
+      }
+    }
+  }
+  return tiles
+}

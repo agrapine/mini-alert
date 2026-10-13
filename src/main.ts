@@ -11,8 +11,10 @@ import { bindInput, commandAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
 import { populationOf } from './shared/cities.ts'
+import { baysFree } from './shared/flight.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
-import { ClientMessageKind, ServerEventKind, type ClientPort } from './shared/protocol.ts'
+import { ClientMessageKind, ServerEventKind, type ClientPort, type TrainJob, type UnitSnapshot } from './shared/protocol.ts'
+import type { TileCoord } from './shared/tiles.ts'
 import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, Locomotion, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf } from './shared/unit-types.ts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
@@ -420,7 +422,8 @@ const refreshHud = (dt: number) => {
       progress = site?.progress ?? 0
     }
     const gate = training ? ready.has(yardOf(entry.id)) : !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
-    const room = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, replica.training) > 0)
     paintTile(entry, count, progress, gate && room, gate || count > 0 || progress > 0, !training && armed === entry.id)
   }
 }
@@ -487,6 +490,21 @@ function paintTile(entry: OrderTile, count: number, progress: number, enabled: b
   entry.button.classList.toggle('ready', enabled)
   entry.button.classList.toggle('live', count > 0 || progress > 0 || armed)
   entry.button.classList.toggle('armed', armed)
+}
+
+function jetApron(own: readonly UnitSnapshot[], training: readonly TrainJob[]): number {
+  const pads: TileCoord[] = []
+  const parked: { x: number; y: number; bay: number }[] = []
+  for (const unit of own) {
+    if (unit.health <= 0) continue
+    if (unit.typeId === UnitTypeId.Airport && unit.progress >= 1) pads.push({ x: unit.tileX, y: unit.tileY })
+    if (unit.typeId === UnitTypeId.Jet && unit.home && (unit.bay ?? -1) >= 0) {
+      parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay ?? -1 })
+    }
+  }
+  let queued = 0
+  for (const job of training) if (job.typeId === UnitTypeId.Jet) queued += 1
+  return baysFree(pads, parked) - queued
 }
 
 function structureQueue(): Map<UnitTypeId, { count: number; progress: number }> {

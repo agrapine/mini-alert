@@ -1,4 +1,4 @@
-import { Flight, joinPaths, onRunway, planeInFlight, runwayEnd } from '../../shared/flight.ts'
+import { BAY_COUNT, Flight, joinPaths, onBay, onRunway, openBay, planeInFlight, rollout, runwayEnd, runwayStart } from '../../shared/flight.ts'
 import { footprintCovers } from '../../shared/footprint.ts'
 import { driveMotion, flightLine, MotionResult, stepMotion, type MotionState } from '../../shared/motion.ts'
 import { tileCenter, type TileCoord } from '../../shared/tiles.ts'
@@ -26,6 +26,7 @@ export abstract class Unit {
   path: TileCoord[] = []
   route = 0
   home: TileCoord | null = null
+  bay = -1
   returning = false
   flight = Flight.Ground
   altitude = 0
@@ -74,18 +75,47 @@ export abstract class Unit {
   private orderAir(tile: TileCoord, paths: PathFinder, units: readonly Unit[]): boolean {
     if (!paths.inBounds(tile.x, tile.y)) return false
     const pad = padAt(this, tile, units)
-    const grounded = this.flight === Flight.Ground || this.flight === Flight.Landing || this.altitude < 0.25
+    if (pad && this.type.locomotion === Locomotion.Plane && !this.keepBay(pad, units)) return false
+    const grounded = this.flight === Flight.Ground || this.flight === Flight.Taxi || this.flight === Flight.Landing || this.altitude < 0.25
+    if (pad && this.parkedAt(pad)) {
+      this.returning = false
+      this.flight = Flight.Ground
+      this.commitPath([])
+      return true
+    }
     const path = pad ? this.landPath(pad.tile) : this.departPath(tile, grounded)
     if (path.length === 0) return false
     this.returning = pad !== null
     this.orbit = pad === null && this.type.locomotion === Locomotion.Plane ? { x: tile.x, y: tile.y } : null
     if (pad) this.home = { x: pad.tile.x, y: pad.tile.y }
-    this.flight = grounded ? Flight.Takeoff : Flight.Cruise
+    const onStrip = this.home !== null && onRunway(this.tile.x, this.tile.y, this.home.x, this.home.y)
+    const slot = this.type.locomotion === Locomotion.Plane && this.bay >= 0 && !onStrip
+    this.flight = grounded && slot ? Flight.Taxi : grounded ? Flight.Takeoff : Flight.Cruise
     this.commitPath(path)
     return true
   }
 
+  private keepBay(pad: Unit, units: readonly Unit[]): boolean {
+    const origin = pad.tile
+    const stays = this.home?.x === origin.x && this.home?.y === origin.y && this.bay >= 0 && this.bay < BAY_COUNT
+    if (stays) return true
+    const bay = openBay(takenBays(origin, units, this.id))
+    if (bay < 0) return false
+    this.home = { x: origin.x, y: origin.y }
+    this.bay = bay
+    return true
+  }
+
+  private parkedAt(pad: Unit): boolean {
+    if (this.type.locomotion !== Locomotion.Plane || this.flight !== Flight.Ground || this.bay < 0) return false
+    if (this.home?.x !== pad.tile.x || this.home?.y !== pad.tile.y) return false
+    return onBay(this.tile.x, this.tile.y, pad.tile.x, pad.tile.y, this.bay)
+  }
+
   private departPath(tile: TileCoord, grounded: boolean): TileCoord[] {
+    if (this.type.locomotion === Locomotion.Plane && this.home && grounded && this.bay >= 0) {
+      return joinPaths(rollout(this.tile, this.home), flightLine(runwayEnd(this.home), tile))
+    }
     if (this.type.locomotion === Locomotion.Plane && this.home && grounded) {
       return joinPaths(flightLine(this.tile, runwayEnd(this.home)), flightLine(runwayEnd(this.home), tile))
     }
@@ -94,7 +124,8 @@ export abstract class Unit {
 
   private landPath(pad: TileCoord): TileCoord[] {
     if (this.type.locomotion !== Locomotion.Plane) return flightLine(this.tile, pad)
-    const approach = { x: pad.x, y: Math.max(0, pad.y - 6) }
+    const start = runwayStart(pad)
+    const approach = { x: start.x, y: Math.max(0, pad.y - 6) }
     return joinPaths(flightLine(this.tile, approach), flightLine(approach, runwayEnd(pad)))
   }
 
@@ -147,7 +178,7 @@ export abstract class Unit {
     const weapon = this.type.weapon
     if (weapon.kind !== WeaponKind.Rocket || this.rounds > 0) return false
     if (this.flight === Flight.Ground && this.onHomePad()) return true
-    if (!this.home || this.returning || this.flight === Flight.Landing) return true
+    if (!this.home || this.returning || this.flight === Flight.Landing || this.flight === Flight.Taxi) return true
     const end = runwayEnd(this.home)
     const goal = this.path[this.path.length - 1]
     if (!goal || goal.x !== end.x || goal.y !== end.y) {
@@ -170,8 +201,8 @@ export abstract class Unit {
   }
 
   private onHomePad(): boolean {
-    if (!this.home) return false
-    return onRunway(this.tile.x, this.tile.y, this.home.x, this.home.y)
+    if (!this.home || this.bay < 0) return false
+    return onBay(this.tile.x, this.tile.y, this.home.x, this.home.y, this.bay)
   }
 
   private pursue(dt: number, paths: PathFinder, units: readonly Unit[]): boolean {
@@ -247,6 +278,7 @@ function motionOf(unit: Unit, loiter = true): MotionState {
     path: unit.path,
     homeX: unit.home?.x,
     homeY: unit.home?.y,
+    bay: unit.bay >= 0 ? unit.bay : undefined,
     returning: unit.returning,
     flight: unit.flight,
     altitude: unit.altitude,
@@ -254,6 +286,16 @@ function motionOf(unit: Unit, loiter = true): MotionState {
     orbitY: unit.orbit?.y,
     loiter,
   }
+}
+
+function takenBays(origin: TileCoord, units: readonly Unit[], exceptId: number): Set<number> {
+  const taken = new Set<number>()
+  for (const other of units) {
+    if (other.id === exceptId || other.health <= 0 || other.typeId !== UnitTypeId.Jet) continue
+    if (other.home?.x !== origin.x || other.home?.y !== origin.y) continue
+    if (other.bay >= 0 && other.bay < BAY_COUNT) taken.add(other.bay)
+  }
+  return taken
 }
 
 function padAt(unit: Unit, tile: TileCoord, units: readonly Unit[]): Unit | null {

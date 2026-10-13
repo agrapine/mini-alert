@@ -2,7 +2,7 @@ import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captu
 import type { CitySite, CityState, MapPoint, ShotEvent, ShotHit, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
 import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
-import { Flight } from '../shared/flight.ts'
+import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
@@ -370,6 +370,7 @@ export class Game {
     const type = UNIT_TYPES[typeId]
     if (!owner || type.topSpeed <= 0 || !this.hasFinished(playerId, yardOf(typeId))) return false
     if (this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
+    if (typeId === UnitTypeId.Jet && this.queuedJets(playerId) >= this.jetRoom(playerId)) return false
     const queue = this.training.get(playerId) ?? []
     queue.push({ typeId, progress: 0 })
     this.training.set(playerId, queue)
@@ -515,6 +516,7 @@ export class Game {
       flight: unit.flight,
       altitude: unit.altitude,
       orbit: unit.orbit ? { x: unit.orbit.x, y: unit.orbit.y } : null,
+      bay: unit.bay,
     }
   }
 
@@ -849,6 +851,7 @@ export class Game {
     if (!yard) return false
     const domain = domainOf(type)
     if (domain === MoveDomain.Air) {
+      if (typeId === UnitTypeId.Jet) return this.releaseJet(owner)
       const unit = this.placeMobile(owner, typeId, yard.tile, 0)
       unit.home = { x: yard.tile.x, y: yard.tile.y }
       unit.flight = Flight.Ground
@@ -880,6 +883,60 @@ export class Game {
       }
     }
     return best
+  }
+
+  private releaseJet(owner: Player): boolean {
+    const spot = this.openJetBay(owner.id)
+    if (!spot) return false
+    const tile = bayTile(spot.airport.tile, spot.bay)
+    const unit = this.placeMobile(owner, UnitTypeId.Jet, tile, bayFacing(spot.bay))
+    unit.home = { x: spot.airport.tile.x, y: spot.airport.tile.y }
+    unit.bay = spot.bay
+    unit.flight = Flight.Ground
+    unit.altitude = 0
+    return true
+  }
+
+  private openJetBay(playerId: number): { airport: Unit; bay: number } | null {
+    for (const airport of this.units) {
+      if (!this.finishedAirport(airport, playerId)) continue
+      const bay = openBay(this.takenBays(airport))
+      if (bay >= 0) return { airport, bay }
+    }
+    return null
+  }
+
+  private jetRoom(playerId: number): number {
+    const pads: TileCoord[] = []
+    const parked: { x: number; y: number; bay: number }[] = []
+    for (const unit of this.units) {
+      if (unit.ownerId !== playerId || unit.health <= 0) continue
+      if (this.finishedAirport(unit, playerId)) pads.push({ x: unit.tile.x, y: unit.tile.y })
+      if (unit.typeId === UnitTypeId.Jet && unit.home && unit.bay >= 0) {
+        parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay })
+      }
+    }
+    return baysFree(pads, parked)
+  }
+
+  private queuedJets(playerId: number): number {
+    let count = 0
+    for (const job of this.training.get(playerId) ?? []) if (job.typeId === UnitTypeId.Jet) count += 1
+    return count
+  }
+
+  private finishedAirport(unit: Unit, playerId: number): boolean {
+    return unit.ownerId === playerId && unit.typeId === UnitTypeId.Airport && unit.health > 0 && unit.progress >= 1
+  }
+
+  private takenBays(airport: Unit): Set<number> {
+    const taken = new Set<number>()
+    for (const unit of this.units) {
+      if (unit.typeId !== UnitTypeId.Jet || unit.health <= 0 || unit.bay < 0) continue
+      if (unit.home?.x !== airport.tile.x || unit.home?.y !== airport.tile.y) continue
+      taken.add(unit.bay)
+    }
+    return taken
   }
 
   private hasFinished(playerId: number, typeId: UnitTypeId): boolean {

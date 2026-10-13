@@ -1,4 +1,4 @@
-import { CLIMB_RATE, cruiseAltitude, Flight, onRunway, orbitLoop } from './flight.ts'
+import { bayFacing, bayTile, CLIMB_RATE, cruiseAltitude, Flight, onRunway, orbitLoop, RUNWAY_LENGTH, taxiRoute } from './flight.ts'
 import { tileCenter, type TileCoord } from './tiles.ts'
 import { Locomotion, type UnitType } from './unit-types.ts'
 
@@ -34,6 +34,7 @@ export type MotionState = {
   orbitX?: number
   orbitY?: number
   loiter?: boolean
+  bay?: number
 }
 
 export function wrapAngle(angle: number): number {
@@ -89,15 +90,20 @@ export function stepMotion(
   state.z = next.z
   state.tileX = enteredX
   state.tileY = enteredY
-  if (state.path.length > 0) consumePath(state, type.locomotion === Locomotion.Plane && state.flight !== Flight.Landing)
+  const coasting = type.locomotion === Locomotion.Plane && state.flight !== Flight.Landing && state.flight !== Flight.Taxi
+  if (state.path.length > 0) consumePath(state, coasting)
   if (air) settleFlight(state, type)
   if (air) stepAltitude(state, type, dt)
+  if (air) settleTaxi(state, type, dt)
   return MotionResult.Moved
 }
 
 export function driveMotion(state: MotionState, type: UnitType, dt: number): void {
   if (type.topSpeed <= 0 || state.path.length === 0) return
-  if (type.locomotion === Locomotion.Plane) steerPlane(state, type, dt)
+  if (type.locomotion === Locomotion.Plane) {
+    if (state.flight === Flight.Taxi) steerTaxi(state, type, dt)
+    else steerPlane(state, type, dt)
+  }
   else if (type.locomotion === Locomotion.Rotor) steerRotor(state, type, dt)
   else if (type.locomotion === Locomotion.Hull) steerHull(state, type, dt)
   else if (type.locomotion === Locomotion.Wheels) steerWheels(state, type, dt)
@@ -170,11 +176,23 @@ function steerTracks(state: MotionState, type: UnitType, dt: number): void {
 }
 
 function beginFlight(state: MotionState, type: UnitType): void {
-  if ((state.flight === undefined || state.flight === Flight.Ground) && state.path.length > 0) state.flight = Flight.Takeoff
+  if (state.flight === Flight.Taxi) {
+    if (!state.returning && readyForTakeoff(state)) state.flight = Flight.Takeoff
+    return
+  }
+  if ((state.flight === undefined || state.flight === Flight.Ground) && state.path.length > 0) {
+    const homeX = state.homeX
+    const homeY = state.homeY
+    const slot = type.locomotion === Locomotion.Plane && homeX !== undefined && homeY !== undefined && (state.bay ?? -1) >= 0
+    const onStrip = slot && homeX !== undefined && homeY !== undefined && onRunway(state.tileX, state.tileY, homeX, homeY)
+    state.flight = slot && !onStrip ? Flight.Taxi : Flight.Takeoff
+  }
+  if (state.flight === Flight.Taxi || state.flight === Flight.Ground) return
   if (!state.returning || state.homeX === undefined || state.homeY === undefined) return
+  const padX = state.homeX + (type.locomotion === Locomotion.Plane ? 1.5 : 0.5)
   const padZ = state.homeY + (type.locomotion === Locomotion.Plane ? 1.5 : 0.5)
-  const dist = Math.hypot(state.x - (state.homeX + 0.5), state.z - padZ)
-  const reach = type.locomotion === Locomotion.Plane ? 6.5 : 1.6
+  const dist = Math.hypot(state.x - padX, state.z - padZ)
+  const reach = type.locomotion === Locomotion.Plane ? 8 : 1.6
   if (dist < reach) state.flight = Flight.Landing
 }
 
@@ -196,13 +214,24 @@ function stepAltitude(state: MotionState, type: UnitType, dt: number): void {
   else if (flight === Flight.Takeoff) {
     const rolling = type.locomotion === Locomotion.Plane && state.speed < type.topSpeed * 0.5
     target = rolling ? 0 : cruise
-  } else if (flight === Flight.Landing && type.locomotion === Locomotion.Plane && runwayDistance(state) > 3) {
+  } else if (flight === Flight.Landing && type.locomotion === Locomotion.Plane && runwayDistance(state) > 4.5) {
     target = cruise * 0.85
   }
   state.altitude = approach(state.altitude ?? 0, target, CLIMB_RATE * dt)
   if (flight === Flight.Takeoff && target > 0 && state.altitude > target * 0.65) state.flight = Flight.Cruise
   const onPad = type.locomotion !== Locomotion.Plane || parkedOnRunway(state)
   if (flight === Flight.Landing && onPad && state.altitude < 0.08 && Math.abs(state.speed) < 0.4) {
+    const bay = state.bay ?? -1
+    if (type.locomotion === Locomotion.Plane && bay >= 0 && state.homeX !== undefined && state.homeY !== undefined) {
+      state.flight = Flight.Taxi
+      state.altitude = 0
+      state.speed = 0
+      state.returning = true
+      state.orbitX = undefined
+      state.orbitY = undefined
+      state.path = taxiRoute({ x: state.tileX, y: state.tileY }, { x: state.homeX, y: state.homeY }, bay)
+      return
+    }
     state.flight = Flight.Ground
     state.speed = 0
     state.altitude = 0
@@ -215,7 +244,75 @@ function stepAltitude(state: MotionState, type: UnitType, dt: number): void {
 
 function runwayDistance(state: MotionState): number {
   if (state.homeX === undefined || state.homeY === undefined) return 0
-  return Math.hypot(state.x - (state.homeX + 0.5), state.z - (state.homeY + 2))
+  return Math.hypot(state.x - (state.homeX + 1.5), state.z - (state.homeY + RUNWAY_LENGTH - 0.5))
+}
+
+const TAXI_SPEED = 2.2
+
+function readyForTakeoff(state: MotionState): boolean {
+  if (state.homeX === undefined || state.homeY === undefined) return false
+  if (!onRunway(state.tileX, state.tileY, state.homeX, state.homeY)) return false
+  const next = nextLeg(state)
+  if (!next || next.x !== state.homeX + 1 || next.y <= state.tileY) return false
+  return Math.abs(wrapAngle(state.facing)) < 0.7
+}
+
+function nextLeg(state: MotionState): TileCoord | undefined {
+  for (const tile of state.path) {
+    if (tile.x === state.tileX && tile.y === state.tileY) continue
+    return tile
+  }
+  return undefined
+}
+
+function steerTaxi(state: MotionState, type: UnitType, dt: number): void {
+  const aim = aimPoint(state)
+  if (!aim) return
+  const err = headingError(state, aim)
+  state.facing = wrapAngle(state.facing + clamp(err, -type.turnRate * dt, type.turnRate * dt))
+  let target = Math.abs(err) < 0.45 ? TAXI_SPEED : 0
+  if (state.path.length === 1) {
+    const center = tileCenter(state.path[0])
+    const dist = Math.hypot(center.x - state.x, center.z - state.z)
+    if (dist < 1) target = Math.min(target, Math.max(0.35, dist))
+  }
+  state.speed = approach(state.speed, target, type.acceleration * dt)
+}
+
+function settleTaxi(state: MotionState, type: UnitType, dt: number): void {
+  if (state.flight !== Flight.Taxi || !state.returning) return
+  if (state.homeX === undefined || state.homeY === undefined || (state.bay ?? -1) < 0) return
+  const bay = state.bay ?? 0
+  const spot = bayTile({ x: state.homeX, y: state.homeY }, bay)
+  const center = tileCenter(spot)
+  const dist = Math.hypot(state.x - center.x, state.z - center.z)
+  if (dist > 0.42 || Math.abs(state.speed) > 0.85) {
+    if (state.path.length === 0) state.path = taxiRoute({ x: state.tileX, y: state.tileY }, { x: state.homeX, y: state.homeY }, bay)
+    return
+  }
+  const err = wrapAngle(bayFacing(bay) - state.facing)
+  if (Math.abs(err) > 0.12) {
+    state.speed = 0
+    state.path = []
+    state.x = center.x
+    state.z = center.z
+    state.tileX = spot.x
+    state.tileY = spot.y
+    state.facing = wrapAngle(state.facing + clamp(err, -type.turnRate * dt, type.turnRate * dt))
+    return
+  }
+  state.x = center.x
+  state.z = center.z
+  state.tileX = spot.x
+  state.tileY = spot.y
+  state.facing = bayFacing(bay)
+  state.speed = 0
+  state.altitude = 0
+  state.flight = Flight.Ground
+  state.returning = false
+  state.path = []
+  state.orbitX = undefined
+  state.orbitY = undefined
 }
 
 function steerPlane(state: MotionState, type: UnitType, dt: number): void {
@@ -244,7 +341,7 @@ function steerRotor(state: MotionState, type: UnitType, dt: number): void {
 function planeAim(state: MotionState): TileCoord | undefined {
   const flight = state.flight ?? Flight.Ground
   if ((flight === Flight.Takeoff || flight === Flight.Landing) && state.homeX !== undefined && state.homeY !== undefined) {
-    const end = { x: state.homeX, y: state.homeY + 3 }
+    const end = { x: state.homeX + 1, y: state.homeY + RUNWAY_LENGTH - 1 }
     if (flight === Flight.Landing || state.tileY < end.y) return end
   }
   if (state.path.length === 0) return undefined

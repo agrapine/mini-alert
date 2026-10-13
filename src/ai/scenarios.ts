@@ -1,4 +1,4 @@
-import { cityCenter, footprintNearCity, layoutCities, populationOf, projectCity, type CityLayout } from '../shared/cities.ts'
+import { cityCenter, cityContains, footprintNearCity, growCity, layoutCities, populationOf, projectCity, type CityLayout } from '../shared/cities.ts'
 import { canPlaceFootprint } from '../shared/footprint.ts'
 import {
   ClientMessageKind,
@@ -7,7 +7,7 @@ import {
   type TrainJob,
   type UnitSnapshot,
 } from '../shared/protocol.ts'
-import type { Terrain, TileCoord } from '../shared/tiles.ts'
+import { isWalkableTerrain, type Terrain, type TileCoord } from '../shared/tiles.ts'
 import { ARTILLERY, FACTORY, HEAVY_TANK, MED_TANK, SCOUT, TURRET, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 
 export const enum Scenario {
@@ -17,12 +17,20 @@ export const enum Scenario {
   Capture = 4,
   Assault = 5,
   Scout = 6,
+  Garrison = 7,
+}
+
+export const enum Lane {
+  Home = 1,
+  Contact = 2,
+  March = 3,
 }
 
 const CONTACT = 14
 const ZONE = 16
 const CALL_IN = 20
-const COMFORT = 8
+const ASSAULT_ARMY = 3
+const ENEMY_CITY_ARMY = 2
 
 export type Brain = {
   playerId: number
@@ -35,7 +43,23 @@ export type Brain = {
   training: readonly TrainJob[]
   cities: readonly (CityState | null)[]
   terrain: ArrayLike<number>
+  known?: ArrayLike<number>
   layouts?: readonly (CityLayout | null)[]
+}
+
+export type Candidate = {
+  lane: Lane
+  scenario: Scenario
+  score: number
+  x: number
+  y: number
+  orders: number
+  blocked: string
+}
+
+export type Thought = {
+  candidates: Candidate[]
+  orders: ClientMessage[]
 }
 
 type Zone = {
@@ -45,92 +69,180 @@ type Zone = {
   scenario: Scenario
 }
 
-type Choice = {
-  score: number
-  zone: Zone
+type Plan = {
+  orders: ClientMessage[]
+  hold: number[]
+  blocked: string
 }
 
-export function consider(brain: Brain, budget: number): ClientMessage[] {
+export function scenarioName(scenario: Scenario): string {
+  if (scenario === Scenario.Defend) return 'defend'
+  if (scenario === Scenario.Build) return 'build'
+  if (scenario === Scenario.Train) return 'train'
+  if (scenario === Scenario.Capture) return 'capture'
+  if (scenario === Scenario.Assault) return 'assault'
+  if (scenario === Scenario.Scout) return 'explore'
+  return 'garrison'
+}
+
+export function laneName(lane: Lane): string {
+  if (lane === Lane.Home) return 'home'
+  if (lane === Lane.Contact) return 'contact'
+  return 'march'
+}
+
+export function consider(brain: Brain, budget: number): Thought {
+  if (budget <= 0) return { candidates: [], orders: [] }
   const layouts = cityLayouts(brain)
-  const choice = choose(brain, layouts)
-  if (!choice || budget <= 0) return []
-  return plan(brain, layouts, choice.zone).slice(0, budget)
-}
+  const reserved = new Set<number>()
+  const candidates: Candidate[] = []
+  const orders: ClientMessage[] = []
+  const home = homeCity(brain, layouts)
+  const center = home ? cityCenter(home) : null
+  let garrisoned = false
 
-function choose(brain: Brain, layouts: readonly (CityLayout | null)[]): Choice | null {
-  const choices: Choice[] = []
+  const note = (lane: Lane, scenario: Scenario, score: number, at: TileCoord, blocked: string, issued: number) => {
+    candidates.push({ lane, scenario, score, x: at.x, y: at.y, orders: issued, blocked })
+  }
+
+  const apply = (lane: Lane, scenario: Scenario, score: number, at: TileCoord, plan: Plan): boolean => {
+    if (plan.blocked) {
+      note(lane, scenario, score, at, plan.blocked, 0)
+      return false
+    }
+    const space = budget - orders.length
+    const queued = space > 0 ? plan.orders.slice(0, space) : []
+    if (plan.orders.length > 0 && queued.length === 0 && plan.hold.length === 0) return false
+    for (const id of plan.hold) reserved.add(id)
+    for (const order of queued) {
+      orders.push(order)
+      const id = orderedUnit(order)
+      if (id !== null) reserved.add(id)
+    }
+    note(lane, scenario, score, at, '', queued.length)
+    return true
+  }
+
+  if (home && center && !factory(brain)) {
+    const built = build(brain, layouts, zoneAt(center, Scenario.Build))
+    if (built.length > 0) apply(Lane.Home, Scenario.Build, 90, center, acting(built))
+    else {
+      const blocked = supplyUsed(brain) + FACTORY.supply > population(brain) ? 'pop' : 'no site'
+      apply(Lane.Home, Scenario.Build, 90, center, idle(blocked))
+      if (blocked === 'pop' && canGrow(brain, home)) garrisoned = garrison(brain, home, center, apply)
+    }
+  }
+
+  if (home && center && finishedFactory(brain)) {
+    const trained = train(brain)
+    if (trained.length > 0) apply(Lane.Home, Scenario.Train, 80, center, acting(trained))
+    else if (trainBlocked(brain)) {
+      apply(Lane.Home, Scenario.Train, 80, center, idle('pop'))
+      if (!garrisoned && canGrow(brain, home)) garrisoned = garrison(brain, home, center, apply)
+    }
+    if (!own(brain).some((unit) => unit.typeId === UnitTypeId.Turret && unit.health > 0) && brain.credits >= TURRET.cost) {
+      const placed = build(brain, layouts, zoneAt(center, Scenario.Build))
+      if (placed.length > 0) apply(Lane.Home, Scenario.Build, 45, center, acting(placed))
+      else {
+        const blocked = supplyUsed(brain) + TURRET.supply > population(brain) ? 'pop' : 'no site'
+        apply(Lane.Home, Scenario.Build, 45, center, idle(blocked))
+      }
+    }
+  }
+
   const contact = nearestContact(brain)
   if (contact) {
-    choices.push({
-      score: 120,
-      zone: { x: contact.tileX, y: contact.tileY, radius: ZONE, scenario: Scenario.Defend },
-    })
+    const at = { x: contact.tileX, y: contact.tileY }
+    apply(Lane.Contact, Scenario.Defend, 120, at, fight(brain, zoneAt(at, Scenario.Defend), reserved, false))
   }
-  const home = homeCity(brain, layouts)
-  if (home && !factory(brain)) {
-    const center = cityCenter(home)
-    choices.push({ score: 90, zone: { x: center.x, y: center.y, radius: ZONE, scenario: Scenario.Build } })
-  }
-  if (finishedFactory(brain) && supplyUsed(brain) < COMFORT && supplyUsed(brain) < population(brain) && brain.credits >= SCOUT.cost) {
-    const pad = home ? cityCenter(home) : average(ownMobile(brain))
-    if (pad) choices.push({ score: 80, zone: { x: pad.x, y: pad.y, radius: ZONE, scenario: Scenario.Train } })
-  }
+
+  let marched = false
   const assault = nearestEnemy(brain)
-  if (assault && mobileCount(brain) >= 3) {
-    choices.push({
-      score: 70,
-      zone: { x: assault.tileX, y: assault.tileY, radius: ZONE, scenario: Scenario.Assault },
-    })
+  if (assault) {
+    const at = { x: assault.tileX, y: assault.tileY }
+    const plan = mobileCount(brain) < ASSAULT_ARMY
+      ? idle('army too small')
+      : fight(brain, zoneAt(at, Scenario.Assault), reserved, true)
+    if (apply(Lane.March, Scenario.Assault, 70, at, plan)) marched = true
   }
-  if (finishedFactory(brain) && supplyUsed(brain) < population(brain) && brain.credits >= SCOUT.cost) {
-    const pad = home ? cityCenter(home) : average(ownMobile(brain))
-    if (pad) choices.push({ score: 55, zone: { x: pad.x, y: pad.y, radius: ZONE, scenario: Scenario.Train } })
+  const captureCity = captureTarget(brain, layouts)
+  if (!marched && captureCity) {
+    const at = cityCenter(captureCity)
+    const index = layouts.indexOf(captureCity)
+    const state = index >= 0 ? brain.cities[index] : null
+    const neutral = !state || state.ownerId === 0
+    const plan = mobileCount(brain) < (neutral ? 1 : ENEMY_CITY_ARMY)
+      ? idle('army too small')
+      : capture(brain, at, reserved)
+    if (apply(Lane.March, Scenario.Capture, 50, at, plan)) marched = true
   }
-  const capture = captureTarget(brain, layouts)
-  if (capture && mobileCount(brain) >= 2) {
-    const center = cityCenter(capture)
-    choices.push({ score: 50, zone: { x: center.x, y: center.y, radius: ZONE, scenario: Scenario.Capture } })
+  if (!marched) {
+    const explorer = freeScout(brain, reserved)
+    const at = explorer ? frontier(brain, explorer) ?? scoutTarget(brain, layouts) : null
+    const plan = !explorer || !at ? idle('no target') : scoutMove(explorer, at)
+    apply(Lane.March, Scenario.Scout, 20, at ?? center ?? { x: 0, y: 0 }, plan)
   }
-  if (finishedFactory(brain) && !own(brain).some((unit) => unit.typeId === UnitTypeId.Turret && unit.health > 0) && brain.credits >= TURRET.cost && home) {
-    const center = cityCenter(home)
-    choices.push({ score: 45, zone: { x: center.x, y: center.y, radius: ZONE, scenario: Scenario.Build } })
-  }
-  const scout = scoutTarget(brain, layouts)
-  if (scout) {
-    choices.push({ score: 20, zone: { x: scout.x, y: scout.y, radius: ZONE, scenario: Scenario.Scout } })
-  }
-  let best: Choice | null = null
-  for (const choice of choices) {
-    if (!best || choice.score > best.score) best = choice
-  }
-  return best
+
+  return { candidates, orders }
 }
 
-function plan(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
-  if (zone.scenario === Scenario.Defend || zone.scenario === Scenario.Assault) return fight(brain, zone)
-  if (zone.scenario === Scenario.Build) return build(brain, layouts, zone)
-  if (zone.scenario === Scenario.Train) return train(brain)
-  if (zone.scenario === Scenario.Capture) return capture(brain, layouts, zone)
-  return scoutMove(brain, zone)
+function zoneAt(at: TileCoord, scenario: Scenario): Zone {
+  return { x: at.x, y: at.y, radius: ZONE, scenario }
 }
 
-function fight(brain: Brain, zone: Zone): ClientMessage[] {
+function acting(orders: ClientMessage[], hold: number[] = []): Plan {
+  return { orders, hold, blocked: '' }
+}
+
+function idle(blocked: string): Plan {
+  return { orders: [], hold: [], blocked }
+}
+
+function garrison(
+  brain: Brain,
+  home: CityLayout,
+  center: TileCoord,
+  apply: (lane: Lane, scenario: Scenario, score: number, at: TileCoord, plan: Plan) => boolean,
+): boolean {
+  const unit = garrisonUnit(brain, home)
+  if (!unit) {
+    apply(Lane.Home, Scenario.Garrison, 85, center, idle('no target'))
+    return false
+  }
+  if (cityContains(home, unit.tileX, unit.tileY)) {
+    apply(Lane.Home, Scenario.Garrison, 85, center, acting([], [unit.id]))
+    return true
+  }
+  apply(Lane.Home, Scenario.Garrison, 85, center, acting([move(unit.id, center)]))
+  return true
+}
+
+function fight(brain: Brain, zone: Zone, reserved: ReadonlySet<number>, pull: boolean): Plan {
   const enemies = hostiles(brain).filter((unit) => near(unit, zone))
-  const target = enemies[0] ?? nearestEnemy(brain)
-  if (!target) return []
+  const target = enemies[0] ?? (pull ? nearestEnemy(brain) : null)
+  if (!target) return idle('no target')
+  let units = committed(brain, zone, reserved)
+  if (units.length === 0 && pull) units = freeMobile(brain, reserved)
+  if (units.length === 0) return idle('no target')
   const orders: ClientMessage[] = []
-  for (const unit of committed(brain, zone)) {
+  const hold: number[] = []
+  for (const unit of units) {
     const type = UNIT_TYPES[unit.typeId]
     const dist = Math.hypot(unit.x - target.x, unit.z - target.z)
-    if (dist <= type.weapon.range) continue
+    if (dist <= type.weapon.range && unit.attackId === target.id) {
+      hold.push(unit.id)
+      continue
+    }
     if (unit.typeId === UnitTypeId.Artillery) {
       const tile = standoff(unit, target, type.weapon.range * 0.75)
-      if (!aimed(unit, tile)) orders.push(move(unit.id, tile))
+      if (aimed(unit, tile)) hold.push(unit.id)
+      else orders.push(move(unit.id, tile))
       continue
     }
     orders.push({ kind: ClientMessageKind.OrderAttack, unitId: unit.id, targetId: target.id })
   }
-  return orders
+  if (orders.length === 0 && hold.length === 0) return idle('no target')
+  return acting(orders, hold)
 }
 
 function build(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
@@ -156,27 +268,27 @@ function train(brain: Brain): ClientMessage[] {
   return [{ kind: ClientMessageKind.Spawn, typeId }]
 }
 
-function capture(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone): ClientMessage[] {
-  const city = layouts.find((layout) => {
-    if (!layout) return false
-    const center = cityCenter(layout)
-    return center.x === zone.x && center.y === zone.y
-  })
-  const tile = city ? cityCenter(city) : { x: zone.x, y: zone.y }
-  const orders: ClientMessage[] = []
-  for (const unit of committed(brain, zone)) {
-    if (aimed(unit, tile)) continue
-    orders.push(move(unit.id, tile))
-  }
-  return orders
+function trainBlocked(brain: Brain): boolean {
+  const typeId = nextTrain(brain)
+  return typeId !== null && supplyUsed(brain) + UNIT_TYPES[typeId].supply > population(brain)
 }
 
-function scoutMove(brain: Brain, zone: Zone): ClientMessage[] {
-  const scout = ownMobile(brain).find((unit) => unit.typeId === UnitTypeId.Scout) ?? ownMobile(brain)[0]
-  if (!scout) return []
-  const tile = { x: zone.x, y: zone.y }
-  if (aimed(scout, tile)) return []
-  return [move(scout.id, tile)]
+function capture(brain: Brain, tile: TileCoord, reserved: ReadonlySet<number>): Plan {
+  const units = freeMobile(brain, reserved)
+  if (units.length === 0) return idle('no target')
+  const orders: ClientMessage[] = []
+  const hold: number[] = []
+  for (const unit of units) {
+    if (aimed(unit, tile)) hold.push(unit.id)
+    else orders.push(move(unit.id, tile))
+  }
+  if (orders.length === 0 && hold.length === 0) return idle('no target')
+  return acting(orders, hold)
+}
+
+function scoutMove(scout: UnitSnapshot, tile: TileCoord): Plan {
+  if (aimed(scout, tile)) return acting([], [scout.id])
+  return acting([move(scout.id, tile)])
 }
 
 function nextTrain(brain: Brain): UnitTypeId | null {
@@ -197,13 +309,14 @@ function nextTrain(brain: Brain): UnitTypeId | null {
   return null
 }
 
-function committed(brain: Brain, zone: Zone): UnitSnapshot[] {
+function committed(brain: Brain, zone: Zone, reserved: ReadonlySet<number>): UnitSnapshot[] {
   const ranked = ownMobile(brain)
+    .filter((unit) => !reserved.has(unit.id))
     .map((unit) => ({ unit, dist: Math.hypot(unit.tileX - zone.x, unit.tileY - zone.y) }))
     .filter((entry) => entry.dist <= zone.radius || (entry.unit.goal === null && entry.dist <= CALL_IN))
     .sort((a, b) => a.dist - b.dist)
-  const idle = ranked.filter((entry) => entry.unit.goal === null)
-  const pool = idle.length > 0 ? idle : ranked
+  const waiting = ranked.filter((entry) => entry.unit.goal === null)
+  const pool = waiting.length > 0 ? waiting : ranked
   return pool.map((entry) => entry.unit)
 }
 
@@ -257,7 +370,7 @@ function captureTarget(brain: Brain, layouts: readonly (CityLayout | null)[]): C
 }
 
 function scoutTarget(brain: Brain, layouts: readonly (CityLayout | null)[]): TileCoord | null {
-  const origin = average(ownMobile(brain))
+  const origin = average(freeMobile(brain, new Set()))
   if (!origin) return null
   let best: TileCoord | null = null
   let bestDist = Infinity
@@ -272,6 +385,40 @@ function scoutTarget(brain: Brain, layouts: readonly (CityLayout | null)[]): Til
     }
   }
   return best
+}
+
+function frontier(brain: Brain, origin: UnitSnapshot): TileCoord | null {
+  const known = brain.known
+  if (!known || known.length !== brain.width * brain.height) return null
+  let close: TileCoord | null = null
+  let closeDist = Infinity
+  let far: TileCoord | null = null
+  let farDist = Infinity
+  for (let y = 0; y < brain.height; y++) {
+    for (let x = 0; x < brain.width; x++) {
+      const index = y * brain.width + x
+      if (known[index] !== 1 || !isWalkableTerrain(brain.terrain[index] as Terrain)) continue
+      if (!besideUnknown(known, brain.width, brain.height, x, y)) continue
+      const dist = (x - origin.tileX) ** 2 + (y - origin.tileY) ** 2
+      if (dist <= 0) continue
+      if (dist < closeDist) {
+        closeDist = dist
+        close = { x, y }
+      }
+      if (dist >= 16 && dist < farDist) {
+        farDist = dist
+        far = { x, y }
+      }
+    }
+  }
+  return far ?? close
+}
+
+function besideUnknown(known: ArrayLike<number>, width: number, height: number, x: number, y: number): boolean {
+  if (x + 1 < width && known[y * width + x + 1] !== 1) return true
+  if (x > 0 && known[y * width + x - 1] !== 1) return true
+  if (y + 1 < height && known[(y + 1) * width + x] !== 1) return true
+  return y > 0 && known[(y - 1) * width + x] !== 1
 }
 
 function homeCity(brain: Brain, layouts: readonly (CityLayout | null)[]): CityLayout | null {
@@ -348,6 +495,26 @@ function ownMobile(brain: Brain): UnitSnapshot[] {
   return own(brain).filter((unit) => UNIT_TYPES[unit.typeId].topSpeed > 0 && unit.progress >= 1)
 }
 
+function freeMobile(brain: Brain, reserved: ReadonlySet<number>): UnitSnapshot[] {
+  return ownMobile(brain).filter((unit) => !reserved.has(unit.id))
+}
+
+function freeScout(brain: Brain, reserved: ReadonlySet<number>): UnitSnapshot | null {
+  return ownMobile(brain).find((unit) => unit.typeId === UnitTypeId.Scout && !reserved.has(unit.id)) ?? null
+}
+
+function canGrow(brain: Brain, home: CityLayout): boolean {
+  const next = growCity(home, brain.terrain, brain.width, brain.height)
+  return next !== null && populationOf(next) > populationOf(home)
+}
+
+function garrisonUnit(brain: Brain, home: CityLayout): UnitSnapshot | null {
+  const free = ownMobile(brain)
+  const inside = free.filter((unit) => cityContains(home, unit.tileX, unit.tileY))
+  const pool = inside.length > 0 ? inside : free
+  return pool.find((unit) => unit.typeId !== UnitTypeId.Scout) ?? pool[0] ?? null
+}
+
 function hostiles(brain: Brain): UnitSnapshot[] {
   return brain.units.filter((unit) => unit.ownerId !== brain.playerId && unit.ownerId !== 0 && unit.health > 0 && unit.progress >= 1)
 }
@@ -396,6 +563,13 @@ function aimed(unit: UnitSnapshot, tile: TileCoord): boolean {
 
 function move(unitId: number, tile: TileCoord): ClientMessage {
   return { kind: ClientMessageKind.OrderMove, unitId, tile }
+}
+
+function orderedUnit(order: ClientMessage): number | null {
+  if (order.kind === ClientMessageKind.OrderMove || order.kind === ClientMessageKind.OrderAttack || order.kind === ClientMessageKind.OrderAttackGround) {
+    return order.unitId
+  }
+  return null
 }
 
 function standoff(unit: UnitSnapshot, target: UnitSnapshot, distance: number): TileCoord {

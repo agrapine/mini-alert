@@ -54,22 +54,28 @@ export function createCruiser(unit: UnitSnapshot) {
 
 export function createAirport(unit: UnitSnapshot) {
   const stage = buildStage(unit.progress)
-  const parts: Part[] = [{ w: 1.55, h: 0.08, d: 3.55, x: 0, y: 0.04, z: 0, tint: CONCRETE }]
+  const parts: Part[] = [{ w: 2.82, h: 0.08, d: 2.82, x: 0, y: 0.04, z: 0, tint: CONCRETE }]
   if (stage > 0) {
     parts.push(
-      { w: 0.08, h: 0.02, d: 3.15, x: 0, y: 0.09, z: 0, tint: 0xe4e0d4 },
-      { w: 0.55, h: 0.02, d: 0.1, x: 0, y: 0.09, z: 1.15, tint: 0xe4e0d4 },
-      { w: 0.55, h: 0.02, d: 0.1, x: 0, y: 0.09, z: -1.15, tint: 0xe4e0d4 },
+      { w: 0.82, h: 0.025, d: 2.62, x: 0, y: 0.09, z: 0, tint: 0x3c4038 },
+      { w: 0.08, h: 0.02, d: 0.42, x: 0, y: 0.11, z: -0.72, tint: 0xe8e4d8 },
+      { w: 0.08, h: 0.02, d: 0.42, x: 0, y: 0.11, z: 0, tint: 0xe8e4d8 },
+      { w: 0.08, h: 0.02, d: 0.42, x: 0, y: 0.11, z: 0.72, tint: 0xe8e4d8 },
+      { w: 0.62, h: 0.02, d: 0.08, x: 0, y: 0.11, z: -1.12, tint: 0xe8e4d8 },
+      { w: 0.62, h: 0.02, d: 0.08, x: 0, y: 0.11, z: 1.12, tint: 0xe8e4d8 },
     )
+    for (const x of [-1, 1]) {
+      for (const z of [-1, 0, 1]) parts.push({ w: 0.5, h: 0.02, d: 0.08, x, y: 0.1, z: z + 0.28, tint: 0xd4cfc2 })
+    }
   }
   if (stage > 1) {
     parts.push(
-      { w: 0.28, h: 0.55, d: 0.28, x: 0.95, y: 0.32, z: -1.35, tint: STEEL },
-      { w: 0.42, h: 0.08, d: 0.42, x: 0.95, y: 0.62, z: -1.35, tint: DARK },
+      { w: 0.28, h: 0.55, d: 0.28, x: -1.15, y: 0.32, z: -1.15, tint: STEEL },
+      { w: 0.4, h: 0.08, d: 0.4, x: -1.15, y: 0.62, z: -1.15, tint: DARK },
     )
   }
-  if (stage > 2) parts.push({ w: 0.16, h: 0.1, d: 0.16, x: 0.95, y: 0.72, z: -1.35, tint: GLASS })
-  const group = assemble(unit, parts, stage === 0 ? 0.12 : 0.8, 3.6)
+  if (stage > 2) parts.push({ w: 0.16, h: 0.1, d: 0.16, x: -1.15, y: 0.72, z: -1.15, tint: GLASS })
+  const group = assemble(unit, parts, stage === 0 ? 0.12 : 0.7, 2.82)
   group.userData.stage = stage
   return group
 }

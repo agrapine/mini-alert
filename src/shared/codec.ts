@@ -287,6 +287,7 @@ function encodeUnit(unit: UnitSnapshot): UnitMotionMsg {
     orbitSet: unit.orbit != null,
     orbitX: unit.orbit?.x ?? 0,
     orbitY: unit.orbit?.y ?? 0,
+    bay: unit.bay ?? -1,
   } as UnitMotionMsg
 }
 
@@ -314,6 +315,7 @@ function decodeUnit(unit: UnitMotionMsg): UnitSnapshot {
     flight: unit.flight,
     altitude: unit.altitude,
     orbit: unit.orbitSet ? { x: unit.orbitX, y: unit.orbitY } : null,
+    bay: unit.bay,
   }
 }
 

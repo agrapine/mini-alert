@@ -386,15 +386,13 @@ export const AIRPORT: UnitType = {
   turnRate: 0,
   wheelbase: 0,
   maxSteer: 0,
-  footprint: 2,
-  spanX: 2,
-  spanY: 4,
+  footprint: 3,
   maxHealth: 420,
   cost: 2800,
   supply: 12,
   buildTime: 8,
   body: BodyKind.Mesh,
-  hull: { x: 1.6, y: 0.4, z: 3.6 },
+  hull: { x: 2.8, y: 0.5, z: 2.8 },
   weapon: UNARMED,
 }
 
