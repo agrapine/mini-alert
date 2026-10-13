@@ -31,6 +31,8 @@ type VisibleCity = CityRecord & { layout: CityLayout }
 type Session = {
   playerId: number
   playing: boolean
+  /** Remote players get a command's result at once instead of on the next tick. */
+  echo: boolean
   send(message: ServerFrame): void
 }
 
@@ -81,6 +83,7 @@ export class ServerHost {
     const session: Session = {
       playerId: player.id,
       playing: true,
+      echo: false,
       send: (message) => link.server.send(message),
     }
     link.server.onClient((message) => this.onCommand(session, message))
@@ -89,7 +92,7 @@ export class ServerHost {
   }
 
   attach(playerId: number, playing: boolean, send: (message: ServerFrame) => void): RemotePlay {
-    const session: Session = { playerId, playing, send }
+    const session: Session = { playerId, playing, echo: true, send }
     this.sessions.push(session)
     return {
       get playing() {
@@ -186,6 +189,7 @@ export class ServerHost {
     } else if (message.kind === ClientMessageKind.SetRally) {
       this.game.setRally(playerId, message.tile)
     }
+    if (session.echo) this.pushTick(session, this.game.unitSnapshots(), [], [], [])
   }
 
   private pushSync(session: Session) {
