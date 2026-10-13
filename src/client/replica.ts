@@ -30,6 +30,7 @@ const RATE_MIN_SPAN_MS = 2000
 const AHEAD_LIMIT = 20
 const NOMINAL_RATE = 1 / SIM_STEP
 const SLOW_RATE = 0.8 * NOMINAL_RATE
+const JITTER_TICKS = 15
 const REPLAY_LIMIT = 15
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
@@ -230,8 +231,7 @@ export class Replica {
   /**
    * The server clock follows the earliest-arriving frames: a frame ahead of the estimate moves it forward, a late
    * one records how late it was and keeps the estimate within AHEAD_LIMIT of it. When every frame of a window
-   * arrived late, the estimate eases back by half the excess (at least a tick), so jitter barely moves the clock
-   * but drift still does.
+   * arrived late, the estimate eases back by at most a tick, so jitter never pulls the clock back but drift still does.
    */
   private noteArrival(tick: number, snapshot: boolean, now: number) {
     this.measureRate(tick, now)
@@ -246,8 +246,8 @@ export class Replica {
 
   /**
    * How fast the server ticks, from how much later its punctual frames arrive over time: the least-late frame of
-   * the older and of the newer half of the window. Jitter only makes frames later, so it cannot fake a slowdown;
-   * a server that falls clearly behind the wall clock sets the pace.
+   * the older and of the newer half of the window. Lag growth within JITTER_TICKS is jitter; a server that falls
+   * clearly further behind the wall clock sets the pace.
    */
   private measureRate(tick: number, now: number) {
     this.arrivals.push({ at: now, tick })
@@ -265,6 +265,10 @@ export class Replica {
       } else if (!newer || lag < newer.lag) newer = { lag, at: arrival.at }
     }
     if (!older || !newer || newer.at === older.at) return
+    if (newer.lag - older.lag <= JITTER_TICKS) {
+      this.rate = NOMINAL_RATE
+      return
+    }
     const measured = NOMINAL_RATE - ((newer.lag - older.lag) * 1000) / (newer.at - older.at)
     this.rate = measured < SLOW_RATE ? Math.max(0, measured) : NOMINAL_RATE
   }
@@ -272,8 +276,7 @@ export class Replica {
   private settleSlack(dt: number) {
     this.slackAge += dt
     if (this.slackAge < SLACK_SECONDS) return
-    const excess = this.slack - SLACK_TICKS
-    if (excess > 0 && this.slack !== Infinity) this.serverEstimate -= Math.min(excess, Math.max(SLACK_TICKS, excess / 2))
+    if (this.slack > SLACK_TICKS && this.slack !== Infinity) this.serverEstimate -= Math.min(this.slack - SLACK_TICKS, SLACK_TICKS)
     this.slack = Infinity
     this.slackAge = 0
   }

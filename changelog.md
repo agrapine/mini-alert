@@ -20,7 +20,7 @@
 - The minimap fog repaints a few times a second instead of every frame.
 - Fewer network messages: routine updates (credits, training and build progress, map reveals, capture progress, position checks) are batched about five times a second, roughly halving messages in battle and cutting them by four fifths while only training.
 - A connection that goes silent, for example when a phone switches networks, reconnects within seconds and keeps your seat.
-- Reloading the page keeps your seat, and the server notices dropped connections within about ten seconds.
+- Reloading the page keeps your seat, and the server notices dropped connections within about twenty seconds.
 - Move orders take the exact route at once: your game plans the same path the server will, and the server allows for your ping so both stay in step.
 - Units are corrected only when your view drifts from the server, about ninety percent fewer position updates.
 - Long matches no longer slow down as cities get damaged: the server keeps each city's layout instead of rebuilding it for every unit every tick (about 12x faster in a war-torn match).

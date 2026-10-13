@@ -120,6 +120,29 @@ describe('replica drawing', () => {
     expect(worst).toBeLessThanOrEqual(1)
   })
 
+  it('keeps a steady pace when sparse frames arrive with uneven delays', () => {
+    const replica = joined(scout(1.5, []))
+    const delays = [0, 15, 0, 3, 15, 0]
+    const frames: { tick: number; at: number }[] = []
+    for (let tick = 40, at = 0; tick < 1500; tick += 60) {
+      at = Math.max(at, tick + 2 + delays[frames.length % delays.length])
+      frames.push({ tick, at })
+    }
+    const start = performance.now()
+    const paces: number[] = []
+    let second = replica.localTick
+    for (let half = 22; half < 3000; half++) {
+      const now = half / 2
+      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, ack: 0, events: [] }, start + (now - 11) * SIM_STEP * 1000)
+      replica.advance(SIM_STEP / 2)
+      if (half % 60 === 0) {
+        paces.push(replica.localTick - second)
+        second = replica.localTick
+      }
+    }
+    expect(Math.max(...paces.slice(3).map((pace) => Math.abs(pace - 30)))).toBeLessThanOrEqual(2)
+  })
+
   it('replays a correction from an older tick up to the local tick', () => {
     const replica = joined(scout(2.5, road))
     for (let i = 0; i < 10; i++) replica.advance(SIM_STEP)
