@@ -9,6 +9,11 @@
 - Middle-click panning always lets go when the button is released.
 - Smoother play over the network: units glide between server updates, corrections blend in instead of jumping, units start moving the moment you give an order, and a backgrounded tab catches up without reloading the map.
 - Much less network traffic (about 5x less during battles and captures) and faster pathfinding, so large orders no longer stall the server.
+- Steady unit speed on jittery connections: late network packets no longer slow the game down and speed it back up.
+- Orders get their answer from the server straight away instead of on the next server tick.
+- No more stutter while scouting or capturing cities: the island is rebuilt at most twice a second, and never for city changes.
+- Turrets turn toward their target between server updates, and attack orders start turning and moving at once.
+- The server does about a sixth of the fog-of-war work per player, leaving more headroom on small hosts.
 
 ## 0.4
 
