@@ -4,6 +4,7 @@ import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
 const DOT = 3.25
+const FOG_REPAINT_MS = 200
 
 export type MinimapCommand = (
   tile: TileCoord,
@@ -23,6 +24,7 @@ export class Minimap {
   private command: MinimapCommand | null = null
   private lastMask: Float32Array | null = null
   private fogSettled = false
+  private fogPaintedAt = -Infinity
   private cityHash = 0
 
   constructor(
@@ -121,7 +123,11 @@ export class Minimap {
     rally: TileCoord | null = null,
   ) {
     this.cityStates = cities
-    if (fog) this.applyFog(fog)
+    const now = performance.now()
+    if (fog && now - this.fogPaintedAt >= FOG_REPAINT_MS) {
+      this.fogPaintedAt = now
+      this.applyFog(fog)
+    }
     const ctx = this.marks.getContext('2d')
     if (!ctx) return
     const width = this.root.clientWidth

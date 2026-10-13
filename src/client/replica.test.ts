@@ -33,6 +33,7 @@ function joined(...units: UnitSnapshot[]): Replica {
   const replica = new Replica()
   replica.apply({
     tick: 10,
+    ack: 0,
     events: [
       { kind: ServerEventKind.Welcome, playerId: 1 },
       {
@@ -69,7 +70,7 @@ describe('replica drawing', () => {
   it('blends a server correction in instead of jumping', () => {
     const replica = joined(scout(2.5, []))
     const before = replica.drawn()[0].x
-    const moved: ServerFrame = { tick: 10, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, []) }] }
+    const moved: ServerFrame = { tick: 10, ack: 0, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, []) }] }
     replica.apply(moved)
     expect(replica.units[0].x).toBe(3.5)
     expect(replica.drawn()[0].x).toBeCloseTo(before)
@@ -79,7 +80,7 @@ describe('replica drawing', () => {
 
   it('steps forward to a frame far ahead instead of asking for a snapshot', () => {
     const replica = joined(scout(2.5, road))
-    replica.apply({ tick: 160, events: [] })
+    replica.apply({ tick: 160, ack: 0, events: [] })
     expect(replica.wantsSnapshot).toBe(false)
     expect(replica.localTick).toBe(160)
     expect(replica.units[0].x).toBeGreaterThan(5)
@@ -110,7 +111,7 @@ describe('replica drawing', () => {
     const paces: number[] = []
     for (let half = 22; half < 260; half++) {
       const now = half / 2
-      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, events: [] })
+      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, ack: 0, events: [] })
       const before = replica.localTick
       replica.advance(SIM_STEP / 2)
       paces.push(replica.localTick - before)
@@ -128,7 +129,7 @@ describe('replica drawing', () => {
     const replica = joined(scout(2.5, road))
     for (let i = 0; i < 10; i++) replica.advance(SIM_STEP)
     expect(replica.localTick).toBe(20)
-    replica.apply({ tick: 15, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, road.slice(1)) }] })
+    replica.apply({ tick: 15, ack: 0, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, road.slice(1)) }] })
     expect(replica.units[0].x).toBeGreaterThan(3.5 + 4 * SIM_STEP * 3 * 0.9)
   })
 
@@ -138,7 +139,7 @@ describe('replica drawing', () => {
     const cities = replica.cityRevision
     const layout = { x: 2, y: 2, span: 2, seed: 1, tiles: [{ x: 2, y: 2 }], buildings: [], streets: [] }
     const state = { ownerId: 1, color: 0, progress: 0.5, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
-    replica.apply({ tick: 10, events: [{ kind: ServerEventKind.CityUpdate, city: { index: 0, state, layout } }] })
+    replica.apply({ tick: 10, ack: 0, events: [{ kind: ServerEventKind.CityUpdate, city: { index: 0, state, layout } }] })
     expect(replica.terrainRevision).toBe(terrain)
     expect(replica.cityRevision).toBe(cities + 1)
     expect(replica.knownTiles).toBe(256)
@@ -159,5 +160,14 @@ describe('replica drawing', () => {
     replica.predictAttack([2], { x: 14.5, z: 4.5 }, 3)
     expect(replica.unit(2)?.attackId).toBe(3)
     expect(replica.unit(2)?.path).toEqual([{ x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 }])
+  })
+
+  it('shows an expected unit in the queue until its command is acknowledged', () => {
+    const replica = joined(scout(2.5, []))
+    replica.expectTraining(5, UnitTypeId.MedTank)
+    replica.apply({ tick: 11, ack: 4, events: [] })
+    expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, progress: 0 }])
+    replica.apply({ tick: 12, ack: 5, events: [] })
+    expect(replica.queue()).toEqual([])
   })
 })

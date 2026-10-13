@@ -205,6 +205,8 @@ message ServerEvent {
 message ServerFrame {
   uint32 tick = 1;
   repeated ServerEvent events = 2;
+  // Highest command seq the server has applied for this player.
+  uint32 ack = 3;
 }
 
 message OrderMoveMsg {
@@ -258,6 +260,8 @@ message PlaceCityMsg {
 
 message RequestSnapshotMsg {}
 
+message PingMsg {}
+
 message ClientCommand {
   oneof body {
     OrderMoveMsg order_move = 1;
@@ -271,5 +275,7 @@ message ClientCommand {
     OrderAttackGroundMsg order_attack_ground = 9;
     PlaceCityMsg place_city = 10;
     RequestSnapshotMsg request_snapshot = 11;
+    PingMsg ping = 12;
   }
+  uint32 seq = 20;
 }

@@ -4,14 +4,20 @@ import { decodeServerFrame, encodeClientMessage } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
 import { type ClientMessage, type ServerFrame } from '../shared/protocol.ts'
 
+const RTT_BLEND = 0.25
+
 export class Net {
   onLobby: (message: LobbyServerMessage) => void = () => {}
   onGame: (message: ServerFrame) => void = () => {}
   onOpen: () => void = () => {}
   onClose: () => void = () => {}
+  /** Smoothed time from sending a command to the frame that acknowledges it, in milliseconds. */
+  rtt: number | null = null
 
   private socket: WebSocket | null = null
   private retry = 0
+  private seq = 0
+  private readonly sentAt = new Map<number, number>()
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -46,6 +52,7 @@ export class Net {
             return
           }
           logGameIn(frame)
+          this.noteAck(frame.ack)
           this.onGame(frame)
         })
         return
@@ -57,6 +64,7 @@ export class Net {
         return
       }
       logGameIn(frame)
+      this.noteAck(frame.ack)
       this.onGame(frame)
     })
     socket.addEventListener('close', () => {
@@ -75,13 +83,25 @@ export class Net {
     this.socket.send(JSON.stringify({ channel: Channel.Lobby, message }))
   }
 
-  sendGame(message: ClientMessage) {
-    if (this.socket?.readyState !== WebSocket.OPEN) return
+  sendGame(message: ClientMessage): number | null {
+    if (this.socket?.readyState !== WebSocket.OPEN) return null
     logGameOut(message)
-    const payload = encodeClientMessage(message)
+    this.seq += 1
+    const payload = encodeClientMessage(message, this.seq)
     const copy = new ArrayBuffer(payload.byteLength)
     new Uint8Array(copy).set(payload)
     this.socket.send(copy)
+    this.sentAt.set(this.seq, performance.now())
+    return this.seq
+  }
+
+  private noteAck(ack: number) {
+    for (const [seq, at] of this.sentAt) {
+      if (seq > ack) continue
+      const sample = performance.now() - at
+      this.rtt = this.rtt === null ? sample : this.rtt + (sample - this.rtt) * RTT_BLEND
+      this.sentAt.delete(seq)
+    }
   }
 }
 

@@ -44,7 +44,7 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(false)
 
     frames.length = 0
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } })
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 1)
     host.tick(SIM_STEP)
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
   })
@@ -66,6 +66,19 @@ describe('host snapshots', () => {
     expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
   })
 
+  it('acknowledges a spectator ping at once', () => {
+    const game = new Game(new World(16, 16))
+    const player = game.addPlayer()
+    game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const watch = host.attach(player.id, false, (message) => frames.push(message))
+    watch.sync()
+    frames.length = 0
+    watch.command({ kind: ClientMessageKind.Ping }, 7)
+    expect(frames.map((frame) => frame.ack)).toEqual([7])
+  })
+
   it('answers an order before the next tick', () => {
     const game = new Game(new World(32, 32))
     const player = game.addPlayer()
@@ -75,7 +88,7 @@ describe('host snapshots', () => {
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
     frames.length = 0
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } })
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 2)
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === scout.id)).toBe(true)
   })
 
@@ -116,7 +129,7 @@ describe('host snapshots', () => {
     const frames: ServerFrame[] = []
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 30, y: 8 } })
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 30, y: 8 } }, 3)
     for (let i = 0; i < 90; i++) host.tick(SIM_STEP)
     const patches = events(frames).filter((event) => event.kind === ServerEventKind.MapPatch)
     expect(patches.length).toBeGreaterThan(0)
@@ -139,10 +152,10 @@ describe('host snapshots', () => {
     const frames: ServerFrame[] = []
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 16, y: 4 } })
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 16, y: 4 } }, 4)
     for (let i = 0; i < 31; i++) host.tick(SIM_STEP)
     frames.length = 0
-    play.command({ kind: ClientMessageKind.RequestSnapshot })
+    play.command({ kind: ClientMessageKind.RequestSnapshot }, 5)
     const frame = frames.at(-1)
     expect(frame?.tick).toBe(host.tickNo)
     expect(frame?.events.some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)

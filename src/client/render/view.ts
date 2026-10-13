@@ -2,7 +2,8 @@ import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, InstancedMesh, Ma
 import type { CityState, MapPoint, ShotEvent, ShotHit, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { citySightOrigin, type CityLayout } from '../../shared/cities.ts'
 import { collectFriends, type CitySight, type SightSource } from '../../shared/vision.ts'
-import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId, buildStage, spanOf, type WeaponKind } from '../../shared/unit-types.ts'
+import type { ExpectedSite } from '../replica.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
@@ -59,6 +60,7 @@ export class GameView {
   private syncedCities = -1
   private sinceSurface = 0
   private readonly placement: Mesh[] = []
+  private readonly expectedSites: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
   private readonly wrecks: Wreck[] = []
@@ -248,6 +250,28 @@ export class GameView {
 
   setShowRanges(on: boolean) {
     this.showRanges = on
+  }
+
+  showExpectedSites(sites: readonly ExpectedSite[]) {
+    while (this.expectedSites.length < sites.length) {
+      const mesh = new Mesh(
+        new PlaneGeometry(1, 1),
+        new MeshBasicMaterial({ color: 0xf6f1dc, transparent: true, opacity: 0.4, depthWrite: false }),
+      )
+      mesh.rotation.x = -Math.PI / 2
+      mesh.renderOrder = 4
+      this.stage.scene.add(mesh)
+      this.expectedSites.push(mesh)
+    }
+    for (let i = 0; i < this.expectedSites.length; i++) {
+      const mesh = this.expectedSites[i]
+      const site = sites[i]
+      mesh.visible = site !== undefined
+      if (!site) continue
+      const span = site.typeId === null ? { x: 1, y: 1 } : spanOf(UNIT_TYPES[site.typeId])
+      mesh.scale.set(span.x - 0.08, span.y - 0.08, 1)
+      mesh.position.set(site.tile.x + span.x / 2, TILE_TOP + 0.09, site.tile.y + span.y / 2)
+    }
   }
 
   showPlacement(cells: readonly { x: number; y: number; open: boolean }[] | null) {

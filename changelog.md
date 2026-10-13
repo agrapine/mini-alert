@@ -14,6 +14,10 @@
 - No more stutter while scouting or capturing cities: the island is rebuilt at most twice a second, and never for city changes.
 - Turrets turn toward their target between server updates, and attack orders start turning and moving at once.
 - The server does about a sixth of the fog-of-war work per player, leaving more headroom on small hosts.
+- The HUD shows your ping to the server.
+- Queued units, rally flags, the primary factory star and new building sites show the moment you click, then settle to the server's answer.
+- The game connection is compressed, cutting traffic about 4x again.
+- The minimap fog repaints a few times a second instead of every frame.
 
 ## 0.4
 
