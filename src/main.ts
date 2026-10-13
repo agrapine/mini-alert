@@ -355,6 +355,7 @@ fullscreen?.addEventListener('click', () => {
 
 const COUNT_SECONDS = 0.15
 const PING_MS = 2000
+const STALL_MS = 6000
 const SLOW_PING_MS = 150
 const BAD_PING_MS = 300
 let shownCredits = replica.credits
@@ -575,5 +576,11 @@ const frame = (now: number) => {
 requestAnimationFrame(frame)
 
 window.setInterval(() => {
-  if (live.view && !document.hidden) net.sendGame({ kind: ClientMessageKind.Ping })
+  if (!live.view) return
+  const quiet = net.quietFor()
+  if (quiet !== null && quiet > STALL_MS) {
+    net.drop()
+    return
+  }
+  if (!document.hidden) net.sendGame({ kind: ClientMessageKind.Ping })
 }, PING_MS)

@@ -1,5 +1,5 @@
 import { logGameIn, logGameOut, logGameUndecodable, logLobbyIn, logLobbyOut } from './debug-net.ts'
-import { ensureSeatToken } from './seat.ts'
+import { ensureSeatToken, randomToken } from './seat.ts'
 import { decodeServerFrame, encodeClientMessage } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
 import { type ClientMessage, type ServerFrame } from '../shared/protocol.ts'
@@ -18,20 +18,24 @@ export class Net {
   private retry = 0
   private seq = 0
   private readonly sentAt = new Map<number, number>()
+  private heardAt = 0
+  private readonly tab = randomToken()
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
     const seat = encodeURIComponent(ensureSeatToken())
-    const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${seat}`)
+    const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${seat}&tab=${this.tab}`)
     socket.binaryType = 'arraybuffer'
     this.socket = socket
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return
       this.retry = 0
+      this.heardAt = performance.now()
       this.onOpen()
     })
     socket.addEventListener('message', (event) => {
       if (this.socket !== socket) return
+      this.heardAt = performance.now()
       if (typeof event.data === 'string') {
         const wire = readWire(event.data)
         if (!wire) return
@@ -75,6 +79,22 @@ export class Net {
       this.retry += 1
       window.setTimeout(() => this.connect(), wait)
     })
+  }
+
+  /** Milliseconds since the open socket last delivered anything; null while no socket is open. */
+  quietFor(): number | null {
+    if (this.socket?.readyState !== WebSocket.OPEN) return null
+    return performance.now() - this.heardAt
+  }
+
+  /** Abandons the current socket without waiting for its close handshake and connects again at once. */
+  drop() {
+    const socket = this.socket
+    if (!socket) return
+    this.socket = null
+    socket.close()
+    this.onClose()
+    this.connect()
   }
 
   sendLobby(message: LobbyClientMessage) {
