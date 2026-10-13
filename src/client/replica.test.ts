@@ -131,4 +131,16 @@ describe('replica drawing', () => {
     replica.apply({ tick: 15, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, road.slice(1)) }] })
     expect(replica.units[0].x).toBeGreaterThan(3.5 + 4 * SIM_STEP * 3 * 0.9)
   })
+
+  it('counts a city update apart from terrain changes', () => {
+    const replica = joined(scout(2.5, []))
+    const terrain = replica.terrainRevision
+    const cities = replica.cityRevision
+    const layout = { x: 2, y: 2, span: 2, seed: 1, tiles: [{ x: 2, y: 2 }], buildings: [], streets: [] }
+    const state = { ownerId: 1, color: 0, progress: 0.5, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
+    replica.apply({ tick: 10, events: [{ kind: ServerEventKind.CityUpdate, city: { index: 0, state, layout } }] })
+    expect(replica.terrainRevision).toBe(terrain)
+    expect(replica.cityRevision).toBe(cities + 1)
+    expect(replica.knownTiles).toBe(256)
+  })
 })

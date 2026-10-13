@@ -18,6 +18,7 @@ import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from 
 const WRECK_HOLD = 4
 const WRECK_SINK = 1.6
 const BAR_ZOOM = 0.5
+const SURFACE_SECONDS = 0.5
 
 type Wreck = {
   group: Group
@@ -54,6 +55,9 @@ export class GameView {
   private fog: Fog | null = null
   private surface: Group | null = null
   private propsEpoch = -1
+  private builtTerrain = -1
+  private syncedCities = -1
+  private sinceSurface = 0
   private readonly placement: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
@@ -98,7 +102,7 @@ export class GameView {
     this.stage.scene.add(this.rallyMark)
   }
 
-  mountTerrain(world: WorldSnapshot) {
+  mountTerrain(world: WorldSnapshot, revision: number, knownTiles: number) {
     const root = document.querySelector<HTMLElement>('#minimap')
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
@@ -111,19 +115,29 @@ export class GameView {
     sea.position.set(world.width / 2, 0, world.height / 2)
     this.stage.scene.add(sea)
     this.presentSurface(world)
+    this.builtTerrain = revision
     if (root && map && marks) {
       this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
     }
     this.cities = new CityLayer()
     void this.cities.load().then(() => this.stage.scene.add(this.cities!.root))
-    this.noteProps(world)
+    this.noteProps(world, knownTiles)
   }
 
-  noteMap(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+  /** Rebuilds the island at most every SURFACE_SECONDS; the fog hides tiles revealed in between. */
+  syncTerrain(world: WorldSnapshot, revision: number, knownTiles: number) {
+    if (revision === this.builtTerrain || this.sinceSurface < SURFACE_SECONDS) return
+    this.builtTerrain = revision
+    this.sinceSurface = 0
     this.presentSurface(world)
-    this.minimap?.retile(world, layouts)
-    this.cities?.present(layouts, this.pendingCities)
-    this.noteProps(world)
+    this.minimap?.retile(world)
+    this.noteProps(world, knownTiles)
+  }
+
+  syncCities(layouts: readonly (CityLayout | null)[], revision: number) {
+    if (revision === this.syncedCities) return
+    this.syncedCities = revision
+    this.minimap?.setLayouts(layouts)
   }
 
   private presentSurface(world: WorldSnapshot) {
@@ -135,8 +149,8 @@ export class GameView {
     this.stage.scene.add(this.surface)
   }
 
-  private noteProps(world: WorldSnapshot) {
-    const epoch = knownStamp(world)
+  private noteProps(world: WorldSnapshot, knownTiles: number) {
+    const epoch = knownTiles
     if (epoch === this.propsEpoch) return
     this.propsEpoch = epoch
     const field = this.props ?? new PropField()
@@ -147,8 +161,6 @@ export class GameView {
       this.clearGround(this.pendingCleared, false)
     })
   }
-
-  private pendingCities: readonly (CityState | null)[] = []
 
   private ownedCitySights(playerId: number, states: readonly (CityState | null)[], layouts: readonly (CityLayout | null)[]) {
     const sights = this.citySights
@@ -210,6 +222,7 @@ export class GameView {
 
   update(dt: number) {
     this.shotDt = dt
+    this.sinceSurface += dt
     this.stage.update(dt)
   }
 
@@ -402,7 +415,6 @@ export class GameView {
     this.shots.strike(hits, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
-    this.pendingCities = cities
     if (playerId === null) this.friendBuffer.length = 0
     else collectFriends(living, playerId, this.ownedCitySights(playerId, cities, layouts), this.friendBuffer)
     this.fog?.update(this.shotDt, this.friendBuffer)
@@ -588,12 +600,6 @@ function disposeGroup(group: Group) {
   for (const material of materials) {
     if (!material.userData.retain) material.dispose()
   }
-}
-
-function knownStamp(world: WorldSnapshot): number {
-  let count = 0
-  for (const bit of world.known) count += bit
-  return count
 }
 
 function circleHitsRect(

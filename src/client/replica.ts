@@ -49,8 +49,9 @@ export class Replica {
   serverTick = 0
   localTick = 0
   wantsSnapshot = false
-  mapChanged = false
-  propEpoch = 0
+  terrainRevision = 0
+  cityRevision = 0
+  knownTiles = 0
 
   private pendingShots: ShotEvent[] = []
   private pendingHits: ShotHit[] = []
@@ -58,14 +59,12 @@ export class Replica {
   private readonly clearedTiles = new Set<string>()
   private evolved: (CityLayout | null)[] = []
   private blockedBuildings = new Set<string>()
-  private cityRevision = 0
   private settledRevision = -1
   private accumulator = 0
   private serverEstimate = 0
   private slack = Infinity
   private slackAge = 0
   private askedTick = -SNAPSHOT_GAP
-  private knownCount = 0
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
   private readonly drawnUnits: UnitSnapshot[] = []
@@ -88,8 +87,8 @@ export class Replica {
     this.slack = Infinity
     this.slackAge = 0
     this.wantsSnapshot = false
-    this.mapChanged = false
-    this.propEpoch = 0
+    this.terrainRevision = 0
+    this.knownTiles = 0
     this.clearedTiles.clear()
     this.pendingShots = []
     this.pendingHits = []
@@ -100,7 +99,6 @@ export class Replica {
     this.settledRevision = -1
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
-    this.knownCount = 0
     this.shown.clear()
   }
 
@@ -220,12 +218,6 @@ export class Replica {
     const yields = this.pendingYields
     this.pendingYields = []
     return yields
-  }
-
-  consumeMapChange(): boolean {
-    const changed = this.mapChanged
-    this.mapChanged = false
-    return changed
   }
 
   unit(id: number): UnitSnapshot | undefined {
@@ -552,11 +544,13 @@ export class Replica {
       world.holes = []
       world.roads = []
       world.towns = []
+      this.knownTiles = 0
     }
     for (const cell of map.cells) {
       if (cell.x < 0 || cell.y < 0 || cell.x >= world.width || cell.y >= world.height) continue
       const index = cell.y * world.width + cell.x
       world.terrain[index] = cell.terrain
+      if (world.known[index] === 0) this.knownTiles += 1
       world.known[index] = 1
       world.shifts[index] = cell.shift
     }
@@ -565,12 +559,7 @@ export class Replica {
     world.roads.push(...map.roads)
     world.towns.push(...map.towns)
     this.world = world
-    this.mapChanged = true
-    const known = world.known.reduce((sum, bit) => sum + bit, 0)
-    if (replace || known - this.knownCount >= 16) {
-      this.knownCount = known
-      this.propEpoch += 1
-    }
+    this.terrainRevision += 1
   }
 
   private installCities(records: readonly CityRecord[], replace: boolean) {
@@ -587,7 +576,6 @@ export class Replica {
       if (record.layout) this.layouts[record.index] = record.layout
     }
     this.cityRevision += 1
-    this.mapChanged = true
   }
 
   private citySizeAt(tile: TileCoord, plotOnly: boolean): number | null {

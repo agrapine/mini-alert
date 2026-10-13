@@ -53,11 +53,15 @@ export class Minimap {
     this.hover = hover
   }
 
-  retile(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+  retile(world: WorldSnapshot) {
     this.world = world
-    this.layouts = layouts
     paintInto(this.pristine, world)
     this.base.set(this.pristine)
+    this.fogSettled = false
+  }
+
+  setLayouts(layouts: readonly (CityLayout | null)[]) {
+    this.layouts = layouts
     this.fogSettled = false
   }
 
