@@ -36,7 +36,7 @@ export const enum ServerEventKind {
 
 export type OrderMove = {
   kind: ClientMessageKind.OrderMove
-  unitId: number
+  unitIds: number[]
   tile: TileCoord
 }
 
@@ -47,13 +47,13 @@ export type OrderSpawn = {
 
 export type OrderAttack = {
   kind: ClientMessageKind.OrderAttack
-  unitId: number
+  unitIds: number[]
   targetId: number
 }
 
 export type OrderAttackGround = {
   kind: ClientMessageKind.OrderAttackGround
-  unitId: number
+  unitIds: number[]
   tile: TileCoord
 }
 
@@ -212,7 +212,7 @@ export type CityState = {
 export type CityRecord = {
   index: number
   state: CityState
-  layout: CityLayout
+  layout: CityLayout | null
 }
 
 export type UnitMotionEvent = {

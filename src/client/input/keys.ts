@@ -58,7 +58,7 @@ export function bindPanKeys(view: GameView): { release(): void } {
   return { release }
 }
 
-function typing(event: KeyboardEvent): boolean {
+export function typing(event: KeyboardEvent): boolean {
   if (document.body.classList.contains('lobby')) return true
   const target = event.target
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true

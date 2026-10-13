@@ -10,29 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file wire.proto.
  */
 export const file_wire: GenFile = /*@__PURE__*/
-  fileDesc("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cmVkaXRzGAQgASgCEh8KCHRyYWluaW5nGAUgAygLMg0ucnRzLlRyYWluSm9iEhoKEnByaW1hcnlfZmFjdG9yeV9pZBgGIAEoDRIRCglyYWxseV9zZXQYByABKAgSDwoHcmFsbHlfeBgIIAEoBRIPCgdyYWxseV95GAkgASgFIisKDVVuaXRIZWFsdGhNc2cSCgoCaWQYASABKA0SDgoGaGVhbHRoGAIgASgCIi8KD1VuaXRQcm9ncmVzc01zZxIKCgJpZBgBIAEoDRIQCghwcm9ncmVzcxgCIAEoAiIbCg1Vbml0SGlkZGVuTXNnEgoKAmlkGAEgASgNInQKDFNob3RTcGF3bk1zZxIMCgRraW5kGAEgASgNEhIKCnNob290ZXJfaWQYAiABKA0SCQoBeBgDIAEoAhIJCgF6GAQgASgCEg0KBWFpbV94GAUgASgCEg0KBWFpbV96GAYgASgCEg4KBmZsaWdodBgHIAEoAiI4CgpTaG90SGl0TXNnEgwKBGtpbmQYASABKA0SDQoFYWltX3gYAiABKAISDQoFYWltX3oYAyABKAIiHQoKQ3JlZGl0c01zZxIPCgdjcmVkaXRzGAEgASgCIioKC1RyYWluaW5nTXNnEhsKBGpvYnMYASADKAsyDS5ydHMuVHJhaW5Kb2IiLQoIUmFsbHlNc2cSCwoDc2V0GAEgASgIEgkKAXgYAiABKAUSCQoBeRgDIAEoBSIYCgpQcmltYXJ5TXNnEgoKAmlkGAEgASgNIicKCVlpZWxkc01zZxIaCgZwb2ludHMYASADKAsyCi5ydHMuUG9pbnQiwAQKC1NlcnZlckV2ZW50EiIKB3dlbGNvbWUYASABKAsyDy5ydHMuV2VsY29tZU1zZ0gAEiQKCHNuYXBzaG90GAIgASgLMhAucnRzLlNuYXBzaG90TXNnSAASJAoGbW90aW9uGAMgASgLMhIucnRzLlVuaXRNb3Rpb25Nc2dIABIkCgZoZWFsdGgYBCABKAsyEi5ydHMuVW5pdEhlYWx0aE1zZ0gAEigKCHByb2dyZXNzGAUgASgLMhQucnRzLlVuaXRQcm9ncmVzc01zZ0gAEiQKBmhpZGRlbhgGIAEoCzISLnJ0cy5Vbml0SGlkZGVuTXNnSAASJwoKc2hvdF9zcGF3bhgHIAEoCzIRLnJ0cy5TaG90U3Bhd25Nc2dIABIjCghzaG90X2hpdBgIIAEoCzIPLnJ0cy5TaG90SGl0TXNnSAASIQoJbWFwX3BhdGNoGAkgASgLMgwucnRzLk1hcERhdGFIABIiCgRjaXR5GAogASgLMhIucnRzLkNpdHlVcGRhdGVNc2dIABIiCgdjcmVkaXRzGAsgASgLMg8ucnRzLkNyZWRpdHNNc2dIABIkCgh0cmFpbmluZxgMIAEoCzIQLnJ0cy5UcmFpbmluZ01zZ0gAEh4KBXJhbGx5GA0gASgLMg0ucnRzLlJhbGx5TXNnSAASIgoHcHJpbWFyeRgOIAEoCzIPLnJ0cy5QcmltYXJ5TXNnSAASIAoGeWllbGRzGA8gASgLMg4ucnRzLllpZWxkc01zZ0gAQgYKBGJvZHkiPQoLU2VydmVyRnJhbWUSDAoEdGljaxgBIAEoDRIgCgZldmVudHMYAiADKAsyEC5ydHMuU2VydmVyRXZlbnQiNQoMT3JkZXJNb3ZlTXNnEg8KB3VuaXRfaWQYASABKA0SCQoBeBgCIAEoBRIJCgF5GAMgASgFIhsKCFNwYXduTXNnEg8KB3R5cGVfaWQYASABKA0iNAoOT3JkZXJBdHRhY2tNc2cSDwoHdW5pdF9pZBgBIAEoDRIRCgl0YXJnZXRfaWQYAiABKA0iPQoUT3JkZXJBdHRhY2tHcm91bmRNc2cSDwoHdW5pdF9pZBgBIAEoDRIJCgF4GAIgASgFEgkKAXkYAyABKAUiOQoQUGxhY2VCdWlsZGluZ01zZxIPCgd0eXBlX2lkGAEgASgNEgkKAXgYAiABKAUSCQoBeRgDIAEoBSIhCg5DYW5jZWxTcGF3bk1zZxIPCgd0eXBlX2lkGAEgASgNIiQKEUNhbmNlbEJ1aWxkaW5nTXNnEg8KB3R5cGVfaWQYASABKA0iIAoNU2V0UHJpbWFyeU1zZxIPCgd1bml0X2lkGAEgASgNIiMKC1NldFJhbGx5TXNnEgkKAXgYASABKAUSCQoBeRgCIAEoBSIkCgxQbGFjZUNpdHlNc2cSCQoBeBgBIAEoBRIJCgF5GAIgASgFIhQKElJlcXVlc3RTbmFwc2hvdE1zZyKIBAoNQ2xpZW50Q29tbWFuZBInCgpvcmRlcl9tb3ZlGAEgASgLMhEucnRzLk9yZGVyTW92ZU1zZ0gAEh4KBXNwYXduGAIgASgLMg0ucnRzLlNwYXduTXNnSAASKwoMb3JkZXJfYXR0YWNrGAMgASgLMhMucnRzLk9yZGVyQXR0YWNrTXNnSAASLwoOcGxhY2VfYnVpbGRpbmcYBCABKAsyFS5ydHMuUGxhY2VCdWlsZGluZ01zZ0gAEisKDGNhbmNlbF9zcGF3bhgFIAEoCzITLnJ0cy5DYW5jZWxTcGF3bk1zZ0gAEjEKD2NhbmNlbF9idWlsZGluZxgGIAEoCzIWLnJ0cy5DYW5jZWxCdWlsZGluZ01zZ0gAEikKC3NldF9wcmltYXJ5GAcgASgLMhIucnRzLlNldFByaW1hcnlNc2dIABIlCglzZXRfcmFsbHkYCCABKAsyEC5ydHMuU2V0UmFsbHlNc2dIABI4ChNvcmRlcl9hdHRhY2tfZ3JvdW5kGAkgASgLMhkucnRzLk9yZGVyQXR0YWNrR3JvdW5kTXNnSAASJwoKcGxhY2VfY2l0eRgKIAEoCzIRLnJ0cy5QbGFjZUNpdHlNc2dIABIzChByZXF1ZXN0X3NuYXBzaG90GAsgASgLMhcucnRzLlJlcXVlc3RTbmFwc2hvdE1zZ0gAQgYKBGJvZHliBnByb3RvMw");
-
-/**
- * @generated from message rts.Tile
- */
-export type Tile = Message<"rts.Tile"> & {
-  /**
-   * @generated from field: int32 x = 1;
-   */
-  x: number;
-
-  /**
-   * @generated from field: int32 y = 2;
-   */
-  y: number;
-};
-
-/**
- * Describes the message rts.Tile.
- * Use `create(TileSchema)` to create a new message.
- */
-export const TileSchema: GenMessage<Tile> = /*@__PURE__*/
-  messageDesc(file_wire, 0);
+  fileDesc("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VW5pdEhlYWx0aE1zZxIKCgJpZBgBIAEoDRIOCgZoZWFsdGgYAiABKAIiLwoPVW5pdFByb2dyZXNzTXNnEgoKAmlkGAEgASgNEhAKCHByb2dyZXNzGAIgASgCIhsKDVVuaXRIaWRkZW5Nc2cSCgoCaWQYASABKA0idAoMU2hvdFNwYXduTXNnEgwKBGtpbmQYASABKA0SEgoKc2hvb3Rlcl9pZBgCIAEoDRIJCgF4GAMgASgCEgkKAXoYBCABKAISDQoFYWltX3gYBSABKAISDQoFYWltX3oYBiABKAISDgoGZmxpZ2h0GAcgASgCIjgKClNob3RIaXRNc2cSDAoEa2luZBgBIAEoDRINCgVhaW1feBgCIAEoAhINCgVhaW1fehgDIAEoAiIdCgpDcmVkaXRzTXNnEg8KB2NyZWRpdHMYASABKAIiKgoLVHJhaW5pbmdNc2cSGwoEam9icxgBIAMoCzINLnJ0cy5UcmFpbkpvYiItCghSYWxseU1zZxILCgNzZXQYASABKAgSCQoBeBgCIAEoBRIJCgF5GAMgASgFIhgKClByaW1hcnlNc2cSCgoCaWQYASABKA0iJwoJWWllbGRzTXNnEhoKBnBvaW50cxgBIAMoCzIKLnJ0cy5Qb2ludCLABAoLU2VydmVyRXZlbnQSIgoHd2VsY29tZRgBIAEoCzIPLnJ0cy5XZWxjb21lTXNnSAASJAoIc25hcHNob3QYAiABKAsyEC5ydHMuU25hcHNob3RNc2dIABIkCgZtb3Rpb24YAyABKAsyEi5ydHMuVW5pdE1vdGlvbk1zZ0gAEiQKBmhlYWx0aBgEIAEoCzISLnJ0cy5Vbml0SGVhbHRoTXNnSAASKAoIcHJvZ3Jlc3MYBSABKAsyFC5ydHMuVW5pdFByb2dyZXNzTXNnSAASJAoGaGlkZGVuGAYgASgLMhIucnRzLlVuaXRIaWRkZW5Nc2dIABInCgpzaG90X3NwYXduGAcgASgLMhEucnRzLlNob3RTcGF3bk1zZ0gAEiMKCHNob3RfaGl0GAggASgLMg8ucnRzLlNob3RIaXRNc2dIABIhCgltYXBfcGF0Y2gYCSABKAsyDC5ydHMuTWFwRGF0YUgAEiIKBGNpdHkYCiABKAsyEi5ydHMuQ2l0eVVwZGF0ZU1zZ0gAEiIKB2NyZWRpdHMYCyABKAsyDy5ydHMuQ3JlZGl0c01zZ0gAEiQKCHRyYWluaW5nGAwgASgLMhAucnRzLlRyYWluaW5nTXNnSAASHgoFcmFsbHkYDSABKAsyDS5ydHMuUmFsbHlNc2dIABIiCgdwcmltYXJ5GA4gASgLMg8ucnRzLlByaW1hcnlNc2dIABIgCgZ5aWVsZHMYDyABKAsyDi5ydHMuWWllbGRzTXNnSABCBgoEYm9keSI9CgtTZXJ2ZXJGcmFtZRIMCgR0aWNrGAEgASgNEiAKBmV2ZW50cxgCIAMoCzIQLnJ0cy5TZXJ2ZXJFdmVudCI2CgxPcmRlck1vdmVNc2cSEAoIdW5pdF9pZHMYASADKA0SCQoBeBgCIAEoBRIJCgF5GAMgASgFIhsKCFNwYXduTXNnEg8KB3R5cGVfaWQYASABKA0iNQoOT3JkZXJBdHRhY2tNc2cSEAoIdW5pdF9pZHMYASADKA0SEQoJdGFyZ2V0X2lkGAIgASgNIj4KFE9yZGVyQXR0YWNrR3JvdW5kTXNnEhAKCHVuaXRfaWRzGAEgAygNEgkKAXgYAiABKAUSCQoBeRgDIAEoBSI5ChBQbGFjZUJ1aWxkaW5nTXNnEg8KB3R5cGVfaWQYASABKA0SCQoBeBgCIAEoBRIJCgF5GAMgASgFIiEKDkNhbmNlbFNwYXduTXNnEg8KB3R5cGVfaWQYASABKA0iJAoRQ2FuY2VsQnVpbGRpbmdNc2cSDwoHdHlwZV9pZBgBIAEoDSIgCg1TZXRQcmltYXJ5TXNnEg8KB3VuaXRfaWQYASABKA0iIwoLU2V0UmFsbHlNc2cSCQoBeBgBIAEoBRIJCgF5GAIgASgFIiQKDFBsYWNlQ2l0eU1zZxIJCgF4GAEgASgFEgkKAXkYAiABKAUiFAoSUmVxdWVzdFNuYXBzaG90TXNnIogECg1DbGllbnRDb21tYW5kEicKCm9yZGVyX21vdmUYASABKAsyES5ydHMuT3JkZXJNb3ZlTXNnSAASHgoFc3Bhd24YAiABKAsyDS5ydHMuU3Bhd25Nc2dIABIrCgxvcmRlcl9hdHRhY2sYAyABKAsyEy5ydHMuT3JkZXJBdHRhY2tNc2dIABIvCg5wbGFjZV9idWlsZGluZxgEIAEoCzIVLnJ0cy5QbGFjZUJ1aWxkaW5nTXNnSAASKwoMY2FuY2VsX3NwYXduGAUgASgLMhMucnRzLkNhbmNlbFNwYXduTXNnSAASMQoPY2FuY2VsX2J1aWxkaW5nGAYgASgLMhYucnRzLkNhbmNlbEJ1aWxkaW5nTXNnSAASKQoLc2V0X3ByaW1hcnkYByABKAsyEi5ydHMuU2V0UHJpbWFyeU1zZ0gAEiUKCXNldF9yYWxseRgIIAEoCzIQLnJ0cy5TZXRSYWxseU1zZ0gAEjgKE29yZGVyX2F0dGFja19ncm91bmQYCSABKAsyGS5ydHMuT3JkZXJBdHRhY2tHcm91bmRNc2dIABInCgpwbGFjZV9jaXR5GAogASgLMhEucnRzLlBsYWNlQ2l0eU1zZ0gAEjMKEHJlcXVlc3Rfc25hcHNob3QYCyABKAsyFy5ydHMuUmVxdWVzdFNuYXBzaG90TXNnSABCBgoEYm9keWIGcHJvdG8z");
 
 /**
  * @generated from message rts.Point
@@ -54,7 +32,7 @@ export type Point = Message<"rts.Point"> & {
  * Use `create(PointSchema)` to create a new message.
  */
 export const PointSchema: GenMessage<Point> = /*@__PURE__*/
-  messageDesc(file_wire, 1);
+  messageDesc(file_wire, 0);
 
 /**
  * @generated from message rts.Poly
@@ -71,41 +49,12 @@ export type Poly = Message<"rts.Poly"> & {
  * Use `create(PolySchema)` to create a new message.
  */
 export const PolySchema: GenMessage<Poly> = /*@__PURE__*/
-  messageDesc(file_wire, 2);
+  messageDesc(file_wire, 1);
 
 /**
- * @generated from message rts.MapCell
- */
-export type MapCell = Message<"rts.MapCell"> & {
-  /**
-   * @generated from field: int32 x = 1;
-   */
-  x: number;
-
-  /**
-   * @generated from field: int32 y = 2;
-   */
-  y: number;
-
-  /**
-   * @generated from field: uint32 terrain = 3;
-   */
-  terrain: number;
-
-  /**
-   * @generated from field: uint32 shift = 4;
-   */
-  shift: number;
-};
-
-/**
- * Describes the message rts.MapCell.
- * Use `create(MapCellSchema)` to create a new message.
- */
-export const MapCellSchema: GenMessage<MapCell> = /*@__PURE__*/
-  messageDesc(file_wire, 3);
-
-/**
+ * Tile lists travel as sint32 pairs, each the step from the previous tile.
+ * Cells travel as index steps (index = y * width + x, ascending) beside one terrain and one shift byte per cell.
+ *
  * @generated from message rts.MapData
  */
 export type MapData = Message<"rts.MapData"> & {
@@ -120,9 +69,9 @@ export type MapData = Message<"rts.MapData"> & {
   height: number;
 
   /**
-   * @generated from field: repeated rts.MapCell cells = 3;
+   * @generated from field: repeated uint32 cell_steps = 3;
    */
-  cells: MapCell[];
+  cellSteps: number[];
 
   /**
    * @generated from field: repeated rts.Point coast = 4;
@@ -145,9 +94,19 @@ export type MapData = Message<"rts.MapData"> & {
   towns: Point[];
 
   /**
-   * @generated from field: repeated rts.Tile cleared = 8;
+   * @generated from field: repeated sint32 cleared = 8;
    */
-  cleared: Tile[];
+  cleared: number[];
+
+  /**
+   * @generated from field: bytes cell_terrain = 9;
+   */
+  cellTerrain: Uint8Array;
+
+  /**
+   * @generated from field: bytes cell_shifts = 10;
+   */
+  cellShifts: Uint8Array;
 };
 
 /**
@@ -155,7 +114,7 @@ export type MapData = Message<"rts.MapData"> & {
  * Use `create(MapDataSchema)` to create a new message.
  */
 export const MapDataSchema: GenMessage<MapData> = /*@__PURE__*/
-  messageDesc(file_wire, 4);
+  messageDesc(file_wire, 2);
 
 /**
  * @generated from message rts.TrainJob
@@ -177,7 +136,7 @@ export type TrainJob = Message<"rts.TrainJob"> & {
  * Use `create(TrainJobSchema)` to create a new message.
  */
 export const TrainJobSchema: GenMessage<TrainJob> = /*@__PURE__*/
-  messageDesc(file_wire, 5);
+  messageDesc(file_wire, 3);
 
 /**
  * @generated from message rts.CitySite
@@ -214,7 +173,7 @@ export type CitySite = Message<"rts.CitySite"> & {
  * Use `create(CitySiteSchema)` to create a new message.
  */
 export const CitySiteSchema: GenMessage<CitySite> = /*@__PURE__*/
-  messageDesc(file_wire, 6);
+  messageDesc(file_wire, 4);
 
 /**
  * @generated from message rts.CityBuilding
@@ -251,7 +210,7 @@ export type CityBuilding = Message<"rts.CityBuilding"> & {
  * Use `create(CityBuildingSchema)` to create a new message.
  */
 export const CityBuildingSchema: GenMessage<CityBuilding> = /*@__PURE__*/
-  messageDesc(file_wire, 7);
+  messageDesc(file_wire, 5);
 
 /**
  * @generated from message rts.CityStreet
@@ -293,7 +252,7 @@ export type CityStreet = Message<"rts.CityStreet"> & {
  * Use `create(CityStreetSchema)` to create a new message.
  */
 export const CityStreetSchema: GenMessage<CityStreet> = /*@__PURE__*/
-  messageDesc(file_wire, 8);
+  messageDesc(file_wire, 6);
 
 /**
  * @generated from message rts.CityLayoutMsg
@@ -320,9 +279,9 @@ export type CityLayoutMsg = Message<"rts.CityLayoutMsg"> & {
   seed: number;
 
   /**
-   * @generated from field: repeated rts.Tile tiles = 5;
+   * @generated from field: repeated sint32 tiles = 5;
    */
-  tiles: Tile[];
+  tiles: number[];
 
   /**
    * @generated from field: repeated rts.CityBuilding buildings = 6;
@@ -340,7 +299,7 @@ export type CityLayoutMsg = Message<"rts.CityLayoutMsg"> & {
  * Use `create(CityLayoutMsgSchema)` to create a new message.
  */
 export const CityLayoutMsgSchema: GenMessage<CityLayoutMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 9);
+  messageDesc(file_wire, 7);
 
 /**
  * @generated from message rts.CityStateMsg
@@ -377,9 +336,9 @@ export type CityStateMsg = Message<"rts.CityStateMsg"> & {
   grown: number;
 
   /**
-   * @generated from field: repeated rts.Tile ruins = 7;
+   * @generated from field: repeated sint32 ruins = 7;
    */
-  ruins: Tile[];
+  ruins: number[];
 
   /**
    * @generated from field: repeated rts.CitySite sites = 8;
@@ -392,7 +351,7 @@ export type CityStateMsg = Message<"rts.CityStateMsg"> & {
  * Use `create(CityStateMsgSchema)` to create a new message.
  */
 export const CityStateMsgSchema: GenMessage<CityStateMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 10);
+  messageDesc(file_wire, 8);
 
 /**
  * @generated from message rts.CityUpdateMsg
@@ -419,7 +378,7 @@ export type CityUpdateMsg = Message<"rts.CityUpdateMsg"> & {
  * Use `create(CityUpdateMsgSchema)` to create a new message.
  */
 export const CityUpdateMsgSchema: GenMessage<CityUpdateMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 11);
+  messageDesc(file_wire, 9);
 
 /**
  * @generated from message rts.UnitMotionMsg
@@ -491,14 +450,9 @@ export type UnitMotionMsg = Message<"rts.UnitMotionMsg"> & {
   tileY: number;
 
   /**
-   * @generated from field: repeated rts.Tile path = 14;
+   * @generated from field: repeated sint32 path = 14;
    */
-  path: Tile[];
-
-  /**
-   * @generated from field: rts.Tile goal = 15;
-   */
-  goal?: Tile | undefined;
+  path: number[];
 
   /**
    * @generated from field: uint32 attack_id = 16;
@@ -576,7 +530,7 @@ export type UnitMotionMsg = Message<"rts.UnitMotionMsg"> & {
  * Use `create(UnitMotionMsgSchema)` to create a new message.
  */
 export const UnitMotionMsgSchema: GenMessage<UnitMotionMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 12);
+  messageDesc(file_wire, 10);
 
 /**
  * @generated from message rts.WelcomeMsg
@@ -593,7 +547,7 @@ export type WelcomeMsg = Message<"rts.WelcomeMsg"> & {
  * Use `create(WelcomeMsgSchema)` to create a new message.
  */
 export const WelcomeMsgSchema: GenMessage<WelcomeMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 13);
+  messageDesc(file_wire, 11);
 
 /**
  * @generated from message rts.SnapshotMsg
@@ -650,7 +604,7 @@ export type SnapshotMsg = Message<"rts.SnapshotMsg"> & {
  * Use `create(SnapshotMsgSchema)` to create a new message.
  */
 export const SnapshotMsgSchema: GenMessage<SnapshotMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 14);
+  messageDesc(file_wire, 12);
 
 /**
  * @generated from message rts.UnitHealthMsg
@@ -672,7 +626,7 @@ export type UnitHealthMsg = Message<"rts.UnitHealthMsg"> & {
  * Use `create(UnitHealthMsgSchema)` to create a new message.
  */
 export const UnitHealthMsgSchema: GenMessage<UnitHealthMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 15);
+  messageDesc(file_wire, 13);
 
 /**
  * @generated from message rts.UnitProgressMsg
@@ -694,7 +648,7 @@ export type UnitProgressMsg = Message<"rts.UnitProgressMsg"> & {
  * Use `create(UnitProgressMsgSchema)` to create a new message.
  */
 export const UnitProgressMsgSchema: GenMessage<UnitProgressMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 16);
+  messageDesc(file_wire, 14);
 
 /**
  * @generated from message rts.UnitHiddenMsg
@@ -711,7 +665,7 @@ export type UnitHiddenMsg = Message<"rts.UnitHiddenMsg"> & {
  * Use `create(UnitHiddenMsgSchema)` to create a new message.
  */
 export const UnitHiddenMsgSchema: GenMessage<UnitHiddenMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 17);
+  messageDesc(file_wire, 15);
 
 /**
  * @generated from message rts.ShotSpawnMsg
@@ -758,7 +712,7 @@ export type ShotSpawnMsg = Message<"rts.ShotSpawnMsg"> & {
  * Use `create(ShotSpawnMsgSchema)` to create a new message.
  */
 export const ShotSpawnMsgSchema: GenMessage<ShotSpawnMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 18);
+  messageDesc(file_wire, 16);
 
 /**
  * @generated from message rts.ShotHitMsg
@@ -785,7 +739,7 @@ export type ShotHitMsg = Message<"rts.ShotHitMsg"> & {
  * Use `create(ShotHitMsgSchema)` to create a new message.
  */
 export const ShotHitMsgSchema: GenMessage<ShotHitMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 19);
+  messageDesc(file_wire, 17);
 
 /**
  * @generated from message rts.CreditsMsg
@@ -802,7 +756,7 @@ export type CreditsMsg = Message<"rts.CreditsMsg"> & {
  * Use `create(CreditsMsgSchema)` to create a new message.
  */
 export const CreditsMsgSchema: GenMessage<CreditsMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 20);
+  messageDesc(file_wire, 18);
 
 /**
  * @generated from message rts.TrainingMsg
@@ -819,7 +773,7 @@ export type TrainingMsg = Message<"rts.TrainingMsg"> & {
  * Use `create(TrainingMsgSchema)` to create a new message.
  */
 export const TrainingMsgSchema: GenMessage<TrainingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 21);
+  messageDesc(file_wire, 19);
 
 /**
  * @generated from message rts.RallyMsg
@@ -846,7 +800,7 @@ export type RallyMsg = Message<"rts.RallyMsg"> & {
  * Use `create(RallyMsgSchema)` to create a new message.
  */
 export const RallyMsgSchema: GenMessage<RallyMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 22);
+  messageDesc(file_wire, 20);
 
 /**
  * @generated from message rts.PrimaryMsg
@@ -863,7 +817,7 @@ export type PrimaryMsg = Message<"rts.PrimaryMsg"> & {
  * Use `create(PrimaryMsgSchema)` to create a new message.
  */
 export const PrimaryMsgSchema: GenMessage<PrimaryMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 23);
+  messageDesc(file_wire, 21);
 
 /**
  * @generated from message rts.YieldsMsg
@@ -880,7 +834,7 @@ export type YieldsMsg = Message<"rts.YieldsMsg"> & {
  * Use `create(YieldsMsgSchema)` to create a new message.
  */
 export const YieldsMsgSchema: GenMessage<YieldsMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 24);
+  messageDesc(file_wire, 22);
 
 /**
  * @generated from message rts.ServerEvent
@@ -987,7 +941,7 @@ export type ServerEvent = Message<"rts.ServerEvent"> & {
  * Use `create(ServerEventSchema)` to create a new message.
  */
 export const ServerEventSchema: GenMessage<ServerEvent> = /*@__PURE__*/
-  messageDesc(file_wire, 25);
+  messageDesc(file_wire, 23);
 
 /**
  * @generated from message rts.ServerFrame
@@ -1009,16 +963,16 @@ export type ServerFrame = Message<"rts.ServerFrame"> & {
  * Use `create(ServerFrameSchema)` to create a new message.
  */
 export const ServerFrameSchema: GenMessage<ServerFrame> = /*@__PURE__*/
-  messageDesc(file_wire, 26);
+  messageDesc(file_wire, 24);
 
 /**
  * @generated from message rts.OrderMoveMsg
  */
 export type OrderMoveMsg = Message<"rts.OrderMoveMsg"> & {
   /**
-   * @generated from field: uint32 unit_id = 1;
+   * @generated from field: repeated uint32 unit_ids = 1;
    */
-  unitId: number;
+  unitIds: number[];
 
   /**
    * @generated from field: int32 x = 2;
@@ -1036,7 +990,7 @@ export type OrderMoveMsg = Message<"rts.OrderMoveMsg"> & {
  * Use `create(OrderMoveMsgSchema)` to create a new message.
  */
 export const OrderMoveMsgSchema: GenMessage<OrderMoveMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 27);
+  messageDesc(file_wire, 25);
 
 /**
  * @generated from message rts.SpawnMsg
@@ -1053,16 +1007,16 @@ export type SpawnMsg = Message<"rts.SpawnMsg"> & {
  * Use `create(SpawnMsgSchema)` to create a new message.
  */
 export const SpawnMsgSchema: GenMessage<SpawnMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 28);
+  messageDesc(file_wire, 26);
 
 /**
  * @generated from message rts.OrderAttackMsg
  */
 export type OrderAttackMsg = Message<"rts.OrderAttackMsg"> & {
   /**
-   * @generated from field: uint32 unit_id = 1;
+   * @generated from field: repeated uint32 unit_ids = 1;
    */
-  unitId: number;
+  unitIds: number[];
 
   /**
    * @generated from field: uint32 target_id = 2;
@@ -1075,16 +1029,16 @@ export type OrderAttackMsg = Message<"rts.OrderAttackMsg"> & {
  * Use `create(OrderAttackMsgSchema)` to create a new message.
  */
 export const OrderAttackMsgSchema: GenMessage<OrderAttackMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 29);
+  messageDesc(file_wire, 27);
 
 /**
  * @generated from message rts.OrderAttackGroundMsg
  */
 export type OrderAttackGroundMsg = Message<"rts.OrderAttackGroundMsg"> & {
   /**
-   * @generated from field: uint32 unit_id = 1;
+   * @generated from field: repeated uint32 unit_ids = 1;
    */
-  unitId: number;
+  unitIds: number[];
 
   /**
    * @generated from field: int32 x = 2;
@@ -1102,7 +1056,7 @@ export type OrderAttackGroundMsg = Message<"rts.OrderAttackGroundMsg"> & {
  * Use `create(OrderAttackGroundMsgSchema)` to create a new message.
  */
 export const OrderAttackGroundMsgSchema: GenMessage<OrderAttackGroundMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 30);
+  messageDesc(file_wire, 28);
 
 /**
  * @generated from message rts.PlaceBuildingMsg
@@ -1129,7 +1083,7 @@ export type PlaceBuildingMsg = Message<"rts.PlaceBuildingMsg"> & {
  * Use `create(PlaceBuildingMsgSchema)` to create a new message.
  */
 export const PlaceBuildingMsgSchema: GenMessage<PlaceBuildingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 31);
+  messageDesc(file_wire, 29);
 
 /**
  * @generated from message rts.CancelSpawnMsg
@@ -1146,7 +1100,7 @@ export type CancelSpawnMsg = Message<"rts.CancelSpawnMsg"> & {
  * Use `create(CancelSpawnMsgSchema)` to create a new message.
  */
 export const CancelSpawnMsgSchema: GenMessage<CancelSpawnMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 32);
+  messageDesc(file_wire, 30);
 
 /**
  * @generated from message rts.CancelBuildingMsg
@@ -1163,7 +1117,7 @@ export type CancelBuildingMsg = Message<"rts.CancelBuildingMsg"> & {
  * Use `create(CancelBuildingMsgSchema)` to create a new message.
  */
 export const CancelBuildingMsgSchema: GenMessage<CancelBuildingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 33);
+  messageDesc(file_wire, 31);
 
 /**
  * @generated from message rts.SetPrimaryMsg
@@ -1180,7 +1134,7 @@ export type SetPrimaryMsg = Message<"rts.SetPrimaryMsg"> & {
  * Use `create(SetPrimaryMsgSchema)` to create a new message.
  */
 export const SetPrimaryMsgSchema: GenMessage<SetPrimaryMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 34);
+  messageDesc(file_wire, 32);
 
 /**
  * @generated from message rts.SetRallyMsg
@@ -1202,7 +1156,7 @@ export type SetRallyMsg = Message<"rts.SetRallyMsg"> & {
  * Use `create(SetRallyMsgSchema)` to create a new message.
  */
 export const SetRallyMsgSchema: GenMessage<SetRallyMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 35);
+  messageDesc(file_wire, 33);
 
 /**
  * @generated from message rts.PlaceCityMsg
@@ -1224,7 +1178,7 @@ export type PlaceCityMsg = Message<"rts.PlaceCityMsg"> & {
  * Use `create(PlaceCityMsgSchema)` to create a new message.
  */
 export const PlaceCityMsgSchema: GenMessage<PlaceCityMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 36);
+  messageDesc(file_wire, 34);
 
 /**
  * @generated from message rts.RequestSnapshotMsg
@@ -1237,7 +1191,7 @@ export type RequestSnapshotMsg = Message<"rts.RequestSnapshotMsg"> & {
  * Use `create(RequestSnapshotMsgSchema)` to create a new message.
  */
 export const RequestSnapshotMsgSchema: GenMessage<RequestSnapshotMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 37);
+  messageDesc(file_wire, 35);
 
 /**
  * @generated from message rts.ClientCommand
@@ -1320,5 +1274,5 @@ export type ClientCommand = Message<"rts.ClientCommand"> & {
  * Use `create(ClientCommandSchema)` to create a new message.
  */
 export const ClientCommandSchema: GenMessage<ClientCommand> = /*@__PURE__*/
-  messageDesc(file_wire, 38);
+  messageDesc(file_wire, 36);
 

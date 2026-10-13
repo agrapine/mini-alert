@@ -24,6 +24,9 @@ import type { Game } from './game.ts'
 import type { Player } from './player.ts'
 
 const UNSET = 255
+const PROGRESS_STEPS = 40
+
+type VisibleCity = CityRecord & { layout: CityLayout }
 
 type Session = {
   playerId: number
@@ -39,7 +42,8 @@ type Memory = {
   motionTick: Map<number, number>
   health: Map<number, number>
   progress: Map<number, number>
-  citySig: Map<number, string>
+  cityState: Map<number, string>
+  cityShape: Map<number, string>
   credits: number | null
   training: string | null
   rally: string | null
@@ -162,11 +166,11 @@ export class ServerHost {
     if (!session.playing) return
     const playerId = session.playerId
     if (message.kind === ClientMessageKind.OrderMove) {
-      this.game.orderMove(playerId, message.unitId, message.tile)
+      this.game.orderMove(playerId, message.unitIds, message.tile)
     } else if (message.kind === ClientMessageKind.OrderAttack) {
-      this.game.orderAttack(playerId, message.unitId, message.targetId)
+      this.game.orderAttack(playerId, message.unitIds, message.targetId)
     } else if (message.kind === ClientMessageKind.OrderAttackGround) {
-      this.game.orderAttackGround(playerId, message.unitId, message.tile)
+      this.game.orderAttackGround(playerId, message.unitIds, message.tile)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.CancelSpawn) {
@@ -309,7 +313,7 @@ export class ServerHost {
   private remember(
     memory: Memory,
     units: readonly UnitSnapshot[],
-    cities: readonly CityRecord[],
+    cities: readonly VisibleCity[],
     credits: number,
     training: ReturnType<Game['trainingFor']>,
     rally: TileCoord | null,
@@ -323,8 +327,12 @@ export class ServerHost {
       memory.health.set(unit.id, unit.health)
       memory.progress.set(unit.id, unit.progress)
     }
-    memory.citySig.clear()
-    for (const city of cities) memory.citySig.set(city.index, cityKey(city))
+    memory.cityState.clear()
+    memory.cityShape.clear()
+    for (const city of cities) {
+      memory.cityState.set(city.index, stateKey(city.state))
+      memory.cityShape.set(city.index, shapeKey(city.layout))
+    }
     memory.credits = credits
     memory.training = JSON.stringify(training)
     memory.rally = rally ? `${rally.x},${rally.y}` : ''
@@ -342,7 +350,8 @@ export class ServerHost {
       motionTick: new Map(),
       health: new Map(),
       progress: new Map(),
-      citySig: new Map(),
+      cityState: new Map(),
+      cityShape: new Map(),
       credits: null,
       training: null,
       rally: null,
@@ -426,8 +435,8 @@ export class ServerHost {
     return memory.visible[ty * width + tx] === 1
   }
 
-  private visibleCities(memory: Memory): CityRecord[] {
-    const records: CityRecord[] = []
+  private visibleCities(memory: Memory): VisibleCity[] {
+    const records: VisibleCity[] = []
     const states = this.game.cityStates()
     const layouts = this.game.cityLayouts()
     for (let index = 0; index < states.length; index++) {
@@ -445,14 +454,18 @@ export class ServerHost {
     const live = new Set<number>()
     for (const city of next) {
       live.add(city.index)
-      const key = cityKey(city)
-      if (memory.citySig.get(city.index) === key) continue
-      memory.citySig.set(city.index, key)
-      changed.push(city)
+      const shape = shapeKey(city.layout)
+      const state = stateKey(city.state)
+      const reshaped = memory.cityShape.get(city.index) !== shape
+      if (!reshaped && memory.cityState.get(city.index) === state) continue
+      memory.cityShape.set(city.index, shape)
+      memory.cityState.set(city.index, state)
+      changed.push({ index: city.index, state: city.state, layout: reshaped ? city.layout : null })
     }
-    for (const index of [...memory.citySig.keys()]) {
+    for (const index of [...memory.cityState.keys()]) {
       if (live.has(index)) continue
-      memory.citySig.delete(index)
+      memory.cityState.delete(index)
+      memory.cityShape.delete(index)
     }
     return changed
   }
@@ -546,9 +559,14 @@ function clipState(state: CityState, explored: Uint8Array, width: number): CityS
   }
 }
 
-function cityKey(city: CityRecord): string {
-  const ruins = city.state.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')
-  const sites = city.state.sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-  const buildings = city.layout.buildings.map((building) => `${building.x},${building.y},${building.model}`).join(';')
-  return `${city.state.ownerId}:${city.state.progress.toFixed(3)}:${city.state.challengerId}:${city.state.grown}:${ruins}:${sites}:${buildings}`
+function stateKey(state: CityState): string {
+  const ruins = state.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')
+  const sites = state.sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
+  const progress = Math.round(state.progress * PROGRESS_STEPS)
+  return `${state.ownerId}:${progress}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
+}
+
+function shapeKey(layout: CityLayout): string {
+  const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model}`).join(';')
+  return `${layout.tiles.length}:${layout.streets.length}:${buildings}`
 }

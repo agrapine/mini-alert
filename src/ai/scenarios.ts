@@ -116,8 +116,7 @@ export function consider(brain: Brain, budget: number): Thought {
     for (const id of plan.hold) reserved.add(id)
     for (const order of queued) {
       orders.push(order)
-      const id = orderedUnit(order)
-      if (id !== null) reserved.add(id)
+      for (const id of orderedUnits(order)) reserved.add(id)
     }
     note(lane, scenario, score, at, '', queued.length)
     return true
@@ -239,7 +238,7 @@ function fight(brain: Brain, zone: Zone, reserved: ReadonlySet<number>, pull: bo
       else orders.push(move(unit.id, tile))
       continue
     }
-    orders.push({ kind: ClientMessageKind.OrderAttack, unitId: unit.id, targetId: target.id })
+    orders.push({ kind: ClientMessageKind.OrderAttack, unitIds: [unit.id], targetId: target.id })
   }
   if (orders.length === 0 && hold.length === 0) return idle('no target')
   return acting(orders, hold)
@@ -562,14 +561,14 @@ function aimed(unit: UnitSnapshot, tile: TileCoord): boolean {
 }
 
 function move(unitId: number, tile: TileCoord): ClientMessage {
-  return { kind: ClientMessageKind.OrderMove, unitId, tile }
+  return { kind: ClientMessageKind.OrderMove, unitIds: [unitId], tile }
 }
 
-function orderedUnit(order: ClientMessage): number | null {
+function orderedUnits(order: ClientMessage): number[] {
   if (order.kind === ClientMessageKind.OrderMove || order.kind === ClientMessageKind.OrderAttack || order.kind === ClientMessageKind.OrderAttackGround) {
-    return order.unitId
+    return order.unitIds
   }
-  return null
+  return []
 }
 
 function standoff(unit: UnitSnapshot, target: UnitSnapshot, distance: number): TileCoord {

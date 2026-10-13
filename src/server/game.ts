@@ -19,6 +19,8 @@ export type Scenery = {
   seed: number
 }
 
+const CONVOY_SIZE = 4
+
 const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 
 type CityRuntime = {
@@ -406,38 +408,61 @@ export class Game {
     return unit
   }
 
-  orderMove(playerId: number, unitId: number, tile: TileCoord): boolean {
-    const unit = this.owned(playerId, unitId)
-    if (!unit) return false
-    unit.attackId = null
-    unit.attackPoint = null
-    return unit.orderMove(tile, this.pathfinder, this.units)
-  }
-
-  orderAttack(playerId: number, unitId: number, targetId: number): boolean {
-    const unit = this.owned(playerId, unitId)
-    const target = this.units.find((candidate) => candidate.id === targetId)
-    if (!unit || !target || target.id === unit.id || target.ownerId === unit.ownerId || target.health <= 0) {
-      return false
+  orderMove(playerId: number, unitIds: readonly number[], tile: TileCoord): boolean {
+    let moved = false
+    const crews = new Map<MoveDomain, Unit[]>()
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (unit.type.topSpeed <= 0) continue
+      unit.attackId = null
+      unit.attackPoint = null
+      const domain = domainOf(unit.type)
+      if (domain === MoveDomain.Air) {
+        if (unit.orderMove(tile, this.pathfinder, this.units)) moved = true
+        continue
+      }
+      const crew = crews.get(domain) ?? []
+      crew.push(unit)
+      crews.set(domain, crew)
     }
-    unit.attackPoint = null
-    unit.attackId = target.id
-    unit.step(0, this.pathfinder, this.units)
-    return true
+    for (const [domain, crew] of crews) {
+      const goals = this.pathfinder.landing(tile, domain, crew)
+      const route = crew.length >= CONVOY_SIZE ? this.pathfinder.convoy(goals, crew, domain) : null
+      for (const goal of goals) {
+        const unit = takeNearest(crew, goal)
+        const ordered = route ? unit.travel(route(unit, goal)) : unit.orderMove(goal, this.pathfinder, this.units)
+        if (ordered) moved = true
+      }
+    }
+    return moved
   }
 
-  orderAttackGround(playerId: number, unitId: number, tile: TileCoord): boolean {
-    const unit = this.owned(playerId, unitId)
-    if (!unit || unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) return false
+  orderAttack(playerId: number, unitIds: readonly number[], targetId: number): boolean {
+    const target = this.units.find((candidate) => candidate.id === targetId)
+    if (!target || target.health <= 0) return false
+    let ordered = false
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (target.id === unit.id || target.ownerId === unit.ownerId) continue
+      unit.attackPoint = null
+      unit.attackId = target.id
+      unit.step(0, this.pathfinder, this.units)
+      ordered = true
+    }
+    return ordered
+  }
+
+  orderAttackGround(playerId: number, unitIds: readonly number[], tile: TileCoord): boolean {
     if (!this.world.inBounds(tile.x, tile.y)) return false
     const point = { x: tile.x + 0.5, z: tile.y + 0.5 }
-    if (unit.type.topSpeed <= 0 && Math.hypot(point.x - unit.pos.x, point.z - unit.pos.z) > unit.type.weapon.range) {
-      return false
+    let ordered = false
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
+      if (unit.type.topSpeed <= 0 && Math.hypot(point.x - unit.pos.x, point.z - unit.pos.z) > unit.type.weapon.range) continue
+      unit.attackId = null
+      unit.attackPoint = point
+      unit.step(0, this.pathfinder, this.units)
+      ordered = true
     }
-    unit.attackId = null
-    unit.attackPoint = point
-    unit.step(0, this.pathfinder, this.units)
-    return true
+    return ordered
   }
 
   tick(dt: number): ShotEvent[] {
@@ -472,6 +497,15 @@ export class Game {
     const snapshots = this.deaths.map((unit) => this.snapshot(unit))
     this.deaths = []
     return snapshots
+  }
+
+  private ownedAll(playerId: number, unitIds: readonly number[]): Unit[] {
+    const units: Unit[] = []
+    for (const id of new Set(unitIds)) {
+      const unit = this.owned(playerId, id)
+      if (unit) units.push(unit)
+    }
+    return units
   }
 
   private owned(playerId: number, unitId: number): Unit | undefined {
@@ -1049,4 +1083,17 @@ export class Game {
       else this.jobs.set(playerId, next)
     }
   }
+}
+
+function takeNearest(units: Unit[], tile: TileCoord): Unit {
+  let best = 0
+  let bestDist = Infinity
+  for (let i = 0; i < units.length; i++) {
+    const dist = (units[i].tile.x - tile.x) ** 2 + (units[i].tile.y - tile.y) ** 2
+    if (dist < bestDist) {
+      best = i
+      bestDist = dist
+    }
+  }
+  return units.splice(best, 1)[0]
 }

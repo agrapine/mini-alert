@@ -97,7 +97,7 @@ describe('combat', () => {
     game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
     const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 7 }, 0)
     foe.speed = foe.type.topSpeed
-    expect(game.orderMove(enemy.id, foe.id, { x: 2, y: 20 })).toBe(true)
+    expect(game.orderMove(enemy.id, [foe.id], { x: 2, y: 20 })).toBe(true)
     const shots = game.tick(1 / 30)
     expect(shots[0]?.aimZ).toBeGreaterThan(foe.pos.z + 1)
   })
@@ -123,20 +123,20 @@ describe('combat', () => {
     const { game, human, enemy } = battle()
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
     const far = game.spawn(enemy, UnitTypeId.Scout, { x: 2, y: 20 }, 0)
-    expect(game.orderAttack(human.id, tank.id, far.id)).toBe(true)
+    expect(game.orderAttack(human.id, [tank.id], far.id)).toBe(true)
     expect(tank.attackId).toBe(far.id)
     expect(tank.path.length).toBeGreaterThan(0)
-    expect(game.orderAttack(enemy.id, tank.id, far.id)).toBe(false)
+    expect(game.orderAttack(enemy.id, [tank.id], far.id)).toBe(false)
 
     const close = new Game(new World(24, 24))
     const owner = close.addPlayer()
     const other = close.addPlayer()
     const holder = close.spawn(owner, UnitTypeId.MedTank, { x: 4, y: 4 }, 0)
     const prey = close.spawn(other, UnitTypeId.Scout, { x: 4, y: 9 }, 0)
-    expect(close.orderAttack(owner.id, holder.id, prey.id)).toBe(true)
+    expect(close.orderAttack(owner.id, [holder.id], prey.id)).toBe(true)
     expect(holder.path).toEqual([])
     expect(holder.attackId).toBe(prey.id)
-    close.orderMove(owner.id, holder.id, { x: 8, y: 4 })
+    close.orderMove(owner.id, [holder.id], { x: 8, y: 4 })
     expect(holder.attackId).toBeNull()
   })
 
@@ -147,7 +147,7 @@ describe('combat', () => {
     const tank = near.spawn(owner, UnitTypeId.MedTank, { x: 10, y: 10 }, 0)
     near.spawn(other, UnitTypeId.Scout, { x: 10, y: 14 }, 0)
     const ordered = near.spawn(other, UnitTypeId.Scout, { x: 16, y: 10 }, 0)
-    expect(near.orderAttack(owner.id, tank.id, ordered.id)).toBe(true)
+    expect(near.orderAttack(owner.id, [tank.id], ordered.id)).toBe(true)
     near.tick(0.25)
     expect(tank.turretYaw).toBeGreaterThan(0.4)
 
@@ -157,7 +157,7 @@ describe('combat', () => {
     const chaser = wide.spawn(human, UnitTypeId.MedTank, { x: 4, y: 4 }, 0)
     wide.spawn(enemy, UnitTypeId.Scout, { x: 4, y: 8 }, 0)
     const distant = wide.spawn(enemy, UnitTypeId.Scout, { x: 24, y: 4 }, 0)
-    expect(wide.orderAttack(human.id, chaser.id, distant.id)).toBe(true)
+    expect(wide.orderAttack(human.id, [chaser.id], distant.id)).toBe(true)
     wide.tick(0.25)
     expect(Math.abs(chaser.turretYaw)).toBeLessThan(0.35)
     expect(chaser.path.length).toBeGreaterThan(0)
@@ -197,16 +197,16 @@ describe('combat', () => {
   it('attacks a ground tile and keeps firing there', () => {
     const { game, human } = battle()
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: 2, y: 2 }, 0)
-    expect(game.orderAttackGround(human.id, tank.id, { x: 2, y: 18 })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: 2, y: 18 })).toBe(true)
     expect(tank.attackPoint).toEqual({ x: 2.5, z: 18.5 })
     expect(tank.path.length).toBeGreaterThan(0)
     const close = game.spawn(human, UnitTypeId.Artillery, { x: 8, y: 8 }, 0)
-    expect(game.orderAttackGround(human.id, close.id, { x: 8, y: 12 })).toBe(true)
+    expect(game.orderAttackGround(human.id, [close.id], { x: 8, y: 12 })).toBe(true)
     expect(close.path).toEqual([])
     const shots = game.tick(1 / 30)
     expect(shots.some((shot) => shot.shooterId === close.id)).toBe(true)
     expect(close.attackPoint).toEqual({ x: 8.5, z: 12.5 })
-    expect(game.orderMove(human.id, close.id, { x: 9, y: 8 })).toBe(true)
+    expect(game.orderMove(human.id, [close.id], { x: 9, y: 8 })).toBe(true)
     expect(close.attackPoint).toBeNull()
   })
 
@@ -218,7 +218,7 @@ describe('combat', () => {
     const game = new Game(World.fromTiles(width, height, tiles))
     const human = game.addPlayer()
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: 10, y: 8 }, 0)
-    expect(game.orderAttackGround(human.id, tank.id, { x: 10, y: 10 })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: 10, y: 10 })).toBe(true)
     const shots = game.tick(0.4)
     expect(shots.some((shot) => shot.shooterId === tank.id)).toBe(true)
     const flight = shots.find((shot) => shot.shooterId === tank.id)?.flight ?? 0
@@ -231,7 +231,7 @@ describe('combat', () => {
     const bullets = new Game(World.fromTiles(width, height, tiles))
     const owner = bullets.addPlayer()
     const scout = bullets.spawn(owner, UnitTypeId.Scout, { x: 10, y: 8 }, 0)
-    expect(bullets.orderAttackGround(owner.id, scout.id, { x: 10, y: 10 })).toBe(true)
+    expect(bullets.orderAttackGround(owner.id, [scout.id], { x: 10, y: 10 })).toBe(true)
     bullets.tick(1)
     expect(bullets.world.terrainAt(10, 10)).toBe(Terrain.Tree)
   })
@@ -257,7 +257,7 @@ describe('combat', () => {
     if (!street) return
     const before = game.creditIncome(human.id)
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: street.x, y: street.y }, 0)
-    expect(game.orderAttackGround(human.id, tank.id, { x: building.x, y: building.y })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: building.x, y: building.y })).toBe(true)
     let guard = 0
     while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y) && guard < 40) {
       game.tick(0.5)
@@ -303,7 +303,7 @@ describe('combat', () => {
     for (const building of layout.buildings) {
       if (building.keep) continue
       if (game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y)) continue
-      expect(game.orderAttackGround(human.id, tank.id, { x: building.x, y: building.y })).toBe(true)
+      expect(game.orderAttackGround(human.id, [tank.id], { x: building.x, y: building.y })).toBe(true)
       guard = 0
       while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === building.x && ruin.y === building.y) && guard < 40) {
         game.tick(0.5)
@@ -311,7 +311,7 @@ describe('combat', () => {
       }
     }
     expect(game.cityStates()[0].ownerId).toBe(0)
-    expect(game.orderAttackGround(human.id, tank.id, { x: hall.x, y: hall.y })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: hall.x, y: hall.y })).toBe(true)
     for (let i = 0; i < 20; i++) game.tick(0.5)
     expect(game.cityStates()[0].ruins).not.toContainEqual({ x: hall.x, y: hall.y })
     expect(game.pathfinder.isWalkable(hall.x, hall.y, tank.id)).toBe(false)
@@ -335,7 +335,7 @@ describe('combat', () => {
     const tank = game.spawn(human, UnitTypeId.MedTank, stand, 0)
     for (let i = 0; i < 16; i++) game.tick(0.5)
     expect(game.cityStates()[0].ruins).not.toContainEqual({ x: block.x, y: block.y })
-    expect(game.orderAttackGround(human.id, tank.id, { x: block.x, y: block.y })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: block.x, y: block.y })).toBe(true)
     for (let i = 0; i < 16; i++) game.tick(0.5)
     expect(game.cityStates()[0].ownerId).toBe(0)
     expect(game.cityStates()[0].ruins).not.toContainEqual({ x: block.x, y: block.y })
@@ -354,7 +354,7 @@ describe('combat', () => {
     const street = roads[0]
     const stand = roads.find((road) => road.x !== street.x || road.y !== street.y) ?? street
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: stand.x, y: stand.y }, 0)
-    expect(game.orderAttackGround(human.id, tank.id, { x: street.x, y: street.y })).toBe(true)
+    expect(game.orderAttackGround(human.id, [tank.id], { x: street.x, y: street.y })).toBe(true)
     let guard = 0
     while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === street.x && ruin.y === street.y) && guard < 40) {
       game.tick(0.5)

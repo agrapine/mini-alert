@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { SIM_STEP, SNAP_DISTANCE, SNAPSHOT_GAP, stepMotion, timeScale, type MotionState } from '../shared/motion.ts'
+import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -18,6 +18,19 @@ import { Terrain, isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
 import { domainOf, Locomotion, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 
 const CATCHUP_STEPS = 8
+const FAST_FORWARD_LIMIT = 900
+const DRIFT_SECONDS = 0.12
+const TELEPORT_DISTANCE = 3
+const LEAD_TILES = 3
+
+type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
+
+type Shown = {
+  before: Pose
+  drift: Pose
+  view: UnitSnapshot
+  seen: number
+}
 
 export class Replica {
   playerId: number | null = null
@@ -48,6 +61,9 @@ export class Replica {
   private serverEstimate = 0
   private askedTick = -SNAPSHOT_GAP
   private knownCount = 0
+  private readonly shown = new Map<number, Shown>()
+  private readonly drawnUnits: UnitSnapshot[] = []
+  private drawPass = 0
 
   reset() {
     this.playerId = null
@@ -77,27 +93,20 @@ export class Replica {
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
     this.knownCount = 0
+    this.shown.clear()
   }
 
   apply(frame: ServerFrame) {
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
-    if (!snapshot && this.world && Math.abs(frame.tick - this.localTick) > SNAPSHOT_GAP) {
-      this.serverTick = frame.tick
-      this.serverEstimate = frame.tick
-      this.wantsSnapshot = true
-      return
-    }
     this.serverTick = frame.tick
     this.serverEstimate = frame.tick
+    if (!snapshot && this.world && !this.closeTo(frame.tick)) return
     for (const event of frame.events) this.applyEvent(event)
   }
 
   advance(dt: number): boolean {
     const expected = Math.round(this.serverEstimate)
-    if (this.world && Math.abs(expected - this.localTick) > SNAPSHOT_GAP) {
-      this.wantsSnapshot = true
-      return this.dueSnapshot()
-    }
+    if (this.world && !this.closeTo(expected)) return this.dueSnapshot()
     const scale = timeScale(this.localTick, expected)
     this.serverEstimate += dt / SIM_STEP
     this.accumulator += dt * scale
@@ -108,7 +117,55 @@ export class Replica {
       this.stepUnits(SIM_STEP)
       steps += 1
     }
+    const fade = Math.exp(-dt / DRIFT_SECONDS)
+    for (const shown of this.shown.values()) scalePose(shown.drift, fade)
     return this.dueSnapshot()
+  }
+
+  /** Units posed between the last two sim steps, plus any correction still blending out. */
+  drawn(): UnitSnapshot[] {
+    const alpha = Math.min(1, this.accumulator / SIM_STEP)
+    const pass = ++this.drawPass
+    const out = this.drawnUnits
+    out.length = 0
+    for (const unit of this.units) {
+      const shown = this.shownOf(unit)
+      shown.seen = pass
+      const { before, drift, view } = shown
+      Object.assign(view, unit)
+      view.x = before.x + (unit.x - before.x) * alpha + drift.x
+      view.z = before.z + (unit.z - before.z) * alpha + drift.z
+      view.facing = before.facing + wrapAngle(unit.facing - before.facing) * alpha + drift.facing
+      view.turretYaw = before.turretYaw + wrapAngle(unit.turretYaw - before.turretYaw) * alpha + drift.turretYaw
+      view.altitude = before.altitude + ((unit.altitude ?? 0) - before.altitude) * alpha + drift.altitude
+      out.push(view)
+    }
+    for (const [id, shown] of this.shown) if (shown.seen !== pass) this.shown.delete(id)
+    return out
+  }
+
+  private closeTo(tick: number): boolean {
+    const ahead = tick - this.localTick
+    if (ahead > SNAPSHOT_GAP && ahead <= FAST_FORWARD_LIMIT) {
+      while (this.localTick < tick) {
+        this.localTick += 1
+        this.stepUnits(SIM_STEP)
+      }
+      this.accumulator = 0
+      return true
+    }
+    if (Math.abs(ahead) <= SNAPSHOT_GAP) return true
+    this.wantsSnapshot = true
+    return false
+  }
+
+  private shownOf(unit: UnitSnapshot): Shown {
+    let shown = this.shown.get(unit.id)
+    if (!shown) {
+      shown = { before: poseOf(unit), drift: still(), view: { ...unit }, seen: 0 }
+      this.shown.set(unit.id, shown)
+    }
+    return shown
   }
 
   private dueSnapshot(): boolean {
@@ -154,33 +211,69 @@ export class Replica {
 
   isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
     const world = this.world
-    if (!world) return false
-    if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    const index = tile.y * world.width + tile.x
-    if (world.known[index] === 0) return false
-    const open = isWalkableTerrain(world.terrain[index]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
-    if (!open) return false
-    if (this.buildingBlocks().has(`${tile.x},${tile.y}`)) return false
+    if (!world || !this.inBounds(tile) || world.known[tile.y * world.width + tile.x] === 0) return false
+    if (!this.groundAt(tile)) return false
     const skip = typeof ignore === 'number' ? [ignore] : ignore
     return !tileOccupied(this.units, tile, skip)
   }
 
   canCommand(tile: TileCoord, selected: readonly UnitSnapshot[]): boolean {
     const world = this.world
-    if (!world) return false
-    if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    const index = tile.y * world.width + tile.x
-    if (world.known[index] === 0) return false
+    if (!world || !this.inBounds(tile)) return false
     const movers = selected.filter((unit) => (UNIT_TYPES[unit.typeId]?.topSpeed ?? 0) > 0)
     if (movers.length === 0) return false
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return true
     const domains = new Set(movers.map((unit) => domainOf(UNIT_TYPES[unit.typeId])))
     if (domains.size === 1 && domains.has(MoveDomain.Air)) return true
     if (domains.size === 1 && domains.has(MoveDomain.Water)) {
       const terrain = world.terrain[index]
-      if (terrain !== Terrain.Water && terrain !== Terrain.Lake) return false
-      return !tileOccupied(this.units, tile, movers.map((unit) => unit.id))
+      return terrain === Terrain.Water || terrain === Terrain.Lake
     }
-    return this.isOpen(tile, movers.map((unit) => unit.id))
+    return this.groundAt(tile)
+  }
+
+  private inBounds(tile: TileCoord): boolean {
+    const world = this.world
+    return world !== null && tile.x >= 0 && tile.y >= 0 && tile.x < world.width && tile.y < world.height
+  }
+
+  private passable(tile: TileCoord, domain: MoveDomain): boolean {
+    const world = this.world
+    if (!world || !this.inBounds(tile)) return false
+    const structure = this.units.some((unit) => {
+      if (UNIT_TYPES[unit.typeId].topSpeed > 0) return false
+      const span = spanOf(UNIT_TYPES[unit.typeId])
+      return footprintCovers(unit.tileX, unit.tileY, span.x, span.y, tile)
+    })
+    if (structure) return false
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return true
+    if (domain === MoveDomain.Water) return world.terrain[index] === Terrain.Water || world.terrain[index] === Terrain.Lake
+    return this.groundAt(tile)
+  }
+
+  private groundAt(tile: TileCoord): boolean {
+    const world = this.world
+    if (!world) return false
+    const open = isWalkableTerrain(world.terrain[tile.y * world.width + tile.x]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
+    return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
+  }
+
+  /** Starts ordered units toward `tile` along a short straight lead until the server's route arrives. */
+  predictMove(unitIds: readonly number[], tile: TileCoord) {
+    for (const id of unitIds) {
+      const unit = this.unit(id)
+      if (!unit || unit.ownerId !== this.playerId) continue
+      const type = UNIT_TYPES[unit.typeId]
+      const domain = domainOf(type)
+      if (type.topSpeed <= 0 || domain === MoveDomain.Air) continue
+      if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) continue
+      const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
+      if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) continue
+      unit.path = lead
+      unit.goal = { ...lead[lead.length - 1] }
+    }
   }
 
   homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
@@ -222,6 +315,7 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.Snapshot) {
+      this.shown.clear()
       this.installMap(event.map, true)
       this.units = event.units.map(copyUnit)
       this.credits = event.credits
@@ -303,14 +397,13 @@ export class Replica {
       this.units.push(copyUnit(next))
       return
     }
-    const error = Math.hypot(unit.x - next.x, unit.z - next.z)
-    if (error > SNAP_DISTANCE) {
-      unit.x = next.x
-      unit.z = next.z
-      unit.facing = next.facing
-      unit.tileX = next.tileX
-      unit.tileY = next.tileY
-    }
+    const shown = this.shown.get(unit.id)
+    const was = shown ? poseOf(shown.view) : poseOf(unit)
+    unit.x = next.x
+    unit.z = next.z
+    unit.facing = next.facing
+    unit.tileX = next.tileX
+    unit.tileY = next.tileY
     unit.speed = next.speed
     unit.turretYaw = next.turretYaw
     unit.path = next.path.map((tile) => ({ x: tile.x, y: tile.y }))
@@ -326,6 +419,16 @@ export class Replica {
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
     unit.bay = next.bay ?? -1
+    if (!shown) return
+    shown.before = poseOf(unit)
+    const jump = Math.hypot(was.x - unit.x, was.z - unit.z)
+    shown.drift = jump > TELEPORT_DISTANCE ? still() : {
+      x: was.x - unit.x,
+      z: was.z - unit.z,
+      facing: wrapAngle(was.facing - unit.facing),
+      turretYaw: wrapAngle(was.turretYaw - unit.turretYaw),
+      altitude: was.altitude - (unit.altitude ?? 0),
+    }
   }
 
   private stepUnits(dt: number) {
@@ -340,6 +443,8 @@ export class Replica {
     for (const unit of this.units) {
       const type = UNIT_TYPES[unit.typeId]
       if (!type || type.topSpeed <= 0 || unit.health <= 0) continue
+      const shown = this.shown.get(unit.id)
+      if (shown) shown.before = poseOf(unit)
       const state: MotionState = {
         x: unit.x,
         z: unit.z,
@@ -437,7 +542,7 @@ export class Replica {
         this.layouts.push(null)
       }
       this.cities[record.index] = record.state
-      this.layouts[record.index] = record.layout
+      if (record.layout) this.layouts[record.index] = record.layout
     }
     this.cityRevision += 1
     this.mapChanged = true
@@ -503,6 +608,22 @@ function clearStamp(occupied: Map<string, number>, id: number, tileX: number, ti
       if (occupied.get(key) === id) occupied.delete(key)
     }
   }
+}
+
+function poseOf(unit: UnitSnapshot): Pose {
+  return { x: unit.x, z: unit.z, facing: unit.facing, turretYaw: unit.turretYaw, altitude: unit.altitude ?? 0 }
+}
+
+function still(): Pose {
+  return { x: 0, z: 0, facing: 0, turretYaw: 0, altitude: 0 }
+}
+
+function scalePose(pose: Pose, factor: number) {
+  pose.x *= factor
+  pose.z *= factor
+  pose.facing *= factor
+  pose.turretYaw *= factor
+  pose.altitude *= factor
 }
 
 function copyUnit(unit: UnitSnapshot): UnitSnapshot {

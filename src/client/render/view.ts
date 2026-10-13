@@ -44,6 +44,8 @@ export class GameView {
   private props: PropField | null = null
   private readonly livingUnits: UnitSnapshot[] = []
   private readonly aliveIds = new Set<number>()
+  private readonly livingById = new Map<number, UnitSnapshot>()
+  private readonly shownSelection: UnitSnapshot[] = []
   private readonly selectedIds = new Set<number>()
   private readonly goalUnits: UnitSnapshot[] = []
   private readonly hoveredUnits: UnitSnapshot[] = []
@@ -335,7 +337,15 @@ export class GameView {
     }
     const alive = this.aliveIds
     alive.clear()
-    for (const unit of living) alive.add(unit.id)
+    this.livingById.clear()
+    for (const unit of living) {
+      alive.add(unit.id)
+      this.livingById.set(unit.id, unit)
+    }
+    const shownSelection = this.shownSelection
+    shownSelection.length = 0
+    for (const unit of selected) shownSelection.push(this.livingById.get(unit.id) ?? unit)
+    selected = shownSelection
     for (const [id, group] of this.units) {
       if (alive.has(id)) continue
       releaseMesh(group)

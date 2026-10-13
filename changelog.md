@@ -1,5 +1,15 @@
 # Changelog
 
+## Current
+
+- Selection works like Red Alert: Shift+click adds or removes a unit, Shift+drag adds a box, right-click deselects, double-click or double-tap selects every unit of that type on screen.
+- Control groups: Ctrl+1–9 (or Alt+1–9) assigns, 1–9 selects, pressing the number twice centers the camera, Shift+number adds the group.
+- Minimap: left press jumps the camera at once and dragging keeps panning; right click sends the selected units there.
+- Units can be ordered into the fog. A group spreads over free tiles around the target, and a target on water, forest, or an enclosed spot sends units to the nearest reachable tile.
+- Middle-click panning always lets go when the button is released.
+- Smoother play over the network: units glide between server updates, corrections blend in instead of jumping, units start moving the moment you give an order, and a backgrounded tab catches up without reloading the map.
+- Much less network traffic (about 5x less during battles and captures) and faster pathfinding, so large orders no longer stall the server.
+
 ## 0.4
 
 - New structures: Airports, helipads, shipyards, 
