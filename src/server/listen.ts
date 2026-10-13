@@ -7,6 +7,7 @@ import { decodeClientMessage, encodeServerFrame } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
 import { SIM_STEP } from '../shared/motion.ts'
 import type { ClientMessage, ServerFrame } from '../shared/protocol.ts'
+import { runFixedStep } from './clock.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
 import { serveClient } from './static.ts'
@@ -53,7 +54,7 @@ sockets.on('connection', (socket, request) => {
   socket.on('close', () => lobby.disconnect(member, link))
 })
 
-setInterval(() => lobby.tick(STEP), STEP * 1000)
+runFixedStep(STEP * 1000, () => lobby.tick(STEP))
 setInterval(() => lobby.onSave(), saveIntervalMs())
 
 let closed = false
