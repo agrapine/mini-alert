@@ -15,6 +15,8 @@ import { serveClient } from './static.ts'
 const PORT = Number(process.env.PORT) || 8787
 const STEP = SIM_STEP
 const PING_MS = 5000
+const MISSED_PINGS = 3
+const REPORT_MS = 60_000
 const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist')
 
 const lobby = new Lobby()
@@ -35,11 +37,11 @@ const sockets = new WebSocketServer({
   perMessageDeflate: { threshold: 0 },
 })
 
-const answered = new WeakSet<WebSocket>()
+const missed = new WeakMap<WebSocket, number>()
 
 sockets.on('connection', (socket, request) => {
-  answered.add(socket)
-  socket.on('pong', () => answered.add(socket))
+  missed.set(socket, 0)
+  socket.on('pong', () => missed.set(socket, 0))
   const link: LobbySocket = {
     send(message) {
       send(socket, Channel.Lobby, message)
@@ -62,14 +64,29 @@ sockets.on('connection', (socket, request) => {
   socket.on('close', () => lobby.disconnect(member, link))
 })
 
-runFixedStep(STEP * 1000, () => lobby.tick(STEP))
+const load = { ticks: 0, busy: 0, worst: 0, since: performance.now() }
+runFixedStep(STEP * 1000, () => {
+  const started = performance.now()
+  lobby.tick(STEP)
+  const spent = performance.now() - started
+  load.ticks += 1
+  load.busy += spent
+  load.worst = Math.max(load.worst, spent)
+})
+setInterval(() => {
+  const seconds = (performance.now() - load.since) / 1000
+  const rate = load.ticks / seconds
+  console.log(`ticks ${rate.toFixed(1)}/s of ${(1 / STEP).toFixed(0)}, avg ${(load.busy / Math.max(1, load.ticks)).toFixed(1)} ms, max ${load.worst.toFixed(1)} ms`)
+  Object.assign(load, { ticks: 0, busy: 0, worst: 0, since: performance.now() })
+}, REPORT_MS)
 setInterval(() => {
   for (const socket of sockets.clients) {
-    if (!answered.has(socket)) {
+    const count = missed.get(socket) ?? 0
+    if (count >= MISSED_PINGS) {
       socket.terminate()
       continue
     }
-    answered.delete(socket)
+    missed.set(socket, count + 1)
     socket.ping()
   }
 }, PING_MS)
