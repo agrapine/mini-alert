@@ -1,6 +1,5 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
-import { holdSeatToken } from './client/seat.ts'
 import { Commander } from './client/commander.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
@@ -25,7 +24,9 @@ const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
+const elsewhere = document.querySelector<HTMLElement>('#elsewhere')
+const playHere = document.querySelector<HTMLButtonElement>('#elsewhere-play')
+if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose || !elsewhere || !playHere) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
@@ -142,14 +143,24 @@ net.onClose = () => {
   claimedName = null
   lobby.setConnected(false)
 }
+playHere.addEventListener('click', () => {
+  elsewhere.hidden = true
+  net.connect()
+})
 net.onLobby = (message) => {
+  if (message.kind === LobbyServerKind.Replaced) {
+    net.pause()
+    leaveMatch()
+    music.silent()
+    elsewhere.hidden = false
+    return
+  }
   if (message.kind === LobbyServerKind.Preview) {
     preview = message
     lobby.showPreview(message)
     return
   }
   if (message.kind === LobbyServerKind.Waiting) {
-    holdSeatToken(message.token)
     leaveMatch()
     music.silent()
     preview = null
@@ -157,7 +168,6 @@ net.onLobby = (message) => {
     claimName(message.you.name)
     return
   }
-  holdSeatToken(message.token)
   factions = message.factions
   seatId = message.seatId
   if (message.spectating !== spectating) {

@@ -49,8 +49,11 @@ sockets.on('connection', (socket, request) => {
     sendGame(message) {
       sendGame(socket, message)
     },
+    close() {
+      socket.close()
+    },
   }
-  const member = lobby.connect(link, query(request.url, 'seat'), query(request.url, 'tab'))
+  const member = lobby.connect(link, query(request.url, 'seat'))
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
       const command = decodeClientMessage(bytesOf(data))
@@ -61,7 +64,7 @@ sockets.on('connection', (socket, request) => {
     if (!wire) return
     if (wire.channel === Channel.Lobby) lobby.onLobby(member, wire.message as LobbyClientMessage)
   })
-  socket.on('close', () => lobby.disconnect(member, link))
+  socket.on('close', () => lobby.disconnect(member))
 })
 
 const load = { ticks: 0, busy: 0, worst: 0, since: performance.now() }

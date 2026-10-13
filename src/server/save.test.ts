@@ -202,6 +202,7 @@ function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerFrame[
     sendGame(message) {
       game.push(message)
     },
+    close() {},
   }
 }
 

@@ -1,39 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { ensureSeatToken, holdSeatToken, tabToken } from './seat.ts'
+import { seatToken } from './seat.ts'
+
+function browser() {
+  const saved = new Map<string, string>()
+  return { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) }
+}
 
 describe('seat token', () => {
-  it('keeps a hash and writes one when the page has none', () => {
-    const loc = { hash: '' }
-    const written: string[] = []
-    const token = ensureSeatToken(loc, (next) => {
-      written.push(next)
-      loc.hash = `#${next}`
-    })
-    expect(token).toMatch(/^[a-f0-9]{32}$/)
-    expect(written).toEqual([token])
-    expect(ensureSeatToken(loc, () => written.push('again'))).toBe(token)
-    expect(written).toEqual([token])
+  it('gives every new tab in the browser the same seat', () => {
+    const store = browser()
+    const first = seatToken({ hash: '' }, store)
+    expect(first).toMatch(/^[a-f0-9]{32}$/)
+    expect(seatToken({ hash: '' }, store)).toBe(first)
+    expect(seatToken({ hash: '' }, browser())).not.toBe(first)
   })
 
-  it('replaces the hash when the server assigns a different id', () => {
-    const loc = { hash: '#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }
-    const written: string[] = []
-    const write = (next: string) => {
-      written.push(next)
-      loc.hash = `#${next}`
-    }
-    holdSeatToken('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', loc, write)
-    expect(written).toEqual([])
-    holdSeatToken('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', loc, write)
-    expect(written).toEqual(['bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'])
-    expect(loc.hash).toBe('#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
-  })
-
-  it('keeps one tab id across reloads of the same tab', () => {
-    const saved = new Map<string, string>()
-    const store = { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) }
-    const first = tabToken(store)
-    expect(tabToken(store)).toBe(first)
-    expect(tabToken({ getItem: () => null, setItem() {} })).not.toBe(first)
+  it('takes the seat of a #token link and clears it from the address bar', () => {
+    const store = browser()
+    seatToken({ hash: '' }, store)
+    let cleared = 0
+    const linked = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    expect(seatToken({ hash: `#${linked}` }, store, () => (cleared += 1))).toBe(linked)
+    expect(cleared).toBe(1)
+    expect(seatToken({ hash: '' }, store)).toBe(linked)
   })
 })
