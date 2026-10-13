@@ -22,6 +22,9 @@ const FAST_FORWARD_LIMIT = 900
 const DRIFT_SECONDS = 0.12
 const TELEPORT_DISTANCE = 3
 const LEAD_TILES = 3
+const SLACK_SECONDS = 1
+const SLACK_TICKS = 1
+const REPLAY_LIMIT = 15
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
 
@@ -59,9 +62,12 @@ export class Replica {
   private settledRevision = -1
   private accumulator = 0
   private serverEstimate = 0
+  private slack = Infinity
+  private slackAge = 0
   private askedTick = -SNAPSHOT_GAP
   private knownCount = 0
   private readonly shown = new Map<number, Shown>()
+  private frameOccupancy: Map<string, number> | null = null
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
 
@@ -79,6 +85,8 @@ export class Replica {
     this.serverTick = 0
     this.localTick = 0
     this.serverEstimate = 0
+    this.slack = Infinity
+    this.slackAge = 0
     this.wantsSnapshot = false
     this.mapChanged = false
     this.propEpoch = 0
@@ -99,12 +107,14 @@ export class Replica {
   apply(frame: ServerFrame) {
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
     this.serverTick = frame.tick
-    this.serverEstimate = frame.tick
+    this.noteArrival(frame.tick, snapshot)
     if (!snapshot && this.world && !this.closeTo(frame.tick)) return
-    for (const event of frame.events) this.applyEvent(event)
+    this.frameOccupancy = null
+    for (const event of frame.events) this.applyEvent(event, frame.tick)
   }
 
   advance(dt: number): boolean {
+    this.settleSlack(dt)
     const expected = Math.round(this.serverEstimate)
     if (this.world && !this.closeTo(expected)) return this.dueSnapshot()
     const scale = timeScale(this.localTick, expected)
@@ -142,6 +152,26 @@ export class Replica {
     }
     for (const [id, shown] of this.shown) if (shown.seen !== pass) this.shown.delete(id)
     return out
+  }
+
+  /**
+   * The server clock follows the earliest-arriving frames: a frame ahead of the estimate moves it forward, a late
+   * one only records how late it was. When every frame of a window arrived late, the estimate eases back by at
+   * most a tick, so jitter never pulls the clock back but drift still does.
+   */
+  private noteArrival(tick: number, snapshot: boolean) {
+    const late = this.serverEstimate - tick
+    if (snapshot || late < 0) this.serverEstimate = tick
+    else this.slack = Math.min(this.slack, late)
+    if (snapshot) this.slack = Infinity
+  }
+
+  private settleSlack(dt: number) {
+    this.slackAge += dt
+    if (this.slackAge < SLACK_SECONDS) return
+    if (this.slack > SLACK_TICKS && this.slack !== Infinity) this.serverEstimate -= Math.min(this.slack - SLACK_TICKS, SLACK_TICKS)
+    this.slack = Infinity
+    this.slackAge = 0
   }
 
   private closeTo(tick: number): boolean {
@@ -306,7 +336,7 @@ export class Replica {
     return this.evolved
   }
 
-  private applyEvent(event: ServerFrame['events'][number]) {
+  private applyEvent(event: ServerFrame['events'][number], tick: number) {
     if (event.kind === ServerEventKind.Welcome) {
       this.playerId = event.playerId
       this.pendingShots = []
@@ -339,7 +369,7 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.UnitMotion) {
-      this.applyMotion(event.unit)
+      this.applyMotion(event.unit, tick)
       return
     }
     if (event.kind === ServerEventKind.UnitHealth) {
@@ -391,7 +421,7 @@ export class Replica {
     if (event.kind === ServerEventKind.Yields) this.pendingYields.push(...event.yields)
   }
 
-  private applyMotion(next: UnitSnapshot) {
+  private applyMotion(next: UnitSnapshot, tick: number) {
     const unit = this.unit(next.id)
     if (!unit) {
       this.units.push(copyUnit(next))
@@ -419,6 +449,11 @@ export class Replica {
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
     unit.bay = next.bay ?? -1
+    const behind = Math.min(REPLAY_LIMIT, this.localTick - tick)
+    if (behind > 0) {
+      const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
+      for (let i = 0; i < behind; i++) this.stepUnit(unit, occupied, SIM_STEP)
+    }
     if (!shown) return
     shown.before = poseOf(unit)
     const jump = Math.hypot(was.x - unit.x, was.z - unit.z)
@@ -432,6 +467,11 @@ export class Replica {
   }
 
   private stepUnits(dt: number) {
+    const occupied = this.occupancy()
+    for (const unit of this.units) this.stepUnit(unit, occupied, dt)
+  }
+
+  private occupancy(): Map<string, number> {
     const occupied = new Map<string, number>()
     for (const unit of this.units) {
       if (unit.health <= 0) continue
@@ -440,47 +480,49 @@ export class Replica {
       const span = spanOf(type)
       stamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
     }
-    for (const unit of this.units) {
-      const type = UNIT_TYPES[unit.typeId]
-      if (!type || type.topSpeed <= 0 || unit.health <= 0) continue
-      const shown = this.shown.get(unit.id)
-      if (shown) shown.before = poseOf(unit)
-      const state: MotionState = {
-        x: unit.x,
-        z: unit.z,
-        facing: unit.facing,
-        speed: unit.speed,
-        tileX: unit.tileX,
-        tileY: unit.tileY,
-        path: unit.path,
-        homeX: unit.home?.x,
-        homeY: unit.home?.y,
-        returning: unit.returning,
-        flight: unit.flight,
-        altitude: unit.altitude,
-        orbitX: unit.orbit?.x,
-        orbitY: unit.orbit?.y,
-        bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
-      }
-      stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
-      const span = spanOf(type)
-      if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
-        clearStamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
-        stamp(occupied, unit.id, state.tileX, state.tileY, span.x, span.y)
-      }
-      unit.x = state.x
-      unit.z = state.z
-      unit.facing = state.facing
-      unit.speed = state.speed
-      unit.tileX = state.tileX
-      unit.tileY = state.tileY
-      unit.path = state.path
-      unit.returning = state.returning ?? false
-      unit.flight = state.flight ?? 0
-      unit.altitude = state.altitude ?? 0
-      unit.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
-      unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
+    return occupied
+  }
+
+  private stepUnit(unit: UnitSnapshot, occupied: Map<string, number>, dt: number) {
+    const type = UNIT_TYPES[unit.typeId]
+    if (!type || type.topSpeed <= 0 || unit.health <= 0) return
+    const shown = this.shown.get(unit.id)
+    if (shown) shown.before = poseOf(unit)
+    const state: MotionState = {
+      x: unit.x,
+      z: unit.z,
+      facing: unit.facing,
+      speed: unit.speed,
+      tileX: unit.tileX,
+      tileY: unit.tileY,
+      path: unit.path,
+      homeX: unit.home?.x,
+      homeY: unit.home?.y,
+      returning: unit.returning,
+      flight: unit.flight,
+      altitude: unit.altitude,
+      orbitX: unit.orbit?.x,
+      orbitY: unit.orbit?.y,
+      bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
+    stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
+    const span = spanOf(type)
+    if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
+      clearStamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
+      stamp(occupied, unit.id, state.tileX, state.tileY, span.x, span.y)
+    }
+    unit.x = state.x
+    unit.z = state.z
+    unit.facing = state.facing
+    unit.speed = state.speed
+    unit.tileX = state.tileX
+    unit.tileY = state.tileY
+    unit.path = state.path
+    unit.returning = state.returning ?? false
+    unit.flight = state.flight ?? 0
+    unit.altitude = state.altitude ?? 0
+    unit.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
+    unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
   }
 
   private tileBlocked(

@@ -56,7 +56,7 @@ export function clamp(value: number, min: number, max: number): number {
 
 export function timeScale(localTick: number, serverTick: number): number {
   const gap = serverTick - localTick
-  if (gap < -2) return 0.5
+  if (gap < -2) return Math.max(0.5, 1 + gap * 0.05)
   if (gap > 2) return Math.min(2, 1 + gap * 0.05)
   return 1
 }
