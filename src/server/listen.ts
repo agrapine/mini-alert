@@ -28,7 +28,11 @@ lobby.onSave = () => {
 const httpServer = createServer((req, res) => {
   serveClient(clientRoot, req, res)
 })
-const sockets = new WebSocketServer({ server: httpServer, path: '/ws' })
+const sockets = new WebSocketServer({
+  server: httpServer,
+  path: '/ws',
+  perMessageDeflate: { threshold: 0 },
+})
 
 sockets.on('connection', (socket, request) => {
   const link: LobbySocket = {
