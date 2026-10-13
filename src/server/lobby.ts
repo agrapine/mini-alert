@@ -57,6 +57,8 @@ type Member = {
   token: string
   name: string
   socket: LobbySocket | null
+  /** The browser tab holding the socket; the same tab may replace a socket the server still thinks is live. */
+  tab: string | null
   gameId: number | null
   admin: boolean
 }
@@ -142,6 +144,7 @@ export class Lobby {
         token: member.token,
         name: typeof member.name === 'string' && member.name ? member.name : `Player ${member.id}`,
         socket: null,
+        tab: null,
         gameId: typeof member.gameId === 'number' ? member.gameId : null,
         admin: member.admin === true,
       })
@@ -208,12 +211,14 @@ export class Lobby {
     return { host, factions, seats: new Map(), owners }
   }
 
-  connect(socket: LobbySocket, token?: string | null): LobbyMember {
+  connect(socket: LobbySocket, token?: string | null, tab: string | null = null): LobbyMember {
     const clean = cleanToken(token)
     if (clean) {
       const prior = this.memberByToken(clean)
+      if (prior?.socket && tab !== null && prior.tab === tab) this.disconnect(prior, prior.socket)
       if (prior && !prior.socket) {
         prior.socket = socket
+        prior.tab = tab
         this.reenter(prior)
         return prior
       }
@@ -223,6 +228,7 @@ export class Lobby {
       token: clean && !this.tokens.has(clean) ? clean : this.mintToken(),
       name: '',
       socket,
+      tab,
       gameId: null,
       admin: false,
     }

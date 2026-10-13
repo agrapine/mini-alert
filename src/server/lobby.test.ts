@@ -11,7 +11,7 @@ import {
   type WaitingRoom,
   type Faction,
 } from '../shared/lobby.ts'
-import { ServerEventKind, type ServerEvent, type ServerFrame } from '../shared/protocol.ts'
+import { ClientMessageKind, ServerEventKind, type ServerEvent, type ServerFrame } from '../shared/protocol.ts'
 import { Game } from './game.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 
@@ -397,5 +397,30 @@ describe('lobby', () => {
     const other = lobby.connect(otherSock, token)
     expect(other.id).not.toBe(host.id)
     expect(latest<WaitingRoom>(otherSock, LobbyServerKind.Waiting).token).not.toBe(token)
+  })
+
+  it('lets the same tab take its seat back before its old socket closes', async () => {
+    const token = 'abc123abc123abc123abc123abc123ab'
+    const lobby = new Lobby()
+    const firstSock = fake()
+    const first = lobby.connect(firstSock, token, 'tab-1')
+    lobby.onLobby(first, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    lobby.onLobby(first, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    lobby.onLobby(first, { kind: LobbyClientKind.SetSlotAi, index: 1 })
+    lobby.onLobby(first, { kind: LobbyClientKind.StartGame })
+    const seat = latest<GameLobbyState>(firstSock, LobbyServerKind.GameLobby).seatId
+
+    const secondSock = fake()
+    const second = lobby.connect(secondSock, token, 'tab-1')
+    expect(second.id).toBe(first.id)
+    const resumed = latest<GameLobbyState>(secondSock, LobbyServerKind.GameLobby)
+    expect(resumed.seatId).toBe(seat)
+    expect(resumed.spectating).toBe(false)
+
+    lobby.disconnect(first, firstSock)
+    secondSock.game.length = 0
+    lobby.onGame(second, { kind: ClientMessageKind.Ping }, 9)
+    expect(secondSock.game.map((frame) => frame.ack)).toEqual([9])
   })
 })

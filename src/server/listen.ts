@@ -43,7 +43,7 @@ sockets.on('connection', (socket, request) => {
       sendGame(socket, message)
     },
   }
-  const member = lobby.connect(link, seatQuery(request.url))
+  const member = lobby.connect(link, query(request.url, 'seat'), query(request.url, 'tab'))
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
       const command = decodeClientMessage(bytesOf(data))
@@ -74,9 +74,9 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`server listening on ${PORT}`)
 })
 
-function seatQuery(url: string | undefined): string | null {
+function query(url: string | undefined, name: string): string | null {
   if (!url) return null
-  return new URL(url, 'http://localhost').searchParams.get('seat')
+  return new URL(url, 'http://localhost').searchParams.get(name)
 }
 
 function send(socket: { readyState: number; send(data: string): void }, channel: Channel, message: unknown) {

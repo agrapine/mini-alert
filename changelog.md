@@ -18,6 +18,8 @@
 - Queued units, rally flags, the primary factory star and new building sites show the moment you click, then settle to the server's answer.
 - The game connection is compressed, cutting traffic about 4x again.
 - The minimap fog repaints a few times a second instead of every frame.
+- Fewer network messages: routine updates (credits, training and build progress, map reveals, capture progress, position checks) are batched about five times a second, roughly halving messages in battle and cutting them by four fifths while only training.
+- A connection that goes silent, for example when a phone switches networks, reconnects within seconds and keeps your seat.
 
 ## 0.4
 

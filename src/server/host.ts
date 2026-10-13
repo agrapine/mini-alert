@@ -12,6 +12,7 @@ import {
   type ServerEvent,
   type ServerFrame,
   type ShotEvent,
+  type TrainJob,
   type ShotHit,
   type UnitSnapshot,
 } from '../shared/protocol.ts'
@@ -24,9 +25,13 @@ import type { Game } from './game.ts'
 import type { Player } from './player.ts'
 
 const PROGRESS_STEPS = 40
+const LEDGER_TICKS = 6
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 
 type VisibleCity = CityRecord & { layout: CityLayout }
+
+/** A change that may wait for the next frame going out anyway, or for the ledger cadence. */
+type Deferred = { event: ServerEvent; commit(): void }
 
 type Session = {
   playerId: number
@@ -44,19 +49,24 @@ type Memory = {
   visible: Uint32Array
   sight: number
   felledSeen: number
+  /** Tiles explored or changed since the last map patch went out. */
+  unsentTiles: Set<number>
   seen: Set<number>
   route: Map<number, number>
   motionTick: Map<number, number>
   health: Map<number, number>
   progress: Map<number, number>
-  cityState: Map<number, string>
+  cityCore: Map<number, string>
+  cityProgress: Map<number, number>
   cityShape: Map<number, string>
   credits: number | null
+  trainingKinds: string | null
   training: string | null
   rally: string | null
   primary: number | null
   lastSnapshotTick: number
   lastSentTick: number
+  ledgerTick: number
   ackSent: number
 }
 
@@ -252,9 +262,10 @@ export class ServerHost {
     const { width, height } = this.game.world
     const fresh = this.reveal(memory, living)
     const events: ServerEvent[] = []
+    const ledger: Deferred[] = []
     const patch = this.changedMap(memory, fresh)
-    if (patch) events.push({ kind: ServerEventKind.MapPatch, map: patch })
-    for (const city of this.changedCities(memory)) events.push({ kind: ServerEventKind.CityUpdate, city })
+    if (patch) ledger.push({ event: { kind: ServerEventKind.MapPatch, map: patch }, commit: () => memory.unsentTiles.clear() })
+    this.changedCities(memory, events, ledger)
 
     const known = new Set<number>()
     for (const unit of living) {
@@ -264,19 +275,29 @@ export class ServerHost {
       const freshUnit = !memory.seen.has(unit.id)
       const routeChanged = memory.route.get(unit.id) !== this.routeOf(unit)
       const due = this.tickNo - (memory.motionTick.get(unit.id) ?? -MOTION_HEARTBEAT) >= MOTION_HEARTBEAT
-      if (freshUnit || (mobile && (routeChanged || due)) || (!mobile && freshUnit)) {
-        events.push({ kind: ServerEventKind.UnitMotion, unit })
+      const commitMotion = () => {
         memory.seen.add(unit.id)
         memory.route.set(unit.id, this.routeOf(unit))
         memory.motionTick.set(unit.id, this.tickNo)
+      }
+      if (freshUnit || (mobile && routeChanged)) {
+        events.push({ kind: ServerEventKind.UnitMotion, unit })
+        commitMotion()
+      } else if (mobile && due) {
+        ledger.push({ event: { kind: ServerEventKind.UnitMotion, unit }, commit: commitMotion })
       }
       if (memory.health.get(unit.id) !== unit.health) {
         if (!freshUnit) events.push({ kind: ServerEventKind.UnitHealth, id: unit.id, health: unit.health })
         memory.health.set(unit.id, unit.health)
       }
       if (memory.progress.get(unit.id) !== unit.progress) {
-        if (!freshUnit) events.push({ kind: ServerEventKind.UnitProgress, id: unit.id, progress: unit.progress })
-        memory.progress.set(unit.id, unit.progress)
+        const commit = () => memory.progress.set(unit.id, unit.progress)
+        const event: ServerEvent = { kind: ServerEventKind.UnitProgress, id: unit.id, progress: unit.progress }
+        if (freshUnit) commit()
+        else if (unit.progress >= 1) {
+          events.push(event)
+          commit()
+        } else ledger.push({ event, commit })
       }
     }
     for (const id of [...memory.seen]) {
@@ -298,25 +319,35 @@ export class ServerHost {
     }
     const seenYields = yields.filter((point) => this.lit(memory, point.x, point.y, width, height))
     if (seenYields.length > 0) events.push({ kind: ServerEventKind.Yields, yields: seenYields })
-    this.economy(session, memory, events)
+    this.economy(session, memory, events, ledger)
     const acked = memory.ackSent !== session.ack
+    if (ledger.length > 0 && (events.length > 0 || acked || this.tickNo - memory.ledgerTick >= LEDGER_TICKS)) {
+      for (const entry of ledger) {
+        events.push(entry.event)
+        entry.commit()
+      }
+      memory.ledgerTick = this.tickNo
+    }
     if (events.length === 0 && !acked && this.tickNo - memory.lastSentTick < KEEPALIVE_TICKS) return
     memory.lastSentTick = this.tickNo
     memory.ackSent = session.ack
     session.send({ tick: this.tickNo, events, ack: session.ack })
   }
 
-  private economy(session: Session, memory: Memory, events: ServerEvent[]) {
+  private economy(session: Session, memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
     const credits = this.game.player(session.playerId)?.credits ?? 0
     if (memory.credits !== credits) {
-      memory.credits = credits
-      events.push({ kind: ServerEventKind.Credits, credits })
+      ledger.push({ event: { kind: ServerEventKind.Credits, credits }, commit: () => (memory.credits = credits) })
     }
     const training = this.game.trainingFor(session.playerId)
+    const kinds = trainingKinds(training)
     const trainingKey = JSON.stringify(training)
-    if (memory.training !== trainingKey) {
+    if (memory.trainingKinds !== kinds) {
+      memory.trainingKinds = kinds
       memory.training = trainingKey
       events.push({ kind: ServerEventKind.Training, training })
+    } else if (memory.training !== trainingKey) {
+      ledger.push({ event: { kind: ServerEventKind.Training, training }, commit: () => (memory.training = trainingKey) })
     }
     const rally = this.game.rally(session.playerId)
     const rallyKey = rally ? `${rally.x},${rally.y}` : ''
@@ -348,13 +379,16 @@ export class ServerHost {
       memory.health.set(unit.id, unit.health)
       memory.progress.set(unit.id, unit.progress)
     }
-    memory.cityState.clear()
+    memory.cityCore.clear()
+    memory.cityProgress.clear()
     memory.cityShape.clear()
     for (const city of cities) {
-      memory.cityState.set(city.index, stateKey(city.state))
+      memory.cityCore.set(city.index, coreKey(city.state))
+      memory.cityProgress.set(city.index, progressStep(city.state))
       memory.cityShape.set(city.index, shapeKey(city.layout))
     }
     memory.credits = credits
+    memory.trainingKinds = trainingKinds(training)
     memory.training = JSON.stringify(training)
     memory.rally = rally ? `${rally.x},${rally.y}` : ''
     memory.primary = primary
@@ -368,19 +402,23 @@ export class ServerHost {
       visible: new Uint32Array(tiles),
       sight: 1,
       felledSeen: 0,
+      unsentTiles: new Set(),
       seen: new Set(),
       route: new Map(),
       motionTick: new Map(),
       health: new Map(),
       progress: new Map(),
-      cityState: new Map(),
+      cityCore: new Map(),
+      cityProgress: new Map(),
       cityShape: new Map(),
       credits: null,
+      trainingKinds: null,
       training: null,
       rally: null,
       primary: null,
       lastSnapshotTick: -SNAPSHOT_COOLDOWN,
       lastSentTick: this.tickNo,
+      ledgerTick: this.tickNo,
       ackSent: 0,
     }
   }
@@ -476,26 +514,37 @@ export class ServerHost {
     return records
   }
 
-  private changedCities(memory: Memory): CityRecord[] {
-    const next = this.visibleCities(memory)
-    const changed: CityRecord[] = []
+  private changedCities(memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
     const live = new Set<number>()
-    for (const city of next) {
-      live.add(city.index)
+    for (const city of this.visibleCities(memory)) {
+      const index = city.index
+      live.add(index)
       const shape = shapeKey(city.layout)
-      const state = stateKey(city.state)
-      const reshaped = memory.cityShape.get(city.index) !== shape
-      if (!reshaped && memory.cityState.get(city.index) === state) continue
-      memory.cityShape.set(city.index, shape)
-      memory.cityState.set(city.index, state)
-      changed.push({ index: city.index, state: city.state, layout: reshaped ? city.layout : null })
+      const core = coreKey(city.state)
+      const progress = progressStep(city.state)
+      const reshaped = memory.cityShape.get(index) !== shape
+      const recast = memory.cityCore.get(index) !== core
+      if (!reshaped && !recast && memory.cityProgress.get(index) === progress) continue
+      const event: ServerEvent = {
+        kind: ServerEventKind.CityUpdate,
+        city: { index, state: city.state, layout: reshaped ? city.layout : null },
+      }
+      const commit = () => {
+        memory.cityShape.set(index, shape)
+        memory.cityCore.set(index, core)
+        memory.cityProgress.set(index, progress)
+      }
+      if (reshaped || recast) {
+        events.push(event)
+        commit()
+      } else ledger.push({ event, commit })
     }
-    for (const index of [...memory.cityState.keys()]) {
+    for (const index of [...memory.cityCore.keys()]) {
       if (live.has(index)) continue
-      memory.cityState.delete(index)
+      memory.cityCore.delete(index)
+      memory.cityProgress.delete(index)
       memory.cityShape.delete(index)
     }
-    return changed
   }
 
   private mapOf(memory: Memory): MapData {
@@ -523,7 +572,8 @@ export class ServerHost {
 
   private changedMap(memory: Memory, fresh: readonly TileCoord[]): MapData | null {
     const { width, height } = this.game.world
-    const wanted = new Set(fresh.map((tile) => tile.y * width + tile.x))
+    const wanted = memory.unsentTiles
+    for (const tile of fresh) wanted.add(tile.y * width + tile.x)
     const felled = this.game.felled()
     for (let i = memory.felledSeen; i < felled.length; i++) {
       const index = felled[i].y * width + felled[i].x
@@ -581,11 +631,14 @@ function clipState(state: CityState, explored: Uint8Array, width: number): CityS
   }
 }
 
-function stateKey(state: CityState): string {
+function coreKey(state: CityState): string {
   const ruins = state.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')
   const sites = state.sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-  const progress = Math.round(state.progress * PROGRESS_STEPS)
-  return `${state.ownerId}:${progress}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
+  return `${state.ownerId}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
+}
+
+function progressStep(state: CityState): number {
+  return Math.round(state.progress * PROGRESS_STEPS)
 }
 
 function shapeKey(layout: CityLayout): string {
@@ -600,4 +653,8 @@ function discOffsets(radius: number): TileCoord[] {
     for (let x = -reach; x <= reach; x++) if (x * x + y * y <= radius * radius) offsets.push({ x, y })
   }
   return offsets
+}
+
+function trainingKinds(training: readonly TrainJob[]): string {
+  return training.map((job) => job.typeId).join(',')
 }

@@ -66,6 +66,34 @@ describe('host snapshots', () => {
     expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
   })
 
+  it('delivers every explored tile although patches wait for the ledger', () => {
+    const game = new Game(new World(64, 64))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (message) => frames.push(message)).sync()
+    game.orderMove(player.id, [scout.id], { x: 40, y: 30 })
+    const seen = new Set<string>()
+    const sight = SCOUT.weapon.sight
+    for (let i = 0; i < 30 * 30; i++) {
+      host.tick(SIM_STEP)
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          if (Math.hypot(x + 0.5 - scout.pos.x, y + 0.5 - scout.pos.z) <= sight - 0.5) seen.add(`${x},${y}`)
+        }
+      }
+    }
+    const received = new Set<string>()
+    for (const event of events(frames)) {
+      if (event.kind === ServerEventKind.Snapshot || event.kind === ServerEventKind.MapPatch) {
+        for (const cell of event.map.cells) received.add(`${cell.x},${cell.y}`)
+      }
+    }
+    expect(seen.size).toBeGreaterThan(1000)
+    expect([...seen].filter((tile) => !received.has(tile))).toEqual([])
+  })
+
   it('acknowledges a spectator ping at once', () => {
     const game = new Game(new World(16, 16))
     const player = game.addPlayer()
