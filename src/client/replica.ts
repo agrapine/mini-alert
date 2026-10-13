@@ -32,6 +32,9 @@ const NOMINAL_RATE = 1 / SIM_STEP
 const SLOW_RATE = 0.8 * NOMINAL_RATE
 const JITTER_TICKS = 15
 const REPLAY_LIMIT = 15
+const HOLD_WINDOW = 90
+const HOLD_DECAY = 60
+const HOLD_LIMIT = 6
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
 
@@ -61,6 +64,8 @@ export class Replica {
   terrainRevision = 0
   cityRevision = 0
   knownTiles = 0
+  /** Told how far each server motion moved a unit this replica already held. */
+  onCorrection: ((jump: number) => void) | null = null
 
   private pendingShots: ShotEvent[] = []
   private pendingHits: ShotHit[] = []
@@ -75,6 +80,10 @@ export class Replica {
   private slackAge = 0
   private arrivals: { at: number; tick: number }[] = []
   private rate = NOMINAL_RATE
+  private held: ServerFrame[] = []
+  private hold = 1
+  private holdTick = 0
+  private lateness: { tick: number; late: number }[] = []
   private askedTick = -SNAPSHOT_GAP
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
@@ -105,6 +114,10 @@ export class Replica {
     this.slackAge = 0
     this.arrivals = []
     this.rate = NOMINAL_RATE
+    this.held = []
+    this.hold = 1
+    this.holdTick = 0
+    this.lateness = []
     this.wantsSnapshot = false
     this.terrainRevision = 0
     this.knownTiles = 0
@@ -122,11 +135,21 @@ export class Replica {
     this.settle(Infinity)
   }
 
+  /** A frame stamped ahead of `localTick` is held and applies right after the step that reaches its tick. */
   apply(frame: ServerFrame, now = performance.now()) {
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
     this.serverTick = frame.tick
     this.noteArrival(frame.tick, snapshot, now)
-    if (!snapshot && this.world && !this.closeTo(frame.tick)) return
+    if (snapshot) this.held = []
+    else if (this.world && frame.tick > this.localTick) {
+      this.held.push(frame)
+      if (frame.tick - this.localTick > SNAPSHOT_GAP) this.closeTo(frame.tick)
+      return
+    } else if (this.world && !this.closeTo(frame.tick)) return
+    this.applyFrame(frame)
+  }
+
+  private applyFrame(frame: ServerFrame) {
     this.frameOccupancy = null
     for (const event of frame.events) this.applyEvent(event, frame.tick)
     this.settle(frame.ack)
@@ -181,16 +204,16 @@ export class Replica {
 
   advance(dt: number): boolean {
     this.settleSlack(dt)
-    const expected = Math.round(this.serverEstimate)
+    this.settleHold()
+    const expected = Math.round(this.serverEstimate - this.hold)
     if (this.world && !this.closeTo(expected)) return this.dueSnapshot()
-    const scale = timeScale(this.localTick, expected)
+    const scale = timeScale(this.localTick + this.accumulator / SIM_STEP, this.serverEstimate - this.hold)
     this.serverEstimate += dt * this.rate
     this.accumulator += dt * scale * this.rate * SIM_STEP
     let steps = 0
     while (this.accumulator >= SIM_STEP && steps < CATCHUP_STEPS) {
       this.accumulator -= SIM_STEP
-      this.localTick += 1
-      this.stepUnits(SIM_STEP)
+      this.step()
       steps += 1
     }
     const fade = Math.exp(-dt / DRIFT_SECONDS)
@@ -200,10 +223,15 @@ export class Replica {
 
   /** Steps straight to `tick` without wall-clock pacing; the server keeps a copy of each client this way. */
   simulateTo(tick: number) {
-    while (this.localTick < tick) {
-      this.localTick += 1
-      this.stepUnits(SIM_STEP)
-    }
+    while (this.localTick < tick) this.step()
+  }
+
+  private step() {
+    this.localTick += 1
+    this.stepUnits(SIM_STEP)
+    let due = 0
+    while (due < this.held.length && this.held[due].tick <= this.localTick) due += 1
+    for (const frame of this.held.splice(0, due)) this.applyFrame(frame)
   }
 
   /** Where `drawn` poses units between the step before `localTick` (0) and `localTick` (1). */
@@ -245,8 +273,28 @@ export class Replica {
     else {
       if (late > AHEAD_LIMIT) this.serverEstimate = tick + AHEAD_LIMIT
       this.slack = Math.min(this.slack, late)
+      this.lateness.push({ tick: this.localTick, late })
+      this.settleHold()
     }
     if (snapshot) this.slack = Infinity
+  }
+
+  /**
+   * How many ticks the clock runs behind the server estimate: as late as the latest frame of the last HOLD_WINDOW
+   * local ticks arrived, rising at once and easing back a tick per HOLD_DECAY local ticks.
+   */
+  private settleHold() {
+    while (this.lateness.length > 0 && this.localTick - this.lateness[0].tick > HOLD_WINDOW) this.lateness.shift()
+    let worst = 0
+    for (const sample of this.lateness) worst = Math.max(worst, sample.late)
+    const need = Math.min(HOLD_LIMIT, Math.max(1, worst))
+    if (need >= this.hold) {
+      this.hold = need
+      this.holdTick = this.localTick
+    } else if (this.localTick - this.holdTick >= HOLD_DECAY) {
+      this.hold = Math.max(need, this.hold - 1)
+      this.holdTick = this.localTick
+    }
   }
 
   /**
@@ -289,10 +337,7 @@ export class Replica {
   private closeTo(tick: number): boolean {
     const ahead = tick - this.localTick
     if (ahead > SNAPSHOT_GAP && ahead <= FAST_FORWARD_LIMIT) {
-      while (this.localTick < tick) {
-        this.localTick += 1
-        this.stepUnits(SIM_STEP)
-      }
+      while (this.localTick < tick) this.step()
       this.accumulator = 0
       return true
     }
@@ -624,6 +669,7 @@ export class Replica {
     }
     const shown = this.shown.get(unit.id)
     const was = shown ? poseOf(shown.view) : poseOf(unit)
+    const from = { x: unit.x, z: unit.z }
     unit.x = next.x
     unit.z = next.z
     unit.facing = next.facing
@@ -649,6 +695,7 @@ export class Replica {
       const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
       for (let i = 0; i < behind; i++) this.stepUnit(unit, occupied, SIM_STEP)
     }
+    this.onCorrection?.(Math.hypot(unit.x - from.x, unit.z - from.z))
     if (!shown) return
     shown.before = poseOf(unit)
     const jump = Math.hypot(was.x - unit.x, was.z - unit.z)
