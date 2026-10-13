@@ -223,9 +223,8 @@ function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightS
   let lockedDist = Infinity
   for (const other of units) {
     if (other.id === unit.id || other.ownerId === unit.ownerId || other.health <= 0) continue
-    if (!seesPoint(friends, other.pos.x, other.pos.z)) continue
     const dist = distance(unit, other)
-    if (dist > reach) continue
+    if (dist > reach || !seesPoint(friends, other.pos.x, other.pos.z)) continue
     if (dist < closestDist) {
       closest = other
       closestDist = dist
@@ -251,9 +250,8 @@ function pickStructure(unit: Unit, structures: readonly StructureTarget[], frien
   let lockedDist = Infinity
   for (const building of structures) {
     if (building.ownerId === 0 || building.ownerId === unit.ownerId) continue
-    if (!seesPoint(friends, building.x, building.z)) continue
     const dist = Math.hypot(building.x - unit.pos.x, building.z - unit.pos.z)
-    if (dist > reach) continue
+    if (dist > reach || !seesPoint(friends, building.x, building.z)) continue
     if (dist < closestDist) {
       closest = building
       closestDist = dist
