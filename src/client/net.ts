@@ -1,5 +1,5 @@
 import { logGameIn, logGameOut, logGameUndecodable, logLobbyIn, logLobbyOut } from './debug-net.ts'
-import { ensureSeatToken, randomToken } from './seat.ts'
+import { ensureSeatToken, tabToken } from './seat.ts'
 import { decodeServerFrame, encodeClientMessage } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
 import { type ClientMessage, type ServerFrame } from '../shared/protocol.ts'
@@ -19,7 +19,7 @@ export class Net {
   private seq = 0
   private readonly sentAt = new Map<number, number>()
   private heardAt = 0
-  private readonly tab = randomToken()
+  private readonly tab = tabToken()
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
