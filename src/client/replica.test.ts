@@ -60,11 +60,11 @@ function convoy(): UnitSnapshot[] {
   })
 }
 
-/** Every third tick's UnitMotion for the convoy, with routes the clients cannot predict switched at ticks 90 and 150. */
-function convoyFrames(): ServerFrame[] {
+/** The convoy's UnitMotion every `every` ticks up to `last`, with routes the clients cannot predict switched at ticks 90 and 150. */
+function convoyFrames(every: number, last: number): ServerFrame[] {
   const server = joined(...convoy())
   const frames: ServerFrame[] = []
-  for (let tick = 13; tick <= 240; tick += 3) {
+  for (let tick = 10 + every; tick <= last; tick += every) {
     server.simulateTo(tick)
     if (tick === 90) server.predictMove([1], { x: 14, y: 1 })
     if (tick === 150) server.predictMove([2, 3], { x: 3, y: 12 })
@@ -73,16 +73,27 @@ function convoyFrames(): ServerFrame[] {
   return frames
 }
 
-/** Feeds `frames` delayed by `delays` ticks in turn, in order, rendering every half tick; `now` maps tick time to arrival time. */
-function fedLate(frames: ServerFrame[], delays: number[], now: (time: number, index: number) => number, onRender?: (replica: Replica) => void): Replica {
+type Watch = { arrive?: (replica: Replica, frame: ServerFrame) => void; render?: (replica: Replica, time: number) => void }
+
+/** Feeds `frames` in order, each `delay` ticks late, rendering every half tick; `now` maps tick time to arrival time. */
+function fedLate(
+  frames: ServerFrame[],
+  delay: (tick: number, index: number) => number,
+  now: (time: number, index: number) => number,
+  watch: Watch = {},
+): Replica {
   const replica = joined(...convoy())
   let at = 0
-  const queue = frames.map((frame, index) => ({ frame, at: (at = Math.max(at, frame.tick + delays[index % delays.length])) }))
+  const queue = frames.map((frame, index) => ({ frame, at: (at = Math.max(at, frame.tick + delay(frame.tick, index))) }))
   let index = 0
   for (let half = 21; half < 2 * (at + 30); half++) {
-    while (queue.length > 0 && queue[0].at <= half / 2) replica.apply(queue.shift()?.frame as ServerFrame, now(half / 2, index++))
+    while (queue.length > 0 && queue[0].at <= half / 2) {
+      const frame = queue.shift()?.frame as ServerFrame
+      watch.arrive?.(replica, frame)
+      replica.apply(frame, now(half / 2, index++))
+    }
     replica.advance(SIM_STEP / 2)
-    onRender?.(replica)
+    watch.render?.(replica, half / 2)
   }
   return replica
 }
@@ -204,22 +215,35 @@ describe('replica drawing', () => {
   })
 
   it('ends a convoy fed frames up to four ticks late where frames fed on time leave it', () => {
-    const frames = convoyFrames()
+    const frames = convoyFrames(3, 240)
     const start = performance.now()
-    const late = fedLate(frames, [0, 4, 1, 3, 2, 4, 0], (time) => start + (time - 10) * SIM_STEP * 1000)
+    const late = fedLate(frames, (_, index) => [0, 4, 1, 3, 2, 4, 0][index % 7], (time) => start + (time - 10) * SIM_STEP * 1000)
     expect(late.localTick).toBeGreaterThan(240)
     expect(late.units).toEqual(fedOnTime(frames, late.localTick).units)
   })
 
-  it('holds frames by ticks alone, whatever the arrival clock reads', () => {
-    const frames = convoyFrames()
+  it('holds frames as late as they recently arrived and eases back by local ticks, whatever the arrival clock reads', () => {
+    const frames = convoyFrames(1, 700)
     const start = performance.now()
-    const delays = [0, 4, 1, 3, 2, 4, 0]
+    const delay = (tick: number, index: number) => (tick <= 200 ? [0, 4, 1, 3][index % 4] : 0)
+    let behind = 0
+    const lag = new Map<number, number>()
     const seen: { tick: number; units: UnitSnapshot[] }[] = []
-    const first = fedLate(frames, delays, (time) => start + (time - 10) * SIM_STEP * 1000, (replica) => seen.push({ tick: replica.localTick, units: structuredClone(replica.units) }))
+    const first = fedLate(frames, delay, (time) => start + (time - 10) * SIM_STEP * 1000, {
+      arrive: (replica, frame) => {
+        if (frame.tick > 100 && frame.tick < replica.localTick) behind += 1
+      },
+      render: (replica, time) => {
+        lag.set(time, time - replica.localTick)
+        seen.push({ tick: replica.localTick, units: structuredClone(replica.units) })
+      },
+    })
+    expect(behind).toBe(0)
+    expect(lag.get(320)).toBeGreaterThanOrEqual(3)
+    expect(lag.get(600)).toBeLessThanOrEqual(1)
     let render = 0
-    const second = fedLate(frames, delays, (time, index) => start + (time - 10) * SIM_STEP * 1050 + (index % 3) * 9, (replica) => {
-      expect({ tick: replica.localTick, units: replica.units }).toEqual(seen[render++])
+    const second = fedLate(frames, delay, (time, index) => start + (time - 10) * SIM_STEP * 1050 + (index % 3) * 9, {
+      render: (replica) => expect({ tick: replica.localTick, units: replica.units }).toEqual(seen[render++]),
     })
     expect(second.units).toEqual(first.units)
   })

@@ -29,7 +29,7 @@
 - Anyone disconnected from an unstarted game for ten minutes leaves it, freeing their slot and passing on the host, and a game nobody is left in closes. Started matches keep their seats.
 - `npm run bench` plays scripted matches against a real server over simulated LAN, internet, bad and spiky connections and reports traffic, order echo time, how far units drift on screen from the server, and server time per tick, so network changes can be measured before they ship.
 - Units always settle to the server's answer after a move or attack order.
-- Units no longer jump on jittery or lossy connections: your game holds each server update until its moment comes, running a few hundredths of a second further behind the server only when the connection needs it.
+- Units no longer jump on jittery or lossy connections: your game holds each server update until its moment comes, so it runs slightly behind the server, up to a fifth of a second on unsteady connections.
 
 ## 0.4
 
