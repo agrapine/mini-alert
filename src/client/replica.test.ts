@@ -27,7 +27,7 @@ function scout(x: number, path: { x: number; y: number }[]): UnitSnapshot {
   }
 }
 
-function joined(unit: UnitSnapshot): Replica {
+function joined(...units: UnitSnapshot[]): Replica {
   const cells: MapCell[] = []
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) cells.push({ x, y, terrain: Terrain.Land, shift: 0 })
   const replica = new Replica()
@@ -38,7 +38,7 @@ function joined(unit: UnitSnapshot): Replica {
       {
         kind: ServerEventKind.Snapshot,
         map: { width: 16, height: 16, cells, coast: [], holes: [], roads: [], towns: [], cleared: [] },
-        units: [unit],
+        units,
         cities: [],
         credits: 0,
         training: [],
@@ -97,5 +97,67 @@ describe('replica drawing', () => {
     const replica = joined(scout(2.5, road))
     replica.predictMove([1], { x: 10, y: 4 })
     expect(replica.units[0].path).toEqual(road)
+  })
+
+  it('keeps a steady pace when frames arrive with uneven delays', () => {
+    const replica = joined(scout(1.5, []))
+    const delays = [0, 12, 3, 15, 0, 9]
+    const frames: { tick: number; at: number }[] = []
+    for (let tick = 12, at = 0; tick < 140; tick += 3) {
+      at = Math.max(at, tick + 2 + delays[frames.length % delays.length])
+      frames.push({ tick, at })
+    }
+    const paces: number[] = []
+    for (let half = 22; half < 260; half++) {
+      const now = half / 2
+      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, events: [] })
+      const before = replica.localTick
+      replica.advance(SIM_STEP / 2)
+      paces.push(replica.localTick - before)
+    }
+    const settled = paces.slice(40)
+    let worst = 0
+    for (let i = 0; i + 12 <= settled.length; i++) {
+      const steps = settled.slice(i, i + 12).reduce((sum, pace) => sum + pace, 0)
+      worst = Math.max(worst, Math.abs(steps - 6))
+    }
+    expect(worst).toBeLessThanOrEqual(1)
+  })
+
+  it('replays a correction from an older tick up to the local tick', () => {
+    const replica = joined(scout(2.5, road))
+    for (let i = 0; i < 10; i++) replica.advance(SIM_STEP)
+    expect(replica.localTick).toBe(20)
+    replica.apply({ tick: 15, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, road.slice(1)) }] })
+    expect(replica.units[0].x).toBeGreaterThan(3.5 + 4 * SIM_STEP * 3 * 0.9)
+  })
+
+  it('counts a city update apart from terrain changes', () => {
+    const replica = joined(scout(2.5, []))
+    const terrain = replica.terrainRevision
+    const cities = replica.cityRevision
+    const layout = { x: 2, y: 2, span: 2, seed: 1, tiles: [{ x: 2, y: 2 }], buildings: [], streets: [] }
+    const state = { ownerId: 1, color: 0, progress: 0.5, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
+    replica.apply({ tick: 10, events: [{ kind: ServerEventKind.CityUpdate, city: { index: 0, state, layout } }] })
+    expect(replica.terrainRevision).toBe(terrain)
+    expect(replica.cityRevision).toBe(cities + 1)
+    expect(replica.knownTiles).toBe(256)
+  })
+
+  it('turns a turret toward its attack target between server updates', () => {
+    const tank = { ...scout(4.5, []), id: 2, typeId: UnitTypeId.MedTank, facing: 0, turretYaw: 0 }
+    const foe = { ...scout(8.5, []), id: 3, ownerId: 2 }
+    const replica = joined(tank, foe)
+    replica.predictAttack([2], foe, 3)
+    for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
+    expect(replica.unit(2)?.turretYaw).toBeGreaterThan(1)
+  })
+
+  it('leads a unit out of range toward its attack target', () => {
+    const tank = { ...scout(1.5, []), id: 2, typeId: UnitTypeId.MedTank }
+    const replica = joined(tank, { ...scout(14.5, []), id: 3, ownerId: 2 })
+    replica.predictAttack([2], { x: 14.5, z: 4.5 }, 3)
+    expect(replica.unit(2)?.attackId).toBe(3)
+    expect(replica.unit(2)?.path).toEqual([{ x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 }])
   })
 })

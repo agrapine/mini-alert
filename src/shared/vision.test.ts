@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UnitTypeId, WeaponKind } from './unit-types.ts'
 import { CITY_SIGHT } from './cities.ts'
-import { FOG_FEATHER, FOG_TEXELS, growExplored, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
+import { FOG_FEATHER, FOG_TEXELS, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
 
 function snapshot(id: number, ownerId: number, x: number, z: number, typeId = UnitTypeId.Scout): UnitSnapshot {
   return {
@@ -86,22 +86,6 @@ describe('vision', () => {
     stampSight(width, height, [{ x: 30.5, z: 30.5, sight: 2 }], explored, visible)
     expect(visible[tile]).toBe(0)
     expect(explored[tile]).toBe(1)
-  })
-
-  it('explores terrain two tiles past sight without revealing it', () => {
-    const width = 30
-    const height = 30
-    const explored = new Uint8Array(width * height)
-    const visible = new Uint8Array(width * height)
-    stampSight(width, height, [{ x: 10.5, z: 10.5, sight: 2 }], explored, visible)
-    const near = 10 * width + 13
-    const far = 10 * width + 15
-    expect(visible[near]).toBe(0)
-    expect(explored[near]).toBe(0)
-    growExplored(explored, width, height)
-    expect(explored[near]).toBe(1)
-    expect(visible[near]).toBe(0)
-    expect(explored[far]).toBe(0)
   })
 
   it('keeps a smooth explored distance and ignores points past the feather', () => {

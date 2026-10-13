@@ -49,6 +49,36 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
   })
 
+  it('explores terrain two tiles past sight without revealing units there', () => {
+    const game = new Game(new World(64, 64))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    game.spawn(player, UnitTypeId.Scout, { x: 20, y: 20 })
+    const sight = SCOUT.weapon.sight
+    const hidden = game.spawn(enemy, UnitTypeId.Scout, { x: 20, y: 20 + sight + 1 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (message) => frames.push(message)).sync()
+    const snapshot = events(frames).find((event) => event.kind === ServerEventKind.Snapshot)
+    const explored = new Set(snapshot?.map.cells.map((cell) => `${cell.x},${cell.y}`))
+    expect(explored.has(`${20 + sight + 2},20`)).toBe(true)
+    expect(explored.has(`${20 + sight + 3},20`)).toBe(false)
+    expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
+  })
+
+  it('answers an order before the next tick', () => {
+    const game = new Game(new World(32, 32))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    frames.length = 0
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } })
+    expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === scout.id)).toBe(true)
+  })
+
   it('sends nothing while idle and a tick keepalive after five seconds', () => {
     const game = new Game(new World(32, 32))
     const player = game.addPlayer()

@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -22,6 +22,9 @@ const FAST_FORWARD_LIMIT = 900
 const DRIFT_SECONDS = 0.12
 const TELEPORT_DISTANCE = 3
 const LEAD_TILES = 3
+const SLACK_SECONDS = 1
+const SLACK_TICKS = 1
+const REPLAY_LIMIT = 15
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
 
@@ -46,8 +49,9 @@ export class Replica {
   serverTick = 0
   localTick = 0
   wantsSnapshot = false
-  mapChanged = false
-  propEpoch = 0
+  terrainRevision = 0
+  cityRevision = 0
+  knownTiles = 0
 
   private pendingShots: ShotEvent[] = []
   private pendingHits: ShotHit[] = []
@@ -55,13 +59,14 @@ export class Replica {
   private readonly clearedTiles = new Set<string>()
   private evolved: (CityLayout | null)[] = []
   private blockedBuildings = new Set<string>()
-  private cityRevision = 0
   private settledRevision = -1
   private accumulator = 0
   private serverEstimate = 0
+  private slack = Infinity
+  private slackAge = 0
   private askedTick = -SNAPSHOT_GAP
-  private knownCount = 0
   private readonly shown = new Map<number, Shown>()
+  private frameOccupancy: Map<string, number> | null = null
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
 
@@ -79,9 +84,11 @@ export class Replica {
     this.serverTick = 0
     this.localTick = 0
     this.serverEstimate = 0
+    this.slack = Infinity
+    this.slackAge = 0
     this.wantsSnapshot = false
-    this.mapChanged = false
-    this.propEpoch = 0
+    this.terrainRevision = 0
+    this.knownTiles = 0
     this.clearedTiles.clear()
     this.pendingShots = []
     this.pendingHits = []
@@ -92,19 +99,20 @@ export class Replica {
     this.settledRevision = -1
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
-    this.knownCount = 0
     this.shown.clear()
   }
 
   apply(frame: ServerFrame) {
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
     this.serverTick = frame.tick
-    this.serverEstimate = frame.tick
+    this.noteArrival(frame.tick, snapshot)
     if (!snapshot && this.world && !this.closeTo(frame.tick)) return
-    for (const event of frame.events) this.applyEvent(event)
+    this.frameOccupancy = null
+    for (const event of frame.events) this.applyEvent(event, frame.tick)
   }
 
   advance(dt: number): boolean {
+    this.settleSlack(dt)
     const expected = Math.round(this.serverEstimate)
     if (this.world && !this.closeTo(expected)) return this.dueSnapshot()
     const scale = timeScale(this.localTick, expected)
@@ -142,6 +150,26 @@ export class Replica {
     }
     for (const [id, shown] of this.shown) if (shown.seen !== pass) this.shown.delete(id)
     return out
+  }
+
+  /**
+   * The server clock follows the earliest-arriving frames: a frame ahead of the estimate moves it forward, a late
+   * one only records how late it was. When every frame of a window arrived late, the estimate eases back by at
+   * most a tick, so jitter never pulls the clock back but drift still does.
+   */
+  private noteArrival(tick: number, snapshot: boolean) {
+    const late = this.serverEstimate - tick
+    if (snapshot || late < 0) this.serverEstimate = tick
+    else this.slack = Math.min(this.slack, late)
+    if (snapshot) this.slack = Infinity
+  }
+
+  private settleSlack(dt: number) {
+    this.slackAge += dt
+    if (this.slackAge < SLACK_SECONDS) return
+    if (this.slack > SLACK_TICKS && this.slack !== Infinity) this.serverEstimate -= Math.min(this.slack - SLACK_TICKS, SLACK_TICKS)
+    this.slack = Infinity
+    this.slackAge = 0
   }
 
   private closeTo(tick: number): boolean {
@@ -190,12 +218,6 @@ export class Replica {
     const yields = this.pendingYields
     this.pendingYields = []
     return yields
-  }
-
-  consumeMapChange(): boolean {
-    const changed = this.mapChanged
-    this.mapChanged = false
-    return changed
   }
 
   unit(id: number): UnitSnapshot | undefined {
@@ -262,18 +284,41 @@ export class Replica {
 
   /** Starts ordered units toward `tile` along a short straight lead until the server's route arrives. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
+    for (const unit of this.ordered(unitIds)) {
+      unit.attackId = null
+      unit.attackPoint = null
+      this.lead(unit, tile)
+    }
+  }
+
+  /** Points ordered units at the target and leads those out of range toward it. */
+  predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
+    for (const unit of this.ordered(unitIds)) {
+      unit.attackId = targetId
+      unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null
+      const range = UNIT_TYPES[unit.typeId].weapon.range
+      if (Math.hypot(target.x - unit.x, target.z - unit.z) > range) this.lead(unit, { x: Math.floor(target.x), y: Math.floor(target.z) })
+    }
+  }
+
+  private ordered(unitIds: readonly number[]): UnitSnapshot[] {
+    const units: UnitSnapshot[] = []
     for (const id of unitIds) {
       const unit = this.unit(id)
-      if (!unit || unit.ownerId !== this.playerId) continue
-      const type = UNIT_TYPES[unit.typeId]
-      const domain = domainOf(type)
-      if (type.topSpeed <= 0 || domain === MoveDomain.Air) continue
-      if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) continue
-      const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
-      if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) continue
-      unit.path = lead
-      unit.goal = { ...lead[lead.length - 1] }
+      if (unit && unit.ownerId === this.playerId) units.push(unit)
     }
+    return units
+  }
+
+  private lead(unit: UnitSnapshot, tile: TileCoord) {
+    const type = UNIT_TYPES[unit.typeId]
+    const domain = domainOf(type)
+    if (type.topSpeed <= 0 || domain === MoveDomain.Air) return
+    if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) return
+    const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
+    if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) return
+    unit.path = lead
+    unit.goal = { ...lead[lead.length - 1] }
   }
 
   homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
@@ -306,7 +351,7 @@ export class Replica {
     return this.evolved
   }
 
-  private applyEvent(event: ServerFrame['events'][number]) {
+  private applyEvent(event: ServerFrame['events'][number], tick: number) {
     if (event.kind === ServerEventKind.Welcome) {
       this.playerId = event.playerId
       this.pendingShots = []
@@ -339,7 +384,7 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.UnitMotion) {
-      this.applyMotion(event.unit)
+      this.applyMotion(event.unit, tick)
       return
     }
     if (event.kind === ServerEventKind.UnitHealth) {
@@ -391,7 +436,7 @@ export class Replica {
     if (event.kind === ServerEventKind.Yields) this.pendingYields.push(...event.yields)
   }
 
-  private applyMotion(next: UnitSnapshot) {
+  private applyMotion(next: UnitSnapshot, tick: number) {
     const unit = this.unit(next.id)
     if (!unit) {
       this.units.push(copyUnit(next))
@@ -419,6 +464,11 @@ export class Replica {
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
     unit.bay = next.bay ?? -1
+    const behind = Math.min(REPLAY_LIMIT, this.localTick - tick)
+    if (behind > 0) {
+      const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
+      for (let i = 0; i < behind; i++) this.stepUnit(unit, occupied, SIM_STEP)
+    }
     if (!shown) return
     shown.before = poseOf(unit)
     const jump = Math.hypot(was.x - unit.x, was.z - unit.z)
@@ -432,6 +482,43 @@ export class Replica {
   }
 
   private stepUnits(dt: number) {
+    for (const unit of this.units) {
+      const shown = this.shown.get(unit.id)
+      if (shown) shown.before = poseOf(unit)
+    }
+    const occupied = this.occupancy()
+    for (const unit of this.units) this.stepUnit(unit, occupied, dt)
+    this.aimTurrets(dt)
+  }
+
+  private aimTurrets(dt: number) {
+    for (const unit of this.units) {
+      const weapon = UNIT_TYPES[unit.typeId].weapon
+      if (weapon.turretRate <= 0 || unit.health <= 0 || unit.progress < 1) continue
+      const aim = this.aimOf(unit, Math.max(weapon.sight, weapon.range))
+      if (!aim) continue
+      unit.turretYaw = turnToward(unit.turretYaw, Math.atan2(aim.x - unit.x, aim.z - unit.z), weapon.turretRate, dt)
+    }
+  }
+
+  /** The ordered point or target, else the nearest enemy in reach. */
+  private aimOf(unit: UnitSnapshot, reach: number): { x: number; z: number } | null {
+    if (unit.attackPoint) return unit.attackPoint
+    const ordered = unit.attackId === null ? undefined : this.unit(unit.attackId)
+    if (ordered && ordered.health > 0) return ordered
+    let nearest: UnitSnapshot | null = null
+    let nearestDist = reach
+    for (const other of this.units) {
+      if (other.ownerId === unit.ownerId || other.health <= 0) continue
+      const dist = Math.hypot(other.x - unit.x, other.z - unit.z)
+      if (dist > nearestDist) continue
+      nearest = other
+      nearestDist = dist
+    }
+    return nearest
+  }
+
+  private occupancy(): Map<string, number> {
     const occupied = new Map<string, number>()
     for (const unit of this.units) {
       if (unit.health <= 0) continue
@@ -440,47 +527,47 @@ export class Replica {
       const span = spanOf(type)
       stamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
     }
-    for (const unit of this.units) {
-      const type = UNIT_TYPES[unit.typeId]
-      if (!type || type.topSpeed <= 0 || unit.health <= 0) continue
-      const shown = this.shown.get(unit.id)
-      if (shown) shown.before = poseOf(unit)
-      const state: MotionState = {
-        x: unit.x,
-        z: unit.z,
-        facing: unit.facing,
-        speed: unit.speed,
-        tileX: unit.tileX,
-        tileY: unit.tileY,
-        path: unit.path,
-        homeX: unit.home?.x,
-        homeY: unit.home?.y,
-        returning: unit.returning,
-        flight: unit.flight,
-        altitude: unit.altitude,
-        orbitX: unit.orbit?.x,
-        orbitY: unit.orbit?.y,
-        bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
-      }
-      stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
-      const span = spanOf(type)
-      if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
-        clearStamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
-        stamp(occupied, unit.id, state.tileX, state.tileY, span.x, span.y)
-      }
-      unit.x = state.x
-      unit.z = state.z
-      unit.facing = state.facing
-      unit.speed = state.speed
-      unit.tileX = state.tileX
-      unit.tileY = state.tileY
-      unit.path = state.path
-      unit.returning = state.returning ?? false
-      unit.flight = state.flight ?? 0
-      unit.altitude = state.altitude ?? 0
-      unit.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
-      unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
+    return occupied
+  }
+
+  private stepUnit(unit: UnitSnapshot, occupied: Map<string, number>, dt: number) {
+    const type = UNIT_TYPES[unit.typeId]
+    if (!type || type.topSpeed <= 0 || unit.health <= 0) return
+    const state: MotionState = {
+      x: unit.x,
+      z: unit.z,
+      facing: unit.facing,
+      speed: unit.speed,
+      tileX: unit.tileX,
+      tileY: unit.tileY,
+      path: unit.path,
+      homeX: unit.home?.x,
+      homeY: unit.home?.y,
+      returning: unit.returning,
+      flight: unit.flight,
+      altitude: unit.altitude,
+      orbitX: unit.orbit?.x,
+      orbitY: unit.orbit?.y,
+      bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
+    stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
+    const span = spanOf(type)
+    if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
+      clearStamp(occupied, unit.id, unit.tileX, unit.tileY, span.x, span.y)
+      stamp(occupied, unit.id, state.tileX, state.tileY, span.x, span.y)
+    }
+    unit.x = state.x
+    unit.z = state.z
+    unit.facing = state.facing
+    unit.speed = state.speed
+    unit.tileX = state.tileX
+    unit.tileY = state.tileY
+    unit.path = state.path
+    unit.returning = state.returning ?? false
+    unit.flight = state.flight ?? 0
+    unit.altitude = state.altitude ?? 0
+    unit.orbit = state.orbitX !== undefined && state.orbitY !== undefined ? { x: state.orbitX, y: state.orbitY } : null
+    unit.goal = state.path.length > 0 ? { ...state.path[state.path.length - 1] } : null
   }
 
   private tileBlocked(
@@ -510,11 +597,13 @@ export class Replica {
       world.holes = []
       world.roads = []
       world.towns = []
+      this.knownTiles = 0
     }
     for (const cell of map.cells) {
       if (cell.x < 0 || cell.y < 0 || cell.x >= world.width || cell.y >= world.height) continue
       const index = cell.y * world.width + cell.x
       world.terrain[index] = cell.terrain
+      if (world.known[index] === 0) this.knownTiles += 1
       world.known[index] = 1
       world.shifts[index] = cell.shift
     }
@@ -523,12 +612,7 @@ export class Replica {
     world.roads.push(...map.roads)
     world.towns.push(...map.towns)
     this.world = world
-    this.mapChanged = true
-    const known = world.known.reduce((sum, bit) => sum + bit, 0)
-    if (replace || known - this.knownCount >= 16) {
-      this.knownCount = known
-      this.propEpoch += 1
-    }
+    this.terrainRevision += 1
   }
 
   private installCities(records: readonly CityRecord[], replace: boolean) {
@@ -545,7 +629,6 @@ export class Replica {
       if (record.layout) this.layouts[record.index] = record.layout
     }
     this.cityRevision += 1
-    this.mapChanged = true
   }
 
   private citySizeAt(tile: TileCoord, plotOnly: boolean): number | null {

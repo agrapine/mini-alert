@@ -200,9 +200,6 @@ net.onGame = (frame) => {
     return
   }
   if (!hadWorld && replica.world) mountWorld()
-  else if (replica.consumeMapChange() && live.view && replica.world) {
-    live.view.noteMap(replica.world, replica.settledLayouts())
-  }
   if (frame.events.some((event) => event.kind === ServerEventKind.Snapshot)) aimOnce()
   if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
 }
@@ -243,7 +240,7 @@ function mountWorld() {
   live.view?.dispose()
   const view = new GameView(viewCanvas, world.width, world.height)
   live.view = view
-  view.mountTerrain(world)
+  view.mountTerrain(world, replica.terrainRevision, replica.knownTiles)
   view.setMinimapCommand((tile, mods) => orderAt(tile, replica, player, view, mods))
   view.setMinimapHover((tile) => {
     if (player.raisingCity()) player.setAim(tile)
@@ -543,7 +540,8 @@ const frame = (now: number) => {
   const view = live.view
   if (view) {
     if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
-    if (replica.consumeMapChange() && replica.world) view.noteMap(replica.world, replica.settledLayouts())
+    if (replica.world) view.syncTerrain(replica.world, replica.terrainRevision, replica.knownTiles)
+    view.syncCities(replica.settledLayouts(), replica.cityRevision)
     view.update(frameDt)
     refreshHud(frameDt)
     view.render(

@@ -50,13 +50,17 @@ export function approach(current: number, target: number, maxDelta: number): num
   return current + Math.sign(delta) * maxDelta
 }
 
+export function turnToward(current: number, desired: number, rate: number, dt: number): number {
+  return wrapAngle(current + clamp(wrapAngle(desired - current), -rate * dt, rate * dt))
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
 export function timeScale(localTick: number, serverTick: number): number {
   const gap = serverTick - localTick
-  if (gap < -2) return 0.5
+  if (gap < -2) return Math.max(0.5, 1 + gap * 0.05)
   if (gap > 2) return Math.min(2, 1 + gap * 0.05)
   return 1
 }

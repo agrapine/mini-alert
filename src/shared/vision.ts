@@ -117,27 +117,6 @@ export function stampSight(
   }
 }
 
-export function growExplored(explored: Uint8Array, width: number, height: number, margin = EXPLORE_MARGIN) {
-  const source = explored.slice()
-  const marginSq = margin * margin
-  const reach = Math.ceil(margin)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (source[y * width + x] !== 1) continue
-      for (let dy = -reach; dy <= reach; dy++) {
-        const ny = y + dy
-        if (ny < 0 || ny >= height) continue
-        for (let dx = -reach; dx <= reach; dx++) {
-          if (dx * dx + dy * dy > marginSq) continue
-          const nx = x + dx
-          if (nx < 0 || nx >= width) continue
-          explored[ny * width + nx] = 1
-        }
-      }
-    }
-  }
-}
-
 export function stampExploredDistance(
   texelsPerTile: number,
   width: number,
