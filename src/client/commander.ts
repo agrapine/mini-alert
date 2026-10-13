@@ -124,7 +124,9 @@ export class Commander {
 
   orderMove(tile: TileCoord) {
     const unitIds = this.orderable()
-    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile })
+    if (unitIds.length === 0) return
+    this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile })
+    this.replica.predictMove(unitIds, tile)
   }
 
   orderAttack(targetId: number) {

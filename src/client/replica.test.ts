@@ -84,4 +84,18 @@ describe('replica drawing', () => {
     expect(replica.localTick).toBe(160)
     expect(replica.units[0].x).toBeGreaterThan(5)
   })
+
+  it('starts an ordered unit toward its target before the server answers', () => {
+    const replica = joined(scout(2.5, []))
+    replica.predictMove([1], { x: 12, y: 4 })
+    expect(replica.units[0].path).toEqual([{ x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 4 }])
+    for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
+    expect(replica.units[0].x).toBeGreaterThan(2.6)
+  })
+
+  it('keeps the route of a unit already heading for the target', () => {
+    const replica = joined(scout(2.5, road))
+    replica.predictMove([1], { x: 10, y: 4 })
+    expect(replica.units[0].path).toEqual(road)
+  })
 })

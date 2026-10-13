@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -21,6 +21,7 @@ const CATCHUP_STEPS = 8
 const FAST_FORWARD_LIMIT = 900
 const DRIFT_SECONDS = 0.12
 const TELEPORT_DISTANCE = 3
+const LEAD_TILES = 3
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
 
@@ -237,11 +238,42 @@ export class Replica {
     return world !== null && tile.x >= 0 && tile.y >= 0 && tile.x < world.width && tile.y < world.height
   }
 
+  private passable(tile: TileCoord, domain: MoveDomain): boolean {
+    const world = this.world
+    if (!world || !this.inBounds(tile)) return false
+    const structure = this.units.some((unit) => {
+      if (UNIT_TYPES[unit.typeId].topSpeed > 0) return false
+      const span = spanOf(UNIT_TYPES[unit.typeId])
+      return footprintCovers(unit.tileX, unit.tileY, span.x, span.y, tile)
+    })
+    if (structure) return false
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return true
+    if (domain === MoveDomain.Water) return world.terrain[index] === Terrain.Water || world.terrain[index] === Terrain.Lake
+    return this.groundAt(tile)
+  }
+
   private groundAt(tile: TileCoord): boolean {
     const world = this.world
     if (!world) return false
     const open = isWalkableTerrain(world.terrain[tile.y * world.width + tile.x]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
+  }
+
+  /** Starts ordered units toward `tile` along a short straight lead until the server's route arrives. */
+  predictMove(unitIds: readonly number[], tile: TileCoord) {
+    for (const id of unitIds) {
+      const unit = this.unit(id)
+      if (!unit || unit.ownerId !== this.playerId) continue
+      const type = UNIT_TYPES[unit.typeId]
+      const domain = domainOf(type)
+      if (type.topSpeed <= 0 || domain === MoveDomain.Air) continue
+      if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) continue
+      const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
+      if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) continue
+      unit.path = lead
+      unit.goal = { ...lead[lead.length - 1] }
+    }
   }
 
   homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
