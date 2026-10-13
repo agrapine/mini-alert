@@ -23,6 +23,8 @@
 - Reloading the page keeps your seat, and the server notices dropped connections within about ten seconds.
 - Move orders take the exact route at once: your game plans the same path the server will, and the server allows for your ping so both stay in step.
 - Units are corrected only when your view drifts from the server, about ninety percent fewer position updates.
+- Long matches no longer slow down as cities get damaged: the server keeps each city's layout instead of rebuilding it for every unit every tick (about 12x faster in a war-torn match).
+- If the server ever falls behind, the game slows down with it instead of throwing away updates, which left holes in the map and kept asking for full resyncs.
 
 ## 0.4
 
