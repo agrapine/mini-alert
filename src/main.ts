@@ -223,6 +223,7 @@ function leaveMatch() {
   toldWin = false
   aimed = false
   player.setSpectating(false)
+  player.reset()
   replica.reset()
   live.view?.dispose()
   live.view = null

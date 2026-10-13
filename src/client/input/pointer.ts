@@ -6,10 +6,15 @@ import type { UnitSnapshot } from '../../shared/protocol.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 import { MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../../shared/unit-types.ts'
 import { cursorFor } from './cursor.ts'
+import { bindGroupKeys } from './groups.ts'
 import { bindPanKeys } from './keys.ts'
 
 const DRAG_SELECT_PX = 8
 const EDGE_PX = 25
+const DOUBLE_CLICK_MS = 350
+const DOUBLE_CLICK_PX = 8
+
+type ClickMods = { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }
 
 export function bindInput(
   canvas: HTMLCanvasElement,
@@ -18,6 +23,7 @@ export function bindInput(
   view: GameView,
 ) {
   const keys = bindPanKeys(view)
+  bindGroupKeys(player, view)
   const marquee = document.createElement('div')
   marquee.id = 'marquee'
   document.body.append(marquee)
@@ -33,6 +39,7 @@ export function bindInput(
   let pointerX = 0
   let pointerY = 0
   let groundAttack = false
+  let lastPick: { typeId: UnitTypeId; at: number; x: number; y: number } | null = null
 
   const touches = new Map<number, { x: number; y: number }>()
   let pinch: { x: number; y: number; dist: number } | null = null
@@ -201,6 +208,20 @@ export function bindInput(
   const boxIds = (x: number, y: number) =>
     view.unitsInRect(originX, originY, x, y, replica.units, replica.playerId)
 
+  const selectKind = (typeId: UnitTypeId, add: boolean) => {
+    const onScreen = view.unitsInRect(0, 0, window.innerWidth, window.innerHeight, replica.units, replica.playerId)
+    const same = onScreen.filter((id) => replica.unit(id)?.typeId === typeId)
+    if (add) player.addIds(same)
+    else player.selectIds(same)
+  }
+
+  const repeatsPick = (picked: UnitSnapshot, event: PointerEvent): boolean => {
+    if (!lastPick || picked.ownerId !== replica.playerId || picked.typeId !== lastPick.typeId) return false
+    if (UNIT_TYPES[picked.typeId].topSpeed <= 0) return false
+    if (event.timeStamp - lastPick.at > DOUBLE_CLICK_MS) return false
+    return Math.hypot(event.clientX - lastPick.x, event.clientY - lastPick.y) <= DOUBLE_CLICK_PX
+  }
+
   canvas.addEventListener('contextmenu', (event) => event.preventDefault())
   canvas.addEventListener('auxclick', (event) => event.preventDefault())
 
@@ -217,9 +238,14 @@ export function bindInput(
       beginPan(event)
       return
     }
-    if (event.button === 2 && (player.placingType() !== null || player.raisingCity())) {
-      player.cancelPlace()
-      view.showPlacement(null)
+    if (event.button === 2) {
+      if (player.placingType() !== null || player.raisingCity()) {
+        player.cancelPlace()
+        view.showPlacement(null)
+      } else {
+        player.select(null)
+        hideBox()
+      }
       refreshCursor(event.clientX, event.clientY)
       event.preventDefault()
       return
@@ -304,7 +330,9 @@ export function bindInput(
       return
     }
     if (boxSelecting) {
-      player.selectIds(boxIds(event.clientX, event.clientY))
+      if (event.shiftKey) player.addIds(boxIds(event.clientX, event.clientY))
+      else player.selectIds(boxIds(event.clientX, event.clientY))
+      lastPick = null
       hideBox()
       view.setHovered([])
       refreshCursor(event.clientX, event.clientY)
@@ -314,8 +342,17 @@ export function bindInput(
     selectArmed = false
     const unitId = view.pickUnit(event.clientX, event.clientY)
     const picked = unitId === null ? undefined : replica.unit(unitId)
+    if (picked && repeatsPick(picked, event)) {
+      selectKind(picked.typeId, event.shiftKey)
+      lastPick = null
+      refreshCursor(event.clientX, event.clientY)
+      return
+    }
     const tile = view.pickTile(event.clientX, event.clientY)
     applyClick(tile, picked, replica, player, view, event)
+    lastPick = picked && picked.ownerId === replica.playerId
+      ? { typeId: picked.typeId, at: event.timeStamp, x: event.clientX, y: event.clientY }
+      : null
     refreshCursor(event.clientX, event.clientY)
   })
 
@@ -388,7 +425,7 @@ export function commandAt(
   replica: Replica,
   player: Commander,
   view: GameView,
-  mods: { ctrlKey: boolean; metaKey: boolean },
+  mods: ClickMods,
 ): boolean {
   if (player.placingType() !== null || player.raisingCity()) {
     placeAt(tile, replica, player, view)
@@ -425,12 +462,14 @@ function applyClick(
   replica: Replica,
   player: Commander,
   view: GameView,
-  mods: { ctrlKey: boolean; metaKey: boolean },
+  mods: ClickMods,
 ) {
   const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
   const shellGround = (mods.ctrlKey || mods.metaKey) && player.commanding() && tile !== null
   const ownUnit = picked !== undefined && picked.ownerId === replica.playerId
-  if (shellGround && tile && !ownUnit) {
+  if (ownUnit && mods.shiftKey) {
+    player.toggle(picked.id)
+  } else if (shellGround && tile && !ownUnit) {
     player.orderAttackGround(tile)
     view.ping(tile.x + 0.5, tile.y + 0.5, true)
   } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {

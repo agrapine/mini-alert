@@ -5,8 +5,11 @@ import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import type { UnitSnapshot } from '../shared/protocol.ts'
 import type { Replica } from './replica.ts'
 
+const GROUP_SLOTS = 10
+
 export class Commander {
   private selectedIds: number[] = []
+  private groups: number[][] = emptyGroups()
   private placing: UnitTypeId | null = null
   private raising = false
   private aim: TileCoord | null = null
@@ -17,6 +20,12 @@ export class Commander {
   constructor(replica: Replica, port: ClientPort) {
     this.replica = replica
     this.port = port
+  }
+
+  reset() {
+    this.selectedIds = []
+    this.groups = emptyGroups()
+    this.cancelPlace()
   }
 
   setSpectating(on: boolean) {
@@ -56,6 +65,37 @@ export class Commander {
       own.push(id)
     }
     this.selectedIds = own
+  }
+
+  addIds(ids: readonly number[]) {
+    this.selectIds([...this.selectedIds, ...ids])
+  }
+
+  toggle(id: number) {
+    if (this.selectedIds.includes(id)) this.selectIds(this.selectedIds.filter((other) => other !== id))
+    else this.addIds([id])
+  }
+
+  assignGroup(slot: number) {
+    if (this.spectating) return
+    const ids = this.selected()
+      .filter((unit) => UNIT_TYPES[unit.typeId].topSpeed > 0)
+      .map((unit) => unit.id)
+    this.groups = this.groups.map((group) => group.filter((id) => !ids.includes(id)))
+    this.groups[slot] = ids
+  }
+
+  recallGroup(slot: number, add: boolean): UnitSnapshot[] {
+    const units: UnitSnapshot[] = []
+    for (const id of this.groups[slot]) {
+      const unit = this.replica.unit(id)
+      if (unit && unit.ownerId === this.replica.playerId && unit.health > 0) units.push(unit)
+    }
+    this.groups[slot] = units.map((unit) => unit.id)
+    if (units.length === 0) return units
+    if (add) this.addIds(this.groups[slot])
+    else this.selectIds(this.groups[slot])
+    return units
   }
 
   commanding(): boolean {
@@ -178,4 +218,8 @@ export class Commander {
     this.raising = false
     this.aim = null
   }
+}
+
+function emptyGroups(): number[][] {
+  return Array.from({ length: GROUP_SLOTS }, () => [])
 }

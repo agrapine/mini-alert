@@ -8,7 +8,7 @@ const DRAG_PX = 8
 
 export type MinimapCommand = (
   tile: TileCoord,
-  mods: { ctrlKey: boolean; metaKey: boolean },
+  mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
 ) => boolean
 
 export class Minimap {
