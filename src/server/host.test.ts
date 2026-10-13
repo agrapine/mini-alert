@@ -49,6 +49,43 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
   })
 
+  it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
+    const game = new Game(new World(32, 20))
+    const player = game.addPlayer()
+    const tanks = [4, 6, 8, 10, 12, 14].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 3, y }, Math.PI / 2))
+    const host = new ServerHost(game)
+    const inbox: { frame: ServerFrame; due: number }[] = []
+    const delays = [0, 3, 1, 4, 0, 2]
+    let sent = 0
+    const play = host.attach(player.id, true, (frame) => inbox.push({ frame, due: host.tickNo + delays[sent++ % delays.length] }))
+    play.sync()
+    const client = new Replica()
+    client.apply(inbox.shift()?.frame as ServerFrame)
+    const server = new Map<number, Map<number, { x: number; z: number }>>()
+    const ids = tanks.map((tank) => tank.id)
+    let seq = 0
+    let worst = 0
+    for (let tick = 0; tick < 30 * 14; tick++) {
+      if (tick === 10 || tick === 200) {
+        const target = tick === 10 ? { x: 26, y: 9 } : { x: 8, y: 16 }
+        client.predictMove(ids, target)
+        play.command({ kind: ClientMessageKind.OrderMove, unitIds: ids, tile: target }, ++seq, client.localTick)
+      }
+      if (tick >= 60 && tick < 90) tanks[0].speed = 0
+      host.tick(SIM_STEP)
+      server.set(host.tickNo, new Map(game.units.map((unit) => [unit.id, { x: unit.pos.x, z: unit.pos.z }])))
+      while (inbox.length > 0 && inbox[0].due <= host.tickNo) client.apply(inbox.shift()?.frame as ServerFrame)
+      client.advance(SIM_STEP)
+      const truth = server.get(client.localTick)
+      if (!truth) continue
+      for (const unit of client.units) {
+        const real = truth.get(unit.id)
+        if (real) worst = Math.max(worst, Math.hypot(real.x - unit.x, real.z - unit.z))
+      }
+    }
+    expect(worst).toBeLessThan(0.5)
+  })
+
   it('predicts on the client the routes the server plans for a move order', () => {
     const wall = []
     for (let y = 2; y < 12; y++) wall.push({ x: 12, y })

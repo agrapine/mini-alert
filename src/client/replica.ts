@@ -188,6 +188,14 @@ export class Replica {
     return this.dueSnapshot()
   }
 
+  /** Steps straight to `tick` without wall-clock pacing; the server keeps a copy of each client this way. */
+  simulateTo(tick: number) {
+    while (this.localTick < tick) {
+      this.localTick += 1
+      this.stepUnits(SIM_STEP)
+    }
+  }
+
   /** Units posed between the last two sim steps, plus any correction still blending out. */
   drawn(): UnitSnapshot[] {
     const alpha = Math.min(1, this.accumulator / SIM_STEP)

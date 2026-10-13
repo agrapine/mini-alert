@@ -1,5 +1,5 @@
 import { createLocalLink } from '../shared/local-link.ts'
-import { KEEPALIVE_TICKS, MOTION_HEARTBEAT, SNAPSHOT_COOLDOWN } from '../shared/motion.ts'
+import { KEEPALIVE_TICKS, MOTION_HEARTBEAT, SNAPSHOT_COOLDOWN, wrapAngle } from '../shared/motion.ts'
 import {
   ClientMessageKind,
   ServerEventKind,
@@ -21,11 +21,16 @@ import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
 import { EXPLORE_MARGIN, friendsOf } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
+import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
 
 const PROGRESS_STEPS = 40
 const LEDGER_TICKS = 6
+const DRIFT_TILES = 0.25
+const DRIFT_TURN = 0.35
+const DRIFT_ALTITUDE = 0.25
+const BACKSTOP_TICKS = 300
 const CATCH_UP_TICKS = 15
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 
@@ -40,6 +45,8 @@ type Session = {
   /** Remote players get a command's result at once instead of on the next tick. */
   echo: boolean
   ack: number
+  /** What a remote player's client holds: fed every frame sent and stepped like the client, so units are corrected only when they drift from it. */
+  shadow: Replica | null
   send(message: ServerFrame): void
 }
 
@@ -101,6 +108,7 @@ export class ServerHost {
       playing: true,
       echo: false,
       ack: 0,
+      shadow: null,
       send: (message) => link.server.send(message),
     }
     link.server.onClient((message) => this.onCommand(session, message))
@@ -109,7 +117,7 @@ export class ServerHost {
   }
 
   attach(playerId: number, playing: boolean, send: (message: ServerFrame) => void): RemotePlay {
-    const session: Session = { playerId, playing, echo: true, ack: 0, send }
+    const session: Session = { playerId, playing, echo: true, ack: 0, shadow: null, send }
     this.sessions.push(session)
     return {
       get playing() {
@@ -233,7 +241,7 @@ export class ServerHost {
     this.remember(memory, units, cities, credits, training, rally, primary)
     memory.lastSnapshotTick = this.tickNo
     memory.ackSent = session.ack
-    session.send({
+    const frame: ServerFrame = {
       tick: this.tickNo,
       ack: session.ack,
       events: [
@@ -249,7 +257,11 @@ export class ServerHost {
           rally,
         },
       ],
-    })
+    }
+    session.send(frame)
+    if (!session.echo) return
+    session.shadow = new Replica()
+    session.shadow.apply(frame)
   }
 
   private pushTick(
@@ -263,6 +275,9 @@ export class ServerHost {
     if (!memory) return
     const { width, height } = this.game.world
     const fresh = this.reveal(memory, living)
+    const shadow = session.shadow
+    shadow?.simulateTo(this.tickNo)
+    const held = shadow ? new Map(shadow.units.map((unit) => [unit.id, unit])) : null
     const events: ServerEvent[] = []
     const ledger: Deferred[] = []
     const patch = this.changedMap(memory, fresh)
@@ -276,16 +291,17 @@ export class ServerHost {
       const mobile = unit.path.length > 0 || unit.speed !== 0 || this.routeOf(unit) !== 0
       const freshUnit = !memory.seen.has(unit.id)
       const routeChanged = memory.route.get(unit.id) !== this.routeOf(unit)
-      const due = this.tickNo - (memory.motionTick.get(unit.id) ?? -MOTION_HEARTBEAT) >= MOTION_HEARTBEAT
+      const beat = held ? BACKSTOP_TICKS : MOTION_HEARTBEAT
+      const due = this.tickNo - (memory.motionTick.get(unit.id) ?? -beat) >= beat
       const commitMotion = () => {
         memory.seen.add(unit.id)
         memory.route.set(unit.id, this.routeOf(unit))
         memory.motionTick.set(unit.id, this.tickNo)
       }
-      if (freshUnit || (mobile && routeChanged)) {
+      if (freshUnit || (mobile && routeChanged) || (held && drifted(held.get(unit.id), unit))) {
         events.push({ kind: ServerEventKind.UnitMotion, unit })
         commitMotion()
-      } else if (mobile && due) {
+      } else if (due && (held ? unit.path.length > 0 || unit.speed !== 0 : mobile)) {
         ledger.push({ event: { kind: ServerEventKind.UnitMotion, unit }, commit: commitMotion })
       }
       if (memory.health.get(unit.id) !== unit.health) {
@@ -333,7 +349,9 @@ export class ServerHost {
     if (events.length === 0 && !acked && this.tickNo - memory.lastSentTick < KEEPALIVE_TICKS) return
     memory.lastSentTick = this.tickNo
     memory.ackSent = session.ack
-    session.send({ tick: this.tickNo, events, ack: session.ack })
+    const frame: ServerFrame = { tick: this.tickNo, events, ack: session.ack }
+    session.send(frame)
+    shadow?.apply(frame)
   }
 
   private economy(session: Session, memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
@@ -659,4 +677,13 @@ function discOffsets(radius: number): TileCoord[] {
 
 function trainingKinds(training: readonly TrainJob[]): string {
   return training.map((job) => job.typeId).join(',')
+}
+
+function drifted(held: UnitSnapshot | undefined, unit: UnitSnapshot): boolean {
+  if (!held) return true
+  if (Math.hypot(held.x - unit.x, held.z - unit.z) > DRIFT_TILES) return true
+  if (Math.abs(wrapAngle(held.facing - unit.facing)) > DRIFT_TURN) return true
+  if (Math.abs(wrapAngle(held.turretYaw - unit.turretYaw)) > DRIFT_TURN) return true
+  if (Math.abs((held.altitude ?? 0) - (unit.altitude ?? 0)) > DRIFT_ALTITUDE) return true
+  return held.path.length !== unit.path.length
 }
