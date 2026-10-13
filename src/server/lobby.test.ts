@@ -420,7 +420,7 @@ describe('lobby', () => {
 
     lobby.disconnect(first, firstSock)
     secondSock.game.length = 0
-    lobby.onGame(second, { kind: ClientMessageKind.Ping }, 9)
+    lobby.onGame(second, { kind: ClientMessageKind.Ping }, 9, 0)
     expect(secondSock.game.map((frame) => frame.ack)).toEqual([9])
   })
 })

@@ -270,10 +270,10 @@ export class Lobby {
     else if (message.kind === LobbyClientKind.DestroyGame) this.destroyGame(client, message.gameId)
   }
 
-  onGame(member: LobbyMember, message: ClientMessage, seq: number) {
+  onGame(member: LobbyMember, message: ClientMessage, seq: number, tick: number) {
     const client = this.members.get(member.id)
     if (!client?.gameId) return
-    this.games.get(client.gameId)?.match?.seats.get(client.id)?.command(message, seq)
+    this.games.get(client.gameId)?.match?.seats.get(client.id)?.command(message, seq, tick)
   }
 
   tick(dt: number) {

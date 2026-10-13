@@ -4,6 +4,8 @@ import type { CitySight } from '../shared/vision.ts'
 import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
 import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
+import { SIM_STEP } from '../shared/motion.ts'
+import { planMoves } from '../shared/route.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
 import { createUnit } from './units/create.ts'
@@ -18,8 +20,6 @@ export type Scenery = {
   towns: MapPoint[]
   seed: number
 }
-
-const CONVOY_SIZE = 4
 
 const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 
@@ -412,30 +412,25 @@ export class Game {
     return unit
   }
 
-  orderMove(playerId: number, unitIds: readonly number[], tile: TileCoord): boolean {
+  /** Moves the units toward the tile; ground and sea units then advance `lag` steps, as the ordering client already shows them. */
+  orderMove(playerId: number, unitIds: readonly number[], tile: TileCoord, lag = 0): boolean {
     let moved = false
-    const crews = new Map<MoveDomain, Unit[]>()
+    const surface: Unit[] = []
     for (const unit of this.ownedAll(playerId, unitIds)) {
       if (unit.type.topSpeed <= 0) continue
       unit.attackId = null
       unit.attackPoint = null
-      const domain = domainOf(unit.type)
-      if (domain === MoveDomain.Air) {
+      if (domainOf(unit.type) === MoveDomain.Air) {
         if (unit.orderMove(tile, this.pathfinder, this.units)) moved = true
-        continue
-      }
-      const crew = crews.get(domain) ?? []
-      crew.push(unit)
-      crews.set(domain, crew)
+      } else surface.push(unit)
     }
-    for (const [domain, crew] of crews) {
-      const goals = this.pathfinder.landing(tile, domain, crew)
-      const route = crew.length >= CONVOY_SIZE ? this.pathfinder.convoy(goals, crew, domain) : null
-      for (const goal of goals) {
-        const unit = takeNearest(crew, goal)
-        const ordered = route ? unit.travel(route(unit, goal)) : unit.orderMove(goal, this.pathfinder, this.units)
-        if (ordered) moved = true
-      }
+    const movers = surface.map((unit) => ({ id: unit.id, tile: unit.tile, domain: domainOf(unit.type) }))
+    const routes = planMoves(this.pathfinder, movers, tile)
+    for (const unit of surface) {
+      const path = routes.get(unit.id)
+      if (!path || !unit.travel(path)) continue
+      moved = true
+      for (let i = 0; i < lag; i++) unit.step(SIM_STEP, this.pathfinder, this.units)
     }
     return moved
   }
@@ -1087,17 +1082,4 @@ export class Game {
       else this.jobs.set(playerId, next)
     }
   }
-}
-
-function takeNearest(units: Unit[], tile: TileCoord): Unit {
-  let best = 0
-  let bestDist = Infinity
-  for (let i = 0; i < units.length; i++) {
-    const dist = (units[i].tile.x - tile.x) ** 2 + (units[i].tile.y - tile.y) ** 2
-    if (dist < bestDist) {
-      best = i
-      bestDist = dist
-    }
-  }
-  return units.splice(best, 1)[0]
 }

@@ -103,11 +103,11 @@ export class Net {
     this.socket.send(JSON.stringify({ channel: Channel.Lobby, message }))
   }
 
-  sendGame(message: ClientMessage): number | null {
+  sendGame(message: ClientMessage, tick: number): number | null {
     if (this.socket?.readyState !== WebSocket.OPEN) return null
     logGameOut(message)
     this.seq += 1
-    const payload = encodeClientMessage(message, this.seq)
+    const payload = encodeClientMessage(message, this.seq, tick)
     const copy = new ArrayBuffer(payload.byteLength)
     new Uint8Array(copy).set(payload)
     this.socket.send(copy)

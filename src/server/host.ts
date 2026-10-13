@@ -26,6 +26,7 @@ import type { Player } from './player.ts'
 
 const PROGRESS_STEPS = 40
 const LEDGER_TICKS = 6
+const CATCH_UP_TICKS = 15
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 
 type VisibleCity = CityRecord & { layout: CityLayout }
@@ -73,7 +74,7 @@ type Memory = {
 export type RemotePlay = {
   readonly playing: boolean
   retire(): void
-  command(message: ClientMessage, seq: number): void
+  command(message: ClientMessage, seq: number, tick: number): void
   setView(playerId: number): void
   sync(): void
   close(): void
@@ -117,9 +118,9 @@ export class ServerHost {
       retire() {
         session.playing = false
       },
-      command: (message, seq) => {
+      command: (message, seq, tick) => {
         session.ack = seq
-        this.onCommand(session, message)
+        this.onCommand(session, message, tick)
       },
       setView: (next) => {
         if (session.playing) return
@@ -178,12 +179,13 @@ export class ServerHost {
     }
   }
 
-  private onCommand(session: Session, message: ClientMessage) {
-    this.apply(session, message)
+  private onCommand(session: Session, message: ClientMessage, tick?: number) {
+    this.apply(session, message, tick === undefined ? 0 : Math.max(0, Math.min(CATCH_UP_TICKS, this.tickNo - tick)))
     if (session.echo) this.pushTick(session, this.game.unitSnapshots(), [], [], [])
   }
 
-  private apply(session: Session, message: ClientMessage) {
+  /** `lag` is how many ticks the sender's own simulation ran past the moment it issued the command. */
+  private apply(session: Session, message: ClientMessage, lag: number) {
     if (message.kind === ClientMessageKind.RequestSnapshot) {
       const memory = this.memory.get(session)
       if (memory && this.tickNo - memory.lastSnapshotTick < SNAPSHOT_COOLDOWN) return
@@ -193,7 +195,7 @@ export class ServerHost {
     if (!session.playing) return
     const playerId = session.playerId
     if (message.kind === ClientMessageKind.OrderMove) {
-      this.game.orderMove(playerId, message.unitIds, message.tile)
+      this.game.orderMove(playerId, message.unitIds, message.tile, lag)
     } else if (message.kind === ClientMessageKind.OrderAttack) {
       this.game.orderAttack(playerId, message.unitIds, message.targetId)
     } else if (message.kind === ClientMessageKind.OrderAttackGround) {

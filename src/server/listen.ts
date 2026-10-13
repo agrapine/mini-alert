@@ -52,7 +52,7 @@ sockets.on('connection', (socket, request) => {
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
       const command = decodeClientMessage(bytesOf(data))
-      if (command) lobby.onGame(member, command.message, command.seq)
+      if (command) lobby.onGame(member, command.message, command.seq, command.tick)
       return
     }
     const wire = readWire(data)

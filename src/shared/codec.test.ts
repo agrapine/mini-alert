@@ -59,10 +59,11 @@ describe('protobuf frames', () => {
     expect(back?.events[2]).toMatchObject({ kind: ServerEventKind.MapPatch, map: { cells: [{ x: 1, y: 2, terrain: Terrain.Land, shift: 0x88 }] } })
     expect(back?.events[5]).toMatchObject({ kind: ServerEventKind.Credits, credits: expect.closeTo(9989.583333333334) })
 
-    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }, 42))
-    expect(order).toEqual({ seq: 42, message: { kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } } })
-    expect(decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.Ping }, 43))).toEqual({
+    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }, 42, 900))
+    expect(order).toEqual({ seq: 42, tick: 900, message: { kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } } })
+    expect(decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.Ping }, 43, 901))).toEqual({
       seq: 43,
+      tick: 901,
       message: { kind: ClientMessageKind.Ping },
     })
   })

@@ -278,4 +278,6 @@ message ClientCommand {
     PingMsg ping = 12;
   }
   uint32 seq = 20;
+  // The sender's simulation tick when the command was issued.
+  uint32 tick = 21;
 }
