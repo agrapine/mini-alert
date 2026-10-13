@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Replica } from '../client/replica.ts'
 import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, type MotionState } from '../shared/motion.ts'
 import { ClientMessageKind, ServerEventKind, type ServerFrame } from '../shared/protocol.ts'
+import { Terrain } from '../shared/tiles.ts'
 import { SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
@@ -12,6 +13,24 @@ function events(frames: readonly ServerFrame[]) {
 }
 
 describe('host snapshots', () => {
+  it('sends a capture in progress as city state without the layout', () => {
+    const tiles = new Uint8Array(20 * 20).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(20, 20, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 7 }
+    game.bindCities()
+    const player = game.addPlayer()
+    game.spawn(player, UnitTypeId.Scout, { x: 8, y: 8 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (message) => frames.push(message)).sync()
+    frames.length = 0
+    for (let i = 0; i < 90; i++) host.tick(SIM_STEP)
+    const updates = events(frames).filter((event) => event.kind === ServerEventKind.CityUpdate)
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates.length).toBeLessThan(90)
+    for (const update of updates) expect(update.city.layout).toBeNull()
+  })
+
   it('sends motion on an order and stays quiet when the path does not change', () => {
     const game = new Game(new World(32, 32))
     const player = game.addPlayer()

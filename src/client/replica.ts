@@ -442,7 +442,7 @@ export class Replica {
         this.layouts.push(null)
       }
       this.cities[record.index] = record.state
-      this.layouts[record.index] = record.layout
+      if (record.layout) this.layouts[record.index] = record.layout
     }
     this.cityRevision += 1
     this.mapChanged = true

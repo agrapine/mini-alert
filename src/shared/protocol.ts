@@ -212,7 +212,7 @@ export type CityState = {
 export type CityRecord = {
   index: number
   state: CityState
-  layout: CityLayout
+  layout: CityLayout | null
 }
 
 export type UnitMotionEvent = {

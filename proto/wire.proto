@@ -2,11 +2,6 @@ syntax = "proto3";
 
 package rts;
 
-message Tile {
-  int32 x = 1;
-  int32 y = 2;
-}
-
 message Point {
   float x = 1;
   float y = 2;
@@ -16,22 +11,19 @@ message Poly {
   repeated Point points = 1;
 }
 
-message MapCell {
-  int32 x = 1;
-  int32 y = 2;
-  uint32 terrain = 3;
-  uint32 shift = 4;
-}
-
+// Tile lists travel as sint32 pairs, each the step from the previous tile.
+// Cells travel as index steps (index = y * width + x, ascending) beside one terrain and one shift byte per cell.
 message MapData {
   uint32 width = 1;
   uint32 height = 2;
-  repeated MapCell cells = 3;
+  repeated uint32 cell_steps = 3;
   repeated Point coast = 4;
   repeated Poly holes = 5;
   repeated Poly roads = 6;
   repeated Point towns = 7;
-  repeated Tile cleared = 8;
+  repeated sint32 cleared = 8;
+  bytes cell_terrain = 9;
+  bytes cell_shifts = 10;
 }
 
 message TrainJob {
@@ -69,7 +61,7 @@ message CityLayoutMsg {
   int32 y = 2;
   uint32 span = 3;
   uint32 seed = 4;
-  repeated Tile tiles = 5;
+  repeated sint32 tiles = 5;
   repeated CityBuilding buildings = 6;
   repeated CityStreet streets = 7;
 }
@@ -81,7 +73,7 @@ message CityStateMsg {
   uint32 challenger_id = 4;
   uint32 challenger_color = 5;
   uint32 grown = 6;
-  repeated Tile ruins = 7;
+  repeated sint32 ruins = 7;
   repeated CitySite sites = 8;
 }
 
@@ -105,8 +97,7 @@ message UnitMotionMsg {
   float progress = 11;
   int32 tile_x = 12;
   int32 tile_y = 13;
-  repeated Tile path = 14;
-  Tile goal = 15;
+  repeated sint32 path = 14;
   uint32 attack_id = 16;
   float attack_x = 17;
   float attack_z = 18;
