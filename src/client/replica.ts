@@ -206,9 +206,14 @@ export class Replica {
     }
   }
 
+  /** Where `drawn` poses units between the step before `localTick` (0) and `localTick` (1). */
+  drawPhase(): number {
+    return Math.min(1, this.accumulator / SIM_STEP)
+  }
+
   /** Units posed between the last two sim steps, plus any correction still blending out. */
   drawn(): UnitSnapshot[] {
-    const alpha = Math.min(1, this.accumulator / SIM_STEP)
+    const alpha = this.drawPhase()
     const pass = ++this.drawPass
     const out = this.drawnUnits
     out.length = 0

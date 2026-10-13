@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "ai": "tsx src/ai/sim.ts",
-    "proto": "buf generate"
+    "proto": "buf generate",
+    "bench": "tsx src/bench/net.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.73.0",
