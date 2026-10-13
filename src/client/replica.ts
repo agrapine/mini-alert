@@ -42,7 +42,8 @@ export class Replica {
   private readonly clearedTiles = new Set<string>()
   private evolved: (CityLayout | null)[] = []
   private blockedBuildings = new Set<string>()
-  private blockKey = ''
+  private cityRevision = 0
+  private settledRevision = -1
   private accumulator = 0
   private serverEstimate = 0
   private askedTick = -SNAPSHOT_GAP
@@ -71,7 +72,8 @@ export class Replica {
     this.pendingYields = []
     this.evolved = []
     this.blockedBuildings.clear()
-    this.blockKey = ''
+    this.cityRevision = 0
+    this.settledRevision = -1
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
     this.knownCount = 0
@@ -231,7 +233,6 @@ export class Replica {
       this.localTick = this.serverTick
       this.accumulator = 0
       this.wantsSnapshot = false
-      this.blockKey = ''
       return
     }
     if (event.kind === ServerEventKind.MapPatch) {
@@ -436,7 +437,7 @@ export class Replica {
       this.cities[record.index] = record.state
       this.layouts[record.index] = record.layout
     }
-    this.blockKey = ''
+    this.cityRevision += 1
     this.mapChanged = true
   }
 
@@ -456,15 +457,7 @@ export class Replica {
   }
 
   private cityLayouts(): (CityLayout | null)[] {
-    const key = this.cities
-      .map((city, index) => {
-        if (!city) return ''
-        const layout = this.layouts[index]
-        const buildings = layout?.buildings.map((building) => `${building.x},${building.y}`).join('.') ?? ''
-        return `${city.grown}:${city.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')}:${buildings}`
-      })
-      .join(',')
-    if (key === this.blockKey) return this.evolved
+    if (this.settledRevision === this.cityRevision) return this.evolved
     this.evolved = this.layouts.map((layout, index) => (layout ? settledCity(layout, this.cities[index]?.ruins ?? []) : null))
     const blocked = new Set<string>()
     for (const city of this.evolved) {
@@ -472,7 +465,7 @@ export class Replica {
       for (const building of city.buildings) blocked.add(`${building.x},${building.y}`)
     }
     this.blockedBuildings = blocked
-    this.blockKey = key
+    this.settledRevision = this.cityRevision
     return this.evolved
   }
 

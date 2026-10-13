@@ -1,13 +1,13 @@
-import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
+import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, InstancedMesh, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
 import type { CityState, MapPoint, ShotEvent, ShotHit, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { citySightOrigin, type CityLayout } from '../../shared/cities.ts'
+import { collectFriends, type CitySight, type SightSource } from '../../shared/vision.ts'
 import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
-import { friendsOf } from '../../shared/vision.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
 import { Minimap, type MinimapCommand } from './minimap.ts'
-import { loadProps } from './props.ts'
+import { PropField } from './props.ts'
 import { Stage, cameraYaw } from './stage.ts'
 import { Particles } from './particles.ts'
 import { ShotLayer } from './shots.ts'
@@ -17,6 +17,7 @@ import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from 
 
 const WRECK_HOLD = 4
 const WRECK_SINK = 1.6
+const BAR_ZOOM = 0.5
 
 type Wreck = {
   group: Group
@@ -40,7 +41,14 @@ export class GameView {
   private boxPreview = false
   private minimap: Minimap | null = null
   private cities: CityLayer | null = null
-  private props: Group | null = null
+  private props: PropField | null = null
+  private readonly livingUnits: UnitSnapshot[] = []
+  private readonly aliveIds = new Set<number>()
+  private readonly selectedIds = new Set<number>()
+  private readonly goalUnits: UnitSnapshot[] = []
+  private readonly hoveredUnits: UnitSnapshot[] = []
+  private readonly friendBuffer: SightSource[] = []
+  private readonly citySights: CitySight[] = []
   private fog: Fog | null = null
   private surface: Group | null = null
   private propsEpoch = -1
@@ -129,11 +137,11 @@ export class GameView {
     const epoch = knownStamp(world)
     if (epoch === this.propsEpoch) return
     this.propsEpoch = epoch
-    void loadProps(world).then((props) => {
-      if (this.propsEpoch !== epoch) return
-      if (this.props) this.stage.scene.remove(this.props)
-      this.props = props
-      this.stage.scene.add(props)
+    const field = this.props ?? new PropField()
+    this.props = field
+    void field.sync(world).then(() => {
+      if (this.propsEpoch !== epoch || this.props !== field) return
+      if (!field.root.parent) this.stage.scene.add(field.root)
       this.clearGround(this.pendingCleared, false)
     })
   }
@@ -141,13 +149,20 @@ export class GameView {
   private pendingCities: readonly (CityState | null)[] = []
 
   private ownedCitySights(playerId: number, states: readonly (CityState | null)[], layouts: readonly (CityLayout | null)[]) {
-    const sights = []
+    const sights = this.citySights
+    let count = 0
     for (let index = 0; index < layouts.length; index++) {
       const state = states[index]
       const layout = layouts[index]
       if (!state || !layout || state.ownerId !== playerId) continue
-      sights.push({ ownerId: playerId, ...citySightOrigin(layout) })
+      const sight = sights[count] ?? (sights[count] = { ownerId: playerId, x: 0, z: 0 })
+      const origin = citySightOrigin(layout)
+      sight.ownerId = playerId
+      sight.x = origin.x
+      sight.z = origin.z
+      count += 1
     }
+    sights.length = count
     return sights
   }
 
@@ -306,15 +321,21 @@ export class GameView {
     cleared: readonly TileCoord[] = [],
     yields: readonly MapPoint[] = [],
   ) {
+    const living = this.livingUnits
+    living.length = 0
     for (const unit of units) {
-      if (unit.health > 0) continue
+      if (unit.health > 0) {
+        living.push(unit)
+        continue
+      }
       const group = this.units.get(unit.id)
       if (!group) continue
       this.wreck(group)
       this.units.delete(unit.id)
     }
-    const living = units.filter((unit) => unit.health > 0)
-    const alive = new Set(living.map((unit) => unit.id))
+    const alive = this.aliveIds
+    alive.clear()
+    for (const unit of living) alive.add(unit.id)
     for (const [id, group] of this.units) {
       if (alive.has(id)) continue
       releaseMesh(group)
@@ -322,7 +343,10 @@ export class GameView {
     }
     this.advanceWrecks(this.shotDt)
     this.advancePings(this.shotDt)
-    const selectedIds = new Set(selected.map((unit) => unit.id))
+    const selectedIds = this.selectedIds
+    selectedIds.clear()
+    for (const unit of selected) selectedIds.add(unit.id)
+    const showBars = this.stage.zoom >= BAR_ZOOM
     for (const unit of living) {
       let group = this.units.get(unit.id)
       const stage = buildStage(unit.progress)
@@ -337,23 +361,29 @@ export class GameView {
         this.units.set(unit.id, group)
         this.stage.scene.add(group)
       }
-      syncUnitMesh(group, unit, selectedIds.has(unit.id))
+      syncUnitMesh(group, unit, selectedIds.has(unit.id), showBars)
     }
 
     const showSelection = !this.boxPreview
     this.placeRings(this.selectionRings, this.stage.selection, showSelection ? selected : [])
     const showRanges = showSelection && this.showRanges && selected.length === 1
     this.placeRanges(showRanges ? selected : [])
-    const goals = showSelection ? selected.filter((unit) => unit.goal !== null) : []
+    const goals = this.goalUnits
+    goals.length = 0
+    if (showSelection) {
+      for (const unit of selected) if (unit.goal) goals.push(unit)
+    }
     this.placeOrders(goals)
     this.placePrimary(living, primaryFactoryId)
     this.placeRally(rally)
 
-    const hovered = this.hoveredIds.flatMap((id) => {
-      if (!this.boxPreview && selectedIds.has(id)) return []
+    const hovered = this.hoveredUnits
+    hovered.length = 0
+    for (const id of this.hoveredIds) {
+      if (!this.boxPreview && selectedIds.has(id)) continue
       const unit = living.find((candidate) => candidate.id === id)
-      return unit ? [unit] : []
-    })
+      if (unit) hovered.push(unit)
+    }
     this.placeRings(this.hoverRings, this.stage.hover, hovered)
 
     for (const drop of yields) this.particles.collect(drop.x, drop.y)
@@ -363,8 +393,9 @@ export class GameView {
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
     this.pendingCities = cities
-    const friends = playerId === null ? [] : friendsOf(living, playerId, this.ownedCitySights(playerId, cities, layouts))
-    this.fog?.update(this.shotDt, friends)
+    if (playerId === null) this.friendBuffer.length = 0
+    else collectFriends(living, playerId, this.ownedCitySights(playerId, cities, layouts), this.friendBuffer)
+    this.fog?.update(this.shotDt, this.friendBuffer)
     this.fog?.setView(cameraYaw)
     this.cities?.present(layouts, cities)
     this.clearGround(cleared)
@@ -376,13 +407,9 @@ export class GameView {
     this.pendingCleared = tiles
     const props = this.props
     if (!props || tiles.length === 0) return
-    const gone = new Set(tiles.map((tile) => `${tile.x},${tile.y}`))
-    for (const child of [...props.children]) {
-      if (child.userData.tree !== true) continue
-      if (!gone.has(`${child.userData.tileX},${child.userData.tileY}`)) continue
-      if (burst) this.particles.fell(child.position.x, child.position.z)
-      props.remove(child)
-    }
+    const fell = props.hideTrees(tiles)
+    if (!burst) return
+    for (const spot of fell) this.particles.fell(spot.x, spot.z)
   }
 
   private wreck(group: Group) {
@@ -539,16 +566,18 @@ function growRings(pool: Mesh[], source: Mesh, count: number, scene: { add(mesh:
 }
 
 function disposeGroup(group: Group) {
-  const materials = new Set<{ dispose(): void }>()
+  const materials = new Set<Material>()
   group.traverse((child) => {
-    const mesh = child as Mesh
-    mesh.geometry?.dispose()
-    const material = mesh.material as { dispose(): void } | { dispose(): void }[] | undefined
-    if (!material) return
+    if (!(child instanceof Mesh)) return
+    if (child instanceof InstancedMesh) child.dispose()
+    if (!child.geometry.userData.retain) child.geometry.dispose()
+    const material = child.material
     if (Array.isArray(material)) for (const item of material) materials.add(item)
     else materials.add(material)
   })
-  for (const material of materials) material.dispose()
+  for (const material of materials) {
+    if (!material.userData.retain) material.dispose()
+  }
 }
 
 function knownStamp(world: WorldSnapshot): number {

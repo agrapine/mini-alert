@@ -56,13 +56,16 @@ function meshFor(unit: UnitSnapshot): Group {
   }
 }
 
-export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean) {
+export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean, showBars = true) {
   const bodyHeight = meshNumber(group, 'bodyHeight', 0.44)
   group.position.set(unit.x, TILE_TOP + lift(unit) + bodyHeight / 2, unit.z)
   group.rotation.y = unit.facing
   const turret = group.getObjectByName('turret')
   if (turret) turret.rotation.y = wrapAngle(unit.turretYaw - unit.facing)
-  syncHealthBar(group, unit)
+  syncHealthBar(group, unit, showBars)
+  if (group.userData.paint === unit.color && group.userData.selected === selected) return
+  group.userData.paint = unit.color
+  group.userData.selected = selected
   group.traverse((obj) => {
     if (obj.userData.healthBar) return
     const material = obj instanceof Mesh ? obj.material : null
@@ -151,13 +154,13 @@ function addHealthBar(group: Group, maxHealth: number) {
   group.userData.maxHealth = maxHealth
 }
 
-function syncHealthBar(group: Group, unit: UnitSnapshot) {
+function syncHealthBar(group: Group, unit: UnitSnapshot, show: boolean) {
   const bar = group.getObjectByName('health-bar')
-  if (bar) {
-    bar.rotation.set(0, 0, 0)
-    bar.rotateY(cameraYaw - unit.facing)
-    bar.rotateX(-PITCH)
-  }
+  if (bar) bar.visible = show
+  if (!show || !bar) return
+  bar.rotation.set(0, 0, 0)
+  bar.rotateY(cameraYaw - unit.facing)
+  bar.rotateX(-PITCH)
   const fill = group.getObjectByName('health-fill')
   if (!(fill instanceof Mesh)) return
   const building = unit.progress < 1

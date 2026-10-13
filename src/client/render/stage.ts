@@ -2,6 +2,7 @@ import {
   AmbientLight,
   DirectionalLight,
   DoubleSide,
+  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   Object3D,
@@ -58,6 +59,7 @@ export class Stage {
     this.mapWidth = mapWidth
     this.mapHeight = mapHeight
     this.renderer = new WebGLRenderer({ canvas, antialias: true })
+    this.renderer.debug.checkShaderErrors = false
     this.renderer.setClearColor(0x1a1e12)
     this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 400)
     this.look = new Vector3(mapWidth / 2, 0, mapHeight / 2)
@@ -100,12 +102,12 @@ export class Stage {
     window.removeEventListener('resize', this.onResize)
     this.scene.traverse((obj) => {
       if (!(obj instanceof Mesh)) return
-      obj.geometry.dispose()
+      if (obj instanceof InstancedMesh) obj.dispose()
+      if (!obj.geometry.userData.retain) obj.geometry.dispose()
       const material = obj.material
-      if (Array.isArray(material)) {
-        for (const item of material) item.dispose()
-      } else {
-        material.dispose()
+      const list = Array.isArray(material) ? material : [material]
+      for (const item of list) {
+        if (!item.userData.retain) item.dispose()
       }
     })
     this.renderer.dispose()
@@ -261,6 +263,10 @@ export class Stage {
 
   draw() {
     this.renderer.render(this.scene, this.camera)
+  }
+
+  get zoom(): number {
+    return this.camera.zoom
   }
 
   private aim(clientX: number, clientY: number) {

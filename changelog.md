@@ -7,6 +7,7 @@
 - Structures require population
 - Unit rebalancing
 - Phones get a narrow order bar. Two fingers pan and pinch the map; the page itself does not zoom
+- Nicer shroud / fog of war edges
 
 ## 0.3
 

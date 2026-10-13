@@ -25,6 +25,9 @@ export class Minimap {
   private downX = 0
   private downY = 0
   private command: MinimapCommand | null = null
+  private lastMask: Float32Array | null = null
+  private fogSettled = false
+  private cityHash = 0
 
   constructor(
     private readonly root: HTMLElement,
@@ -58,6 +61,7 @@ export class Minimap {
     this.layouts = layouts
     paintInto(this.pristine, world)
     this.base.set(this.pristine)
+    this.fogSettled = false
   }
 
   setCommand(command: MinimapCommand) {
@@ -157,6 +161,12 @@ export class Minimap {
   }
 
   private applyFog(mask: Float32Array) {
+    const hash = this.hashCities()
+    if (this.fogSettled && hash === this.cityHash && this.sameMask(mask)) return
+    this.cityHash = hash
+    this.fogSettled = true
+    if (!this.lastMask || this.lastMask.length !== mask.length) this.lastMask = new Float32Array(mask.length)
+    this.lastMask.set(mask)
     this.base.set(this.pristine)
     this.paintCities()
     const data = this.image.data
@@ -170,6 +180,26 @@ export class Minimap {
       data[pixel + 2] = base[pixel + 2] * lit
     }
     this.ctx.putImageData(this.image, 0, 0)
+  }
+
+  private sameMask(mask: Float32Array): boolean {
+    const last = this.lastMask
+    if (!last || last.length !== mask.length) return false
+    for (let i = 0; i < mask.length; i++) {
+      if (Math.abs(mask[i] - last[i]) > 0.01) return false
+    }
+    return true
+  }
+
+  private hashCities(): number {
+    let hash = 17
+    for (let i = 0; i < this.layouts.length; i++) {
+      const layout = this.layouts[i]
+      const state = this.cityStates[i]
+      if (!layout || !state) continue
+      hash = Math.imul(hash, 31) + state.color + state.ownerId + layout.tiles.length
+    }
+    return hash
   }
 
   private paintCities() {

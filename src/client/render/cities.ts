@@ -1,13 +1,16 @@
 import {
   Box3,
+  BufferGeometry,
   ClampToEdgeWrapping,
   DataTexture,
   Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
   NearestFilter,
   NoColorSpace,
+  Quaternion,
   RedFormat,
   RingGeometry,
   SRGBColorSpace,
@@ -15,6 +18,7 @@ import {
   UnsignedByteType,
   Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
 import type { CityState } from '../../shared/protocol.ts'
@@ -67,10 +71,8 @@ const STREET_URLS = [
 type Fit = 'building' | 'road' | 'prop'
 
 type CityView = {
-  base: CityLayout
-  projected: CityLayout
   layout: CityLayout
-  grown: number
+  siteKey: string
   owner: { value: number }
   team: Vector3
   buildingMaterial: MeshStandardMaterial
@@ -80,8 +82,6 @@ type CityView = {
   ring: Mesh
   ringMaterial: MeshBasicMaterial
   shown: number
-  ruinKey: string
-  siteKey: string
 }
 
 type Kit = {
@@ -89,8 +89,8 @@ type Kit = {
   neutralMaterial: MeshStandardMaterial
   texture: MeshStandardMaterial['map']
   swatches: DataTexture
-  buildings: Group[]
-  streets: Group[]
+  buildings: BufferGeometry[]
+  streets: BufferGeometry[]
 }
 
 export class CityLayer {
@@ -121,14 +121,18 @@ export class CityLayer {
     for (let index = 0; index < layouts.length; index++) {
       const layout = layouts[index]
       if (!layout) continue
-      const stamp = layoutStamp(layout)
       let view = this.views[index]
       if (!view) {
         view = this.makeView(layout, kit)
         this.views[index] = view
         this.root.add(view.cluster)
       }
-      if (view.siteKey === stamp) continue
+      if (view.siteKey !== '' && view.layout === layout) continue
+      const stamp = siteStamp(layout)
+      if (view.siteKey === stamp) {
+        view.layout = layout
+        continue
+      }
       view.layout = layout
       view.siteKey = stamp
       this.fill(view)
@@ -163,12 +167,14 @@ export class CityLayer {
     ring.rotation.x = -Math.PI / 2
     ring.visible = false
     ring.renderOrder = 13
+    track.matrixAutoUpdate = false
+    ring.matrixAutoUpdate = false
+    track.updateMatrix()
+    ring.updateMatrix()
     cluster.add(track, ring)
     return {
-      base: layout,
-      projected: layout,
       layout,
-      grown: 0,
+      siteKey: '',
       owner,
       team,
       cluster,
@@ -178,59 +184,34 @@ export class CityLayer {
       ringMaterial,
       shown: 0,
       buildingMaterial,
-      ruinKey: '',
-      siteKey: '',
     }
   }
 
   private fill(view: CityView) {
     const kit = this.kit
     if (!kit) return
-    const pooled = new Map<string, (typeof view.cluster.children)[number]>()
     for (const child of [...view.cluster.children]) {
       if (child === view.ring || child === view.track) continue
-      const stamp = child.userData.stamp as string | undefined
       view.cluster.remove(child)
-      if (stamp) pooled.set(stamp, child)
+      if (child instanceof Mesh) child.geometry.dispose()
     }
-    const adopt = (stamp: string, create: () => (typeof view.cluster.children)[number]) => {
-      const found = pooled.get(stamp)
-      if (found) {
-        pooled.delete(stamp)
-        view.cluster.add(found)
-        return
-      }
-      const mesh = create()
-      mesh.userData.stamp = stamp
-      view.cluster.add(mesh)
-    }
+    const streets: BufferGeometry[] = []
+    const teams: BufferGeometry[] = []
+    const keeps: BufferGeometry[] = []
     for (const street of view.layout.streets) {
-      const stamp = `s${street.x},${street.y},${street.kind},${street.yaw},${street.ox},${street.oz}`
-      adopt(stamp, () => {
-        const model = kit.streets[street.kind] ?? kit.streets[0]
-        const mesh = model.clone(true)
-        mesh.traverse((child) => {
-          if (child instanceof Mesh) child.material = kit.streetsMaterial
-        })
-        mesh.rotation.y = street.yaw * (Math.PI / 2)
-        const lift = street.kind >= StreetKind.Lamp ? 0.06 : 0.015
-        mesh.position.set(street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz)
-        return mesh
-      })
+      const model = kit.streets[street.kind] ?? kit.streets[0]
+      const lift = street.kind >= StreetKind.Lamp ? 0.06 : 0.015
+      streets.push(placeGeometry(model, street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz, street.yaw * (Math.PI / 2)))
     }
     for (const building of view.layout.buildings) {
-      const stamp = `b${building.x},${building.y},${building.model},${building.yaw},${building.keep ? 1 : 0}`
-      adopt(stamp, () => {
-        const model = kit.buildings[building.model] ?? kit.buildings[0]
-        const mesh = model.clone(true)
-        mesh.traverse((child) => {
-          if (child instanceof Mesh) child.material = building.keep ? kit.neutralMaterial : view.buildingMaterial
-        })
-        mesh.rotation.y = building.yaw * (Math.PI / 2)
-        mesh.position.set(building.x + 0.5, TILE_TOP + 0.06, building.y + 0.5)
-        return mesh
-      })
+      const model = kit.buildings[building.model] ?? kit.buildings[0]
+      const geometry = placeGeometry(model, building.x + 0.5, TILE_TOP + 0.06, building.y + 0.5, building.yaw * (Math.PI / 2))
+      if (building.keep) keeps.push(geometry)
+      else teams.push(geometry)
     }
+    addMerged(view.cluster, streets, kit.streetsMaterial)
+    addMerged(view.cluster, teams, view.buildingMaterial)
+    addMerged(view.cluster, keeps, kit.neutralMaterial)
     const center = blobCenter(view.layout)
     const reach = Math.max(view.layout.span, Math.ceil(Math.sqrt(view.layout.tiles.length)))
     if (view.ring.userData.reach !== reach) {
@@ -242,6 +223,8 @@ export class CityLayer {
     }
     view.track.position.set(center.x, TILE_TOP + 1.4, center.z)
     view.ring.position.set(center.x, TILE_TOP + 1.42, center.z)
+    view.track.updateMatrix()
+    view.ring.updateMatrix()
   }
 
   private apply(states: readonly (CityState | null)[]) {
@@ -267,10 +250,16 @@ export class CityLayer {
   }
 }
 
-function layoutStamp(layout: CityLayout): string {
+const layoutStamps = new WeakMap<CityLayout, string>()
+
+function siteStamp(layout: CityLayout): string {
+  const cached = layoutStamps.get(layout)
+  if (cached) return cached
   const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model},${building.yaw}`).join(';')
   const streets = layout.streets.map((street) => `${street.x},${street.y},${street.kind}`).join(';')
-  return `${layout.tiles.length}:${buildings}:${streets}`
+  const stamp = `${layout.tiles.length}:${buildings}:${streets}`
+  layoutStamps.set(layout, stamp)
+  return stamp
 }
 
 const TRACK_BAND = 0.1
@@ -361,7 +350,45 @@ function cell(col: number, row: number): number {
   return col + row * 8
 }
 
-async function loadFitted(url: string, mode: Fit): Promise<Group> {
+const placeMatrix = new Matrix4()
+const placePosition = new Vector3()
+const placeQuaternion = new Quaternion()
+const placeScale = new Vector3(1, 1, 1)
+const placeUp = new Vector3(0, 1, 0)
+
+function placeGeometry(source: BufferGeometry, x: number, y: number, z: number, yaw: number): BufferGeometry {
+  placePosition.set(x, y, z)
+  placeQuaternion.setFromAxisAngle(placeUp, yaw)
+  placeMatrix.compose(placePosition, placeQuaternion, placeScale)
+  const geometry = source.clone()
+  geometry.applyMatrix4(placeMatrix)
+  return geometry
+}
+
+function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandardMaterial) {
+  if (parts.length === 0) return
+  let geometry = parts[0]
+  if (parts.length > 1) {
+    const merged = mergeGeometries(parts)
+    if (merged) {
+      for (const part of parts) part.dispose()
+      geometry = merged
+    } else {
+      for (const part of parts) group.add(staticMesh(part, material))
+      return
+    }
+  }
+  group.add(staticMesh(geometry, material))
+}
+
+function staticMesh(geometry: BufferGeometry, material: MeshStandardMaterial): Mesh {
+  geometry.computeBoundingSphere()
+  const mesh = new Mesh(geometry, material)
+  mesh.matrixAutoUpdate = false
+  return mesh
+}
+
+async function loadFitted(url: string, mode: Fit): Promise<BufferGeometry> {
   const root = await new OBJLoader().loadAsync(url)
   root.updateMatrixWorld(true)
   const raw = new Box3().setFromObject(root)
@@ -371,7 +398,18 @@ async function loadFitted(url: string, mode: Fit): Promise<Group> {
     mode === 'building' ? 0.82 / Math.max(size.x, size.z) : mode === 'road' ? 1 / Math.max(size.x, size.z) : 1.35 / Math.max(size.y, 0.001)
   root.scale.setScalar(scale)
   root.position.set(-center.x * scale, -raw.min.y * scale, -center.z * scale)
-  const holder = new Group()
-  holder.add(root)
-  return holder
+  root.updateMatrixWorld(true)
+  const parts: BufferGeometry[] = []
+  root.traverse((child) => {
+    if (!(child instanceof Mesh)) return
+    const geometry = child.geometry.clone()
+    geometry.applyMatrix4(child.matrixWorld)
+    parts.push(geometry)
+  })
+  if (parts.length === 0) throw new Error('city model has no mesh')
+  if (parts.length === 1) return parts[0]
+  const merged = mergeGeometries(parts)
+  for (const part of parts) part.dispose()
+  if (!merged) throw new Error('city model merge failed')
+  return merged
 }

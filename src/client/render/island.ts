@@ -16,6 +16,7 @@ import {
   ShapeGeometry,
   Vector2,
 } from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { bankRuns, forestLoops, landLoops, loopContains, roadLines, signedArea, type LayerLoop } from '../../shared/contour.ts'
 import type { MapPoint, WorldSnapshot } from '../../shared/protocol.ts'
 import { blockerHoles, smoothShore } from '../../shared/shore.ts'
@@ -37,38 +38,57 @@ const BANK = [
   { offset: 1.15, y: WATER_Y - 0.02, wet: 1 },
 ]
 
+const GRASS = capMaterial()
+const WOODS = capMaterial()
+const ROAD = new MeshBasicMaterial({ color: ROAD_COLOR, side: DoubleSide })
+const WATER = new MeshBasicMaterial({ color: 0x7ec8e3, side: DoubleSide })
+const MARKER = new MeshStandardMaterial({ roughness: 0.92, metalness: 0 })
+GRASS.userData.retain = true
+WOODS.userData.retain = true
+ROAD.userData.retain = true
+WATER.userData.retain = true
+MARKER.userData.retain = true
+
 export function buildIsland(world: WorldSnapshot): Group {
   const group = new Group()
   group.add(waterPlane(world.width, world.height))
   const land = landMesh(world)
   if (land) group.add(land)
+  const roads: BufferGeometry[] = []
   for (const road of world.roads) {
     const ribbon = roadRibbon(road)
-    if (ribbon) group.add(ribbon)
+    if (ribbon) roads.push(ribbon)
   }
+  addMerged(group, roads, ROAD)
   return group
 }
 
 export function buildSurface(world: WorldSnapshot): Group {
   const group = new Group()
-  const grass = capMaterial()
-  const woods = capMaterial()
+  const grassCaps: BufferGeometry[] = []
+  const grassBanks: BufferGeometry[] = []
   for (const shape of packLoops(landLoops(world.terrain, world.known, world.shifts, world.width, world.height))) {
-    group.add(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points), grass))
+    grassCaps.push(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points)))
     for (const loop of [shape.outer, ...shape.holes]) {
       for (const run of bankRuns(loop)) {
-        const strip = run.closed ? bankStrip(run.points, grass) : openBank(run.points, grass)
-        if (strip) group.add(strip)
+        const strip = run.closed ? bankStrip(run.points) : openBank(run.points)
+        if (strip) grassBanks.push(strip)
       }
     }
   }
+  addMerged(group, grassCaps, GRASS)
+  addMerged(group, grassBanks, GRASS)
+  const woods: BufferGeometry[] = []
   for (const shape of packLoops(forestLoops(world.terrain, world.known, world.shifts, world.width, world.height))) {
-    group.add(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points), woods, TILE_TOP + 0.02, FOREST_COLOR))
+    woods.push(flatCap(shape.outer.points, shape.holes.map((hole) => hole.points), TILE_TOP + 0.02, FOREST_COLOR))
   }
+  addMerged(group, woods, WOODS)
+  const roads: BufferGeometry[] = []
   for (const line of roadLines(world.terrain, world.known, world.shifts, world.width, world.height)) {
     const ribbon = roadRibbon(line)
-    if (ribbon) group.add(ribbon)
+    if (ribbon) roads.push(ribbon)
   }
+  addMerged(group, roads, ROAD)
   const marks = markers(world)
   if (marks) group.add(marks)
   return group
@@ -115,11 +135,8 @@ function markers(world: WorldSnapshot): InstancedMesh | null {
     }
   }
   if (spots.length === 0) return null
-  const mesh = new InstancedMesh(
-    new BoxGeometry(0.98, TILE_TOP, 0.98),
-    new MeshStandardMaterial({ roughness: 0.92, metalness: 0 }),
-    spots.length,
-  )
+  const mesh = new InstancedMesh(new BoxGeometry(0.98, TILE_TOP, 0.98), MARKER, spots.length)
+  mesh.matrixAutoUpdate = false
   const dummy = new Object3D()
   for (let i = 0; i < spots.length; i++) {
     const spot = spots[i]
@@ -132,6 +149,7 @@ function markers(world: WorldSnapshot): InstancedMesh | null {
   }
   mesh.instanceMatrix.needsUpdate = true
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  mesh.computeBoundingSphere()
   return mesh
 }
 
@@ -141,31 +159,25 @@ function landMesh(world: WorldSnapshot): Group | null {
   if (coast.length < 3) return null
   const holes =
     shore.coast.length >= 3 ? blockerHoles(world.terrain, world.width, world.height, coast, world.seed) : world.holes
-  const material = new MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    roughness: 0.95,
-    metalness: 0,
-    side: DoubleSide,
-  })
   const group = new Group()
-  group.add(flatCap(coast, holes, material))
-  const outer = bankStrip(coast, material)
-  if (outer) group.add(outer)
+  group.add(staticMesh(flatCap(coast, holes), GRASS))
+  const banks: BufferGeometry[] = []
+  const outer = bankStrip(coast)
+  if (outer) banks.push(outer)
   for (const hole of holes) {
-    const strip = bankStrip(hole, material)
-    if (strip) group.add(strip)
+    const strip = bankStrip(hole)
+    if (strip) banks.push(strip)
   }
+  addMerged(group, banks, GRASS)
   return group
 }
 
 function flatCap(
   coast: readonly MapPoint[],
   holes: readonly MapPoint[][],
-  material: MeshStandardMaterial,
   y = TILE_TOP,
   color: readonly number[] = CAP_COLOR,
-): Mesh {
+): BufferGeometry {
   const shape = new Shape(coast.map((point) => new Vector2(point.x, point.y)))
   for (const hole of holes) {
     if (hole.length < 3) continue
@@ -188,10 +200,10 @@ function flatCap(
   if (up < 0) {
     for (let i = 0; i < normal.count; i++) normal.setY(i, -normal.getY(i))
   }
-  return new Mesh(geometry, material)
+  return geometry
 }
 
-function openBank(loop: readonly MapPoint[], material: MeshStandardMaterial): Mesh | null {
+function openBank(loop: readonly MapPoint[]): BufferGeometry | null {
   if (loop.length < 2) return null
   const normals = openNormals(loop)
   const positions: number[] = []
@@ -224,7 +236,7 @@ function openBank(loop: readonly MapPoint[], material: MeshStandardMaterial): Me
   geometry.setAttribute('color', new Float32BufferAttribute(colors, 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
-  return new Mesh(geometry, material)
+  return geometry
 }
 
 function openNormals(loop: readonly MapPoint[]): MapPoint[] {
@@ -242,7 +254,7 @@ function openNormals(loop: readonly MapPoint[]): MapPoint[] {
   return normals
 }
 
-function bankStrip(loop: readonly MapPoint[], material: MeshStandardMaterial): Mesh | null {
+function bankStrip(loop: readonly MapPoint[]): BufferGeometry | null {
   if (loop.length < 3) return null
   const normals = outwardNormals(loop)
   const positions: number[] = []
@@ -276,7 +288,7 @@ function bankStrip(loop: readonly MapPoint[], material: MeshStandardMaterial): M
   geometry.setAttribute('color', new Float32BufferAttribute(colors, 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
-  return new Mesh(geometry, material)
+  return geometry
 }
 
 function outwardNormals(loop: readonly MapPoint[]): MapPoint[] {
@@ -296,16 +308,15 @@ function outwardNormals(loop: readonly MapPoint[]): MapPoint[] {
 }
 
 function waterPlane(width: number, height: number): Mesh {
-  const mesh = new Mesh(
-    new PlaneGeometry(width, height),
-    new MeshBasicMaterial({ color: 0x7ec8e3, side: DoubleSide }),
-  )
+  const mesh = new Mesh(new PlaneGeometry(width, height), WATER)
   mesh.rotation.x = -Math.PI / 2
   mesh.position.set(width / 2, WATER_Y, height / 2)
+  mesh.matrixAutoUpdate = false
+  mesh.updateMatrix()
   return mesh
 }
 
-function roadRibbon(line: readonly MapPoint[]): Mesh | null {
+function roadRibbon(line: readonly MapPoint[]): BufferGeometry | null {
   const points = sampleLine(line, SAMPLE)
   if (points.length < 2) return null
   const positions: number[] = []
@@ -328,7 +339,30 @@ function roadRibbon(line: readonly MapPoint[]): Mesh | null {
   const geometry = new BufferGeometry()
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
   geometry.setIndex(indices)
-  return new Mesh(geometry, new MeshBasicMaterial({ color: ROAD_COLOR, side: DoubleSide }))
+  return geometry
+}
+
+function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandardMaterial | MeshBasicMaterial) {
+  if (parts.length === 0) return
+  let geometry = parts[0]
+  if (parts.length > 1) {
+    const merged = mergeGeometries(parts)
+    if (merged) {
+      for (const part of parts) part.dispose()
+      geometry = merged
+    } else {
+      for (const part of parts) group.add(staticMesh(part, material))
+      return
+    }
+  }
+  group.add(staticMesh(geometry, material))
+}
+
+function staticMesh(geometry: BufferGeometry, material: MeshStandardMaterial | MeshBasicMaterial): Mesh {
+  geometry.computeBoundingSphere()
+  const mesh = new Mesh(geometry, material)
+  mesh.matrixAutoUpdate = false
+  return mesh
 }
 
 function sampleLine(line: readonly MapPoint[], step: number): MapPoint[] {

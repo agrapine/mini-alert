@@ -34,17 +34,36 @@ export function friendsOf(
   cities: readonly CitySight[] = [],
 ): SightSource[] {
   const friends: SightSource[] = []
+  collectFriends(units, playerId, cities, friends)
+  return friends
+}
+
+export function collectFriends(
+  units: readonly UnitSnapshot[],
+  playerId: number,
+  cities: readonly CitySight[],
+  out: SightSource[],
+): void {
+  let count = 0
   for (const unit of units) {
     if (unit.ownerId !== playerId || unit.health <= 0 || unit.progress < 1) continue
     const sight = UNIT_TYPES[unit.typeId].weapon.sight
     if (sight <= 0) continue
-    friends.push({ x: unit.x, z: unit.z, sight })
+    const friend = out[count] ?? (out[count] = { x: 0, z: 0, sight: 0 })
+    friend.x = unit.x
+    friend.z = unit.z
+    friend.sight = sight
+    count += 1
   }
   for (const city of cities) {
     if (city.ownerId !== playerId) continue
-    friends.push({ x: city.x, z: city.z, sight: CITY_SIGHT })
+    const friend = out[count] ?? (out[count] = { x: 0, z: 0, sight: 0 })
+    friend.x = city.x
+    friend.z = city.z
+    friend.sight = CITY_SIGHT
+    count += 1
   }
-  return friends
+  out.length = count
 }
 
 export function unitsForPlayer(
@@ -127,26 +146,37 @@ export function stampExploredDistance(
   field: Float32Array,
   feather = FOG_FEATHER,
 ): void {
+  for (const friend of friends) stampFriendDistance(texelsPerTile, width, height, friend, field, feather)
+}
+
+export function stampFriendDistance(
+  texelsPerTile: number,
+  width: number,
+  height: number,
+  friend: SightSource,
+  field: Float32Array,
+  feather = FOG_FEATHER,
+): void {
   const cols = width * texelsPerTile
   const rows = height * texelsPerTile
-  for (const friend of friends) {
-    const reach = friend.sight + feather
-    const x0 = Math.max(0, Math.floor((friend.x - reach) * texelsPerTile))
-    const x1 = Math.min(cols - 1, Math.ceil((friend.x + reach) * texelsPerTile) - 1)
-    const y0 = Math.max(0, Math.floor((friend.z - reach) * texelsPerTile))
-    const y1 = Math.min(rows - 1, Math.ceil((friend.z + reach) * texelsPerTile) - 1)
-    for (let ty = y0; ty <= y1; ty++) {
-      const wz = (ty + 0.5) / texelsPerTile
-      const dz = wz - friend.z
-      for (let tx = x0; tx <= x1; tx++) {
-        const wx = (tx + 0.5) / texelsPerTile
-        const dx = wx - friend.x
-        const distance = Math.hypot(dx, dz) - friend.sight
-        if (distance >= feather) continue
-        const index = ty * cols + tx
-        const next = distance < -feather ? -feather : distance
-        if (next < field[index]) field[index] = next
-      }
+  const reach = friend.sight + feather
+  const x0 = Math.max(0, Math.floor((friend.x - reach) * texelsPerTile))
+  const x1 = Math.min(cols - 1, Math.ceil((friend.x + reach) * texelsPerTile) - 1)
+  const y0 = Math.max(0, Math.floor((friend.z - reach) * texelsPerTile))
+  const y1 = Math.min(rows - 1, Math.ceil((friend.z + reach) * texelsPerTile) - 1)
+  for (let ty = y0; ty <= y1; ty++) {
+    const wz = (ty + 0.5) / texelsPerTile
+    const dz = wz - friend.z
+    const row = ty * cols
+    for (let tx = x0; tx <= x1; tx++) {
+      const index = row + tx
+      if (field[index] <= -feather) continue
+      const wx = (tx + 0.5) / texelsPerTile
+      const dx = wx - friend.x
+      const distance = Math.hypot(dx, dz) - friend.sight
+      if (distance >= feather) continue
+      const next = distance < -feather ? -feather : distance
+      if (next < field[index]) field[index] = next
     }
   }
 }
