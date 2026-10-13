@@ -43,13 +43,8 @@ function octile(ax: number, ay: number, bx: number, by: number): number {
   return max + (Math.SQRT2 - 1) * min
 }
 
-/** Path from start to goal, excluding start. Null when the goal cannot be reached. `estimate` must never exceed the true remaining cost. */
-export function findPath(
-  grid: PathGrid,
-  start: TileCoord,
-  goal: TileCoord,
-  estimate: Estimate = (x, y) => octile(x, y, goal.x, goal.y),
-): TileCoord[] | null {
+/** Path from start to goal, excluding start. Null when the goal cannot be reached. */
+export function findPath(grid: PathGrid, start: TileCoord, goal: TileCoord): TileCoord[] | null {
   const { width, height } = grid
   if (start.x < 0 || start.y < 0 || start.x >= width || start.y >= height) return null
   if (goal.x < 0 || goal.y < 0 || goal.x >= width || goal.y >= height) return null
@@ -61,7 +56,7 @@ export function findPath(
   const goalKey = goal.y * width + goal.x
   visit(startKey, 0, -1)
   heapSize = 0
-  push(startKey, estimate(start.x, start.y), 0)
+  push(startKey, octile(start.x, start.y, goal.x, goal.y), 0)
 
   while (heapSize > 0) {
     const current = heapNode[0]
@@ -81,7 +76,7 @@ export function findPath(
       const nextG = currentG + COST[dir] * (kind === Cell.Crowded ? CROWD_COST : 1)
       if (seen[next] === generation && nextG >= gScore[next]) continue
       visit(next, nextG, current)
-      push(next, nextG + estimate(nx, ny), nextG)
+      push(next, nextG + octile(nx, ny, goal.x, goal.y), nextG)
     }
   }
 
