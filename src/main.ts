@@ -547,7 +547,7 @@ const frame = (now: number) => {
     view.update(frameDt)
     refreshHud(frameDt)
     view.render(
-      replica.units,
+      replica.drawn(),
       player.selected(),
       replica.takeShots(),
       replica.takeHits(),

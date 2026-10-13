@@ -9,7 +9,6 @@ export const SIM_STEP = 1 / 30
 export const MOTION_HEARTBEAT = 60
 export const SNAPSHOT_GAP = 60
 export const SNAPSHOT_COOLDOWN = 30
-export const SNAP_DISTANCE = 0.5
 export const KEEPALIVE_TICKS = 150
 
 export const enum MotionResult {
