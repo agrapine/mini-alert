@@ -27,7 +27,7 @@ function scout(x: number, path: { x: number; y: number }[]): UnitSnapshot {
   }
 }
 
-function joined(unit: UnitSnapshot): Replica {
+function joined(...units: UnitSnapshot[]): Replica {
   const cells: MapCell[] = []
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) cells.push({ x, y, terrain: Terrain.Land, shift: 0 })
   const replica = new Replica()
@@ -38,7 +38,7 @@ function joined(unit: UnitSnapshot): Replica {
       {
         kind: ServerEventKind.Snapshot,
         map: { width: 16, height: 16, cells, coast: [], holes: [], roads: [], towns: [], cleared: [] },
-        units: [unit],
+        units,
         cities: [],
         credits: 0,
         training: [],
@@ -142,5 +142,22 @@ describe('replica drawing', () => {
     expect(replica.terrainRevision).toBe(terrain)
     expect(replica.cityRevision).toBe(cities + 1)
     expect(replica.knownTiles).toBe(256)
+  })
+
+  it('turns a turret toward its attack target between server updates', () => {
+    const tank = { ...scout(4.5, []), id: 2, typeId: UnitTypeId.MedTank, facing: 0, turretYaw: 0 }
+    const foe = { ...scout(8.5, []), id: 3, ownerId: 2 }
+    const replica = joined(tank, foe)
+    replica.predictAttack([2], foe, 3)
+    for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
+    expect(replica.unit(2)?.turretYaw).toBeGreaterThan(1)
+  })
+
+  it('leads a unit out of range toward its attack target', () => {
+    const tank = { ...scout(1.5, []), id: 2, typeId: UnitTypeId.MedTank }
+    const replica = joined(tank, { ...scout(14.5, []), id: 3, ownerId: 2 })
+    replica.predictAttack([2], { x: 14.5, z: 4.5 }, 3)
+    expect(replica.unit(2)?.attackId).toBe(3)
+    expect(replica.unit(2)?.path).toEqual([{ x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 }])
   })
 })

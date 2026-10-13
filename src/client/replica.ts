@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -284,18 +284,41 @@ export class Replica {
 
   /** Starts ordered units toward `tile` along a short straight lead until the server's route arrives. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
+    for (const unit of this.ordered(unitIds)) {
+      unit.attackId = null
+      unit.attackPoint = null
+      this.lead(unit, tile)
+    }
+  }
+
+  /** Points ordered units at the target and leads those out of range toward it. */
+  predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
+    for (const unit of this.ordered(unitIds)) {
+      unit.attackId = targetId
+      unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null
+      const range = UNIT_TYPES[unit.typeId].weapon.range
+      if (Math.hypot(target.x - unit.x, target.z - unit.z) > range) this.lead(unit, { x: Math.floor(target.x), y: Math.floor(target.z) })
+    }
+  }
+
+  private ordered(unitIds: readonly number[]): UnitSnapshot[] {
+    const units: UnitSnapshot[] = []
     for (const id of unitIds) {
       const unit = this.unit(id)
-      if (!unit || unit.ownerId !== this.playerId) continue
-      const type = UNIT_TYPES[unit.typeId]
-      const domain = domainOf(type)
-      if (type.topSpeed <= 0 || domain === MoveDomain.Air) continue
-      if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) continue
-      const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
-      if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) continue
-      unit.path = lead
-      unit.goal = { ...lead[lead.length - 1] }
+      if (unit && unit.ownerId === this.playerId) units.push(unit)
     }
+    return units
+  }
+
+  private lead(unit: UnitSnapshot, tile: TileCoord) {
+    const type = UNIT_TYPES[unit.typeId]
+    const domain = domainOf(type)
+    if (type.topSpeed <= 0 || domain === MoveDomain.Air) return
+    if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) return
+    const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
+    if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) return
+    unit.path = lead
+    unit.goal = { ...lead[lead.length - 1] }
   }
 
   homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
@@ -459,8 +482,40 @@ export class Replica {
   }
 
   private stepUnits(dt: number) {
+    for (const unit of this.units) {
+      const shown = this.shown.get(unit.id)
+      if (shown) shown.before = poseOf(unit)
+    }
     const occupied = this.occupancy()
     for (const unit of this.units) this.stepUnit(unit, occupied, dt)
+    this.aimTurrets(dt)
+  }
+
+  private aimTurrets(dt: number) {
+    for (const unit of this.units) {
+      const weapon = UNIT_TYPES[unit.typeId].weapon
+      if (weapon.turretRate <= 0 || unit.health <= 0 || unit.progress < 1) continue
+      const aim = this.aimOf(unit, Math.max(weapon.sight, weapon.range))
+      if (!aim) continue
+      unit.turretYaw = turnToward(unit.turretYaw, Math.atan2(aim.x - unit.x, aim.z - unit.z), weapon.turretRate, dt)
+    }
+  }
+
+  /** The ordered point or target, else the nearest enemy in reach. */
+  private aimOf(unit: UnitSnapshot, reach: number): { x: number; z: number } | null {
+    if (unit.attackPoint) return unit.attackPoint
+    const ordered = unit.attackId === null ? undefined : this.unit(unit.attackId)
+    if (ordered && ordered.health > 0) return ordered
+    let nearest: UnitSnapshot | null = null
+    let nearestDist = reach
+    for (const other of this.units) {
+      if (other.ownerId === unit.ownerId || other.health <= 0) continue
+      const dist = Math.hypot(other.x - unit.x, other.z - unit.z)
+      if (dist > nearestDist) continue
+      nearest = other
+      nearestDist = dist
+    }
+    return nearest
   }
 
   private occupancy(): Map<string, number> {
@@ -478,8 +533,6 @@ export class Replica {
   private stepUnit(unit: UnitSnapshot, occupied: Map<string, number>, dt: number) {
     const type = UNIT_TYPES[unit.typeId]
     if (!type || type.topSpeed <= 0 || unit.health <= 0) return
-    const shown = this.shown.get(unit.id)
-    if (shown) shown.before = poseOf(unit)
     const state: MotionState = {
       x: unit.x,
       z: unit.z,

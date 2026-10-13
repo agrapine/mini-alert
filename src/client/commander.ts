@@ -131,12 +131,17 @@ export class Commander {
 
   orderAttack(targetId: number) {
     const unitIds = this.orderable()
-    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId })
+    if (unitIds.length === 0) return
+    this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId })
+    const target = this.replica.unit(targetId)
+    if (target) this.replica.predictAttack(unitIds, target, targetId)
   }
 
   orderAttackGround(tile: TileCoord) {
     const unitIds = this.orderable()
-    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderAttackGround, unitIds, tile })
+    if (unitIds.length === 0) return
+    this.port.send({ kind: ClientMessageKind.OrderAttackGround, unitIds, tile })
+    this.replica.predictAttack(unitIds, { x: tile.x + 0.5, z: tile.y + 0.5 }, null)
   }
 
   private orderable(): number[] {

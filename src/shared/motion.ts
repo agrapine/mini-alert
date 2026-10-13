@@ -50,6 +50,10 @@ export function approach(current: number, target: number, maxDelta: number): num
   return current + Math.sign(delta) * maxDelta
 }
 
+export function turnToward(current: number, desired: number, rate: number, dt: number): number {
+  return wrapAngle(current + clamp(wrapAngle(desired - current), -rate * dt, rate * dt))
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }

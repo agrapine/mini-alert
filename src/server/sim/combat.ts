@@ -1,10 +1,11 @@
 import { flightTime } from '../../shared/ballistics.ts'
 import { CITY_SIGHT } from '../../shared/cities.ts'
 import { planeInFlight } from '../../shared/flight.ts'
+import { turnToward } from '../../shared/motion.ts'
 import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { Locomotion, WeaponKind } from '../../shared/unit-types.ts'
 import { seesPoint, type CitySight, type SightSource } from '../../shared/vision.ts'
-import { clamp, wrapAngle } from '../sim/drive.ts'
+import { wrapAngle } from '../sim/drive.ts'
 import type { Unit } from '../units/unit.ts'
 
 export type Impact = {
@@ -60,11 +61,7 @@ export function engage(
     const aimX = ordered?.x ?? predicted?.x ?? target?.pos.x ?? structure?.x ?? unit.pos.x
     const aimZ = ordered?.z ?? predicted?.z ?? target?.pos.z ?? structure?.z ?? unit.pos.z
     const desired = Math.atan2(aimX - unit.pos.x, aimZ - unit.pos.z)
-    if (weapon.turretRate > 0) {
-      const err = wrapAngle(desired - unit.turretYaw)
-      const step = clamp(err, -weapon.turretRate * dt, weapon.turretRate * dt)
-      unit.turretYaw = wrapAngle(unit.turretYaw + step)
-    }
+    if (weapon.turretRate > 0) unit.turretYaw = turnToward(unit.turretYaw, desired, weapon.turretRate, dt)
     const gun = weapon.turretRate > 0 ? unit.turretYaw : aim
     const dist = target ? distance(unit, target) : Math.hypot(aimX - unit.pos.x, aimZ - unit.pos.z)
     const aligned = Math.abs(wrapAngle(desired - gun)) <= weapon.aimTolerance
