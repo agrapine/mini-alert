@@ -1,0 +1,13 @@
+services:
+  mini-alert:
+    build: .
+    image: mini-alert
+    container_name: mini-alert
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - saves:/data
+
+volumes:
+  saves:
