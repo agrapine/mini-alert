@@ -8,11 +8,13 @@ import { MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../../shared/unit-ty
 import { cursorFor } from './cursor.ts'
 import { bindGroupKeys } from './groups.ts'
 import { bindPanKeys } from './keys.ts'
+import { PanButton, PanDrag } from './pan.ts'
 
 const DRAG_SELECT_PX = 8
 const EDGE_PX = 25
 const DOUBLE_CLICK_MS = 350
 const DOUBLE_CLICK_PX = 8
+const DOUBLE_TAP_PX = 24
 
 type ClickMods = { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }
 
@@ -28,7 +30,7 @@ export function bindInput(
   marquee.id = 'marquee'
   document.body.append(marquee)
 
-  let panning = false
+  const pan = new PanDrag()
   let spaceDown = false
   let selectArmed = false
   let boxSelecting = false
@@ -48,7 +50,7 @@ export function bindInput(
   const syncEdge = (event: PointerEvent) => {
     const target = event.target
     const blocked = target instanceof Element && target.closest('button, a, input, textarea, #minimap, #sheet, #outcome, .dropdown, .flyout') !== null
-    if (event.pointerType === 'touch' || pinch || panning || document.body.classList.contains('lobby') || blocked) {
+    if (event.pointerType === 'touch' || pinch || pan.active || document.body.classList.contains('lobby') || blocked) {
       view.setEdgePan(0, 0)
       return
     }
@@ -65,7 +67,7 @@ export function bindInput(
   document.documentElement.addEventListener('pointerleave', () => view.setEdgePan(0, 0))
 
   const refreshCursor = (clientX: number, clientY: number) => {
-    if (panning) canvas.style.cursor = 'grabbing'
+    if (pan.active) canvas.style.cursor = 'grabbing'
     else if (spaceDown) canvas.style.cursor = 'grab'
     else if (player.placingType() !== null || player.raisingCity()) canvas.style.cursor = 'crosshair'
     else canvas.style.cursor = cursorFor(false, replica, player, view, clientX, clientY, groundAttack)
@@ -119,7 +121,7 @@ export function bindInput(
   }
 
   const beginPan = (event: PointerEvent) => {
-    panning = true
+    pan.begin(event.button === 1 ? PanButton.Middle : PanButton.Left)
     view.setHovered([])
     lastX = event.clientX
     lastY = event.clientY
@@ -141,7 +143,7 @@ export function bindInput(
     const points = fingerPoints()
     if (points.length < 2) return
     swallowTouch = true
-    panning = false
+    pan.end()
     hideBox()
     view.setHovered([])
     view.setEdgePan(0, 0)
@@ -219,11 +221,20 @@ export function bindInput(
     if (!lastPick || picked.ownerId !== replica.playerId || picked.typeId !== lastPick.typeId) return false
     if (UNIT_TYPES[picked.typeId].topSpeed <= 0) return false
     if (event.timeStamp - lastPick.at > DOUBLE_CLICK_MS) return false
-    return Math.hypot(event.clientX - lastPick.x, event.clientY - lastPick.y) <= DOUBLE_CLICK_PX
+    const slop = event.pointerType === 'touch' ? DOUBLE_TAP_PX : DOUBLE_CLICK_PX
+    return Math.hypot(event.clientX - lastPick.x, event.clientY - lastPick.y) <= slop
   }
 
   canvas.addEventListener('contextmenu', (event) => event.preventDefault())
   canvas.addEventListener('auxclick', (event) => event.preventDefault())
+  canvas.addEventListener('mousedown', (event) => {
+    if (event.button === 1) event.preventDefault()
+  })
+  canvas.addEventListener('lostpointercapture', () => {
+    if (!pan.active) return
+    pan.end()
+    refreshCursor(pointerX, pointerY)
+  })
 
   canvas.addEventListener('pointerdown', (event) => {
     if (event.pointerType === 'touch') {
@@ -278,9 +289,10 @@ export function bindInput(
     }
     view.setZoomCursor(event.clientX, event.clientY)
     pointerX = event.clientX
-    if ((player.placingType() !== null || player.raisingCity()) && !panning) showGhost(event.clientX, event.clientY)
     pointerY = event.clientY
-    if (panning) {
+    if (pan.active && !pan.track(event.buttons)) refreshCursor(event.clientX, event.clientY)
+    if ((player.placingType() !== null || player.raisingCity()) && !pan.active) showGhost(event.clientX, event.clientY)
+    if (pan.active) {
       view.panByPixels(lastX, lastY, event.clientX, event.clientY)
       lastX = event.clientX
       lastY = event.clientY
@@ -312,14 +324,14 @@ export function bindInput(
       endTouch(event.pointerId)
       if (swallowTouch) {
         hideBox()
-        panning = false
+        pan.end()
         if (touches.size === 0) swallowTouch = false
         refreshCursor(event.clientX, event.clientY)
         return
       }
     }
-    if (event.button === 1 || (event.button === 0 && spaceDown)) {
-      panning = false
+    if (pan.active) {
+      pan.end()
       refreshCursor(event.clientX, event.clientY)
       return
     }
@@ -360,13 +372,13 @@ export function bindInput(
     endTouch(event.pointerId)
     if (touches.size === 0) swallowTouch = false
     pinch = null
-    panning = false
+    pan.end()
     hideBox()
     view.setHovered([])
   })
 
   canvas.addEventListener('pointerleave', () => {
-    if (!panning && !selectArmed) view.setHovered([])
+    if (!pan.active && !selectArmed) view.setHovered([])
   })
 
   canvas.addEventListener(
@@ -405,12 +417,12 @@ export function bindInput(
     syncRanges(event)
     if (event.code !== 'Space') return
     spaceDown = false
-    panning = false
+    pan.end()
     refreshCursor(pointerX, pointerY)
   })
 
   window.addEventListener('blur', () => {
-    panning = false
+    pan.end()
     spaceDown = false
     groundAttack = false
     view.setShowRanges(false)
@@ -420,20 +432,21 @@ export function bindInput(
   })
 }
 
-export function commandAt(
+export function orderAt(
   tile: TileCoord,
   replica: Replica,
   player: Commander,
   view: GameView,
   mods: ClickMods,
-): boolean {
+) {
   if (player.placingType() !== null || player.raisingCity()) {
-    placeAt(tile, replica, player, view)
-    return true
+    player.cancelPlace()
+    view.showPlacement(null)
+    return
   }
-  if (!player.commanding() && !player.factorySelected()) return false
-  applyClick(tile, replica.occupant(tile), replica, player, view, mods)
-  return true
+  const standing = replica.occupant(tile)
+  const target = standing && (standing.ownerId !== replica.playerId || replica.homePad(standing, player.selected()))
+  applyClick(tile, target ? standing : undefined, replica, player, view, mods)
 }
 
 function placeAt(tile: TileCoord, replica: Replica, player: Commander, view: GameView) {

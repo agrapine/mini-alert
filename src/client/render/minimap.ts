@@ -8,7 +8,7 @@ const DOT = 3.25
 export type MinimapCommand = (
   tile: TileCoord,
   mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
-) => boolean
+) => void
 
 export class Minimap {
   private world: WorldSnapshot
@@ -75,8 +75,11 @@ export class Minimap {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
-    const tile = this.tileAt(event.clientX, event.clientY)
-    if (event.button === 0 && tile && this.command?.(tile, event)) return
+    if (event.button === 2) {
+      const tile = this.tileAt(event.clientX, event.clientY)
+      if (tile) this.command?.(tile, event)
+      return
+    }
     this.tracking = true
     this.jump(event.clientX, event.clientY)
     try {
@@ -88,6 +91,7 @@ export class Minimap {
 
   private readonly onPointerMove = (event: PointerEvent) => {
     this.hover?.(this.tileAt(event.clientX, event.clientY))
+    if (this.tracking && event.buttons === 0) this.tracking = false
     if (this.tracking) this.jump(event.clientX, event.clientY)
   }
 

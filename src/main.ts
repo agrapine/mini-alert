@@ -7,7 +7,7 @@ import { Music } from './client/music.ts'
 import { rememberedName, rememberName } from './client/player-name.ts'
 import { bindMenu } from './client/menu.ts'
 import { Net } from './client/net.ts'
-import { bindInput, commandAt } from './client/input/pointer.ts'
+import { bindInput, orderAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
 import { populationOf } from './shared/cities.ts'
@@ -244,7 +244,7 @@ function mountWorld() {
   const view = new GameView(viewCanvas, world.width, world.height)
   live.view = view
   view.mountTerrain(world)
-  view.setMinimapCommand((tile, mods) => commandAt(tile, replica, player, view, mods))
+  view.setMinimapCommand((tile, mods) => orderAt(tile, replica, player, view, mods))
   view.setMinimapHover((tile) => {
     if (player.raisingCity()) player.setAim(tile)
   })

@@ -154,33 +154,38 @@ export class Replica {
 
   isOpen(tile: TileCoord, ignore: number | readonly number[]): boolean {
     const world = this.world
-    if (!world) return false
-    if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    const index = tile.y * world.width + tile.x
-    if (world.known[index] === 0) return false
-    const open = isWalkableTerrain(world.terrain[index]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
-    if (!open) return false
-    if (this.buildingBlocks().has(`${tile.x},${tile.y}`)) return false
+    if (!world || !this.inBounds(tile) || world.known[tile.y * world.width + tile.x] === 0) return false
+    if (!this.groundAt(tile)) return false
     const skip = typeof ignore === 'number' ? [ignore] : ignore
     return !tileOccupied(this.units, tile, skip)
   }
 
   canCommand(tile: TileCoord, selected: readonly UnitSnapshot[]): boolean {
     const world = this.world
-    if (!world) return false
-    if (tile.x < 0 || tile.y < 0 || tile.x >= world.width || tile.y >= world.height) return false
-    const index = tile.y * world.width + tile.x
-    if (world.known[index] === 0) return false
+    if (!world || !this.inBounds(tile)) return false
     const movers = selected.filter((unit) => (UNIT_TYPES[unit.typeId]?.topSpeed ?? 0) > 0)
     if (movers.length === 0) return false
+    const index = tile.y * world.width + tile.x
+    if (world.known[index] === 0) return true
     const domains = new Set(movers.map((unit) => domainOf(UNIT_TYPES[unit.typeId])))
     if (domains.size === 1 && domains.has(MoveDomain.Air)) return true
     if (domains.size === 1 && domains.has(MoveDomain.Water)) {
       const terrain = world.terrain[index]
-      if (terrain !== Terrain.Water && terrain !== Terrain.Lake) return false
-      return !tileOccupied(this.units, tile, movers.map((unit) => unit.id))
+      return terrain === Terrain.Water || terrain === Terrain.Lake
     }
-    return this.isOpen(tile, movers.map((unit) => unit.id))
+    return this.groundAt(tile)
+  }
+
+  private inBounds(tile: TileCoord): boolean {
+    const world = this.world
+    return world !== null && tile.x >= 0 && tile.y >= 0 && tile.x < world.width && tile.y < world.height
+  }
+
+  private groundAt(tile: TileCoord): boolean {
+    const world = this.world
+    if (!world) return false
+    const open = isWalkableTerrain(world.terrain[tile.y * world.width + tile.x]) || this.clearedTiles.has(`${tile.x},${tile.y}`)
+    return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
   homePad(unit: UnitSnapshot, selected: readonly UnitSnapshot[]): boolean {
