@@ -217,7 +217,7 @@ message ServerFrame {
 }
 
 message OrderMoveMsg {
-  uint32 unit_id = 1;
+  repeated uint32 unit_ids = 1;
   int32 x = 2;
   int32 y = 3;
 }
@@ -227,12 +227,12 @@ message SpawnMsg {
 }
 
 message OrderAttackMsg {
-  uint32 unit_id = 1;
+  repeated uint32 unit_ids = 1;
   uint32 target_id = 2;
 }
 
 message OrderAttackGroundMsg {
-  uint32 unit_id = 1;
+  repeated uint32 unit_ids = 1;
   int32 x = 2;
   int32 y = 3;
 }

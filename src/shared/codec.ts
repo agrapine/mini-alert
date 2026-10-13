@@ -158,14 +158,14 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
   }
 }
 
-function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitId: number; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitId: number; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitId: number; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } {
+function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } {
   switch (message.kind) {
     case ClientMessageKind.OrderMove:
-      return { case: 'orderMove', value: { unitId: message.unitId, x: message.tile.x, y: message.tile.y } }
+      return { case: 'orderMove', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.Spawn:
       return { case: 'spawn', value: { typeId: message.typeId } }
     case ClientMessageKind.OrderAttack:
-      return { case: 'orderAttack', value: { unitId: message.unitId, targetId: message.targetId } }
+      return { case: 'orderAttack', value: { unitIds: message.unitIds, targetId: message.targetId } }
     case ClientMessageKind.PlaceBuilding:
       return { case: 'placeBuilding', value: { typeId: message.typeId, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.CancelSpawn:
@@ -177,7 +177,7 @@ function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { uni
     case ClientMessageKind.SetRally:
       return { case: 'setRally', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.OrderAttackGround:
-      return { case: 'orderAttackGround', value: { unitId: message.unitId, x: message.tile.x, y: message.tile.y } }
+      return { case: 'orderAttackGround', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.PlaceCity:
       return { case: 'placeCity', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.RequestSnapshot:
@@ -188,16 +188,16 @@ function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { uni
 function decodeClient(command: { body: { case: string | undefined; value?: unknown } }): ClientMessage | null {
   const body = command.body
   if (body.case === 'orderMove') {
-    const value = body.value as { unitId: number; x: number; y: number }
-    return { kind: ClientMessageKind.OrderMove, unitId: value.unitId, tile: { x: value.x, y: value.y } }
+    const value = body.value as { unitIds: number[]; x: number; y: number }
+    return { kind: ClientMessageKind.OrderMove, unitIds: [...value.unitIds], tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'spawn') {
     const value = body.value as { typeId: number }
     return { kind: ClientMessageKind.Spawn, typeId: value.typeId as UnitTypeId }
   }
   if (body.case === 'orderAttack') {
-    const value = body.value as { unitId: number; targetId: number }
-    return { kind: ClientMessageKind.OrderAttack, unitId: value.unitId, targetId: value.targetId }
+    const value = body.value as { unitIds: number[]; targetId: number }
+    return { kind: ClientMessageKind.OrderAttack, unitIds: [...value.unitIds], targetId: value.targetId }
   }
   if (body.case === 'placeBuilding') {
     const value = body.value as { typeId: number; x: number; y: number }
@@ -220,8 +220,8 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
     return { kind: ClientMessageKind.SetRally, tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'orderAttackGround') {
-    const value = body.value as { unitId: number; x: number; y: number }
-    return { kind: ClientMessageKind.OrderAttackGround, unitId: value.unitId, tile: { x: value.x, y: value.y } }
+    const value = body.value as { unitIds: number[]; x: number; y: number }
+    return { kind: ClientMessageKind.OrderAttackGround, unitIds: [...value.unitIds], tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'placeCity') {
     const value = body.value as { x: number; y: number }

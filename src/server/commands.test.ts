@@ -44,17 +44,17 @@ describe('player commands', () => {
     expect(enemy).toBeDefined()
     if (!tank || !enemy) return
 
-    humanPort.send({ kind: ClientMessageKind.OrderMove, unitId: tank.id, tile: { x: 6, y: 12 } })
+    humanPort.send({ kind: ClientMessageKind.OrderMove, unitIds: [tank.id], tile: { x: 6, y: 12 } })
     expect(tank.path.length).toBeGreaterThan(0)
     expect(tank.path.at(-1)).toEqual({ x: 6, y: 12 })
 
-    humanPort.send({ kind: ClientMessageKind.OrderMove, unitId: enemy.id, tile: { x: 14, y: 8 } })
+    humanPort.send({ kind: ClientMessageKind.OrderMove, unitIds: [enemy.id], tile: { x: 14, y: 8 } })
     expect(enemy.path).toEqual([])
 
-    aiPort.send({ kind: ClientMessageKind.OrderMove, unitId: tank.id, tile: { x: 4, y: 12 } })
+    aiPort.send({ kind: ClientMessageKind.OrderMove, unitIds: [tank.id], tile: { x: 4, y: 12 } })
     expect(tank.path.at(-1)).toEqual({ x: 6, y: 12 })
 
-    aiPort.send({ kind: ClientMessageKind.OrderMove, unitId: enemy.id, tile: { x: 14, y: 8 } })
+    aiPort.send({ kind: ClientMessageKind.OrderMove, unitIds: [enemy.id], tile: { x: 14, y: 8 } })
     expect(enemy.path.length).toBeGreaterThan(0)
     expect(enemy.path.at(-1)).toEqual({ x: 14, y: 8 })
   })

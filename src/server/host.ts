@@ -162,11 +162,11 @@ export class ServerHost {
     if (!session.playing) return
     const playerId = session.playerId
     if (message.kind === ClientMessageKind.OrderMove) {
-      this.game.orderMove(playerId, message.unitId, message.tile)
+      this.game.orderMove(playerId, message.unitIds, message.tile)
     } else if (message.kind === ClientMessageKind.OrderAttack) {
-      this.game.orderAttack(playerId, message.unitId, message.targetId)
+      this.game.orderAttack(playerId, message.unitIds, message.targetId)
     } else if (message.kind === ClientMessageKind.OrderAttackGround) {
-      this.game.orderAttackGround(playerId, message.unitId, message.tile)
+      this.game.orderAttackGround(playerId, message.unitIds, message.tile)
     } else if (message.kind === ClientMessageKind.Spawn) {
       this.game.trySpawn(playerId, message.typeId)
     } else if (message.kind === ClientMessageKind.CancelSpawn) {

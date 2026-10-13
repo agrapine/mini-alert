@@ -123,36 +123,23 @@ export class Commander {
   }
 
   orderMove(tile: TileCoord) {
-    if (this.spectating) return
-    for (const unit of this.selected()) {
-      this.port.send({
-        kind: ClientMessageKind.OrderMove,
-        unitId: unit.id,
-        tile,
-      })
-    }
+    const unitIds = this.orderable()
+    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile })
   }
 
   orderAttack(targetId: number) {
-    if (this.spectating) return
-    for (const unit of this.selected()) {
-      this.port.send({
-        kind: ClientMessageKind.OrderAttack,
-        unitId: unit.id,
-        targetId,
-      })
-    }
+    const unitIds = this.orderable()
+    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId })
   }
 
   orderAttackGround(tile: TileCoord) {
-    if (this.spectating) return
-    for (const unit of this.selected()) {
-      this.port.send({
-        kind: ClientMessageKind.OrderAttackGround,
-        unitId: unit.id,
-        tile,
-      })
-    }
+    const unitIds = this.orderable()
+    if (unitIds.length > 0) this.port.send({ kind: ClientMessageKind.OrderAttackGround, unitIds, tile })
+  }
+
+  private orderable(): number[] {
+    if (this.spectating) return []
+    return this.selected().map((unit) => unit.id)
   }
 
   spawn(typeId: UnitTypeId) {

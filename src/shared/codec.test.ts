@@ -57,8 +57,8 @@ describe('protobuf frames', () => {
     expect(back?.events[2]).toMatchObject({ kind: ServerEventKind.MapPatch, map: { cells: [{ x: 1, y: 2, terrain: Terrain.Land, shift: 0x88 }] } })
     expect(back?.events[5]).toMatchObject({ kind: ServerEventKind.Credits, credits: expect.closeTo(9989.583333333334) })
 
-    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitId: 4, tile: { x: 6, y: 1 } }))
-    expect(order).toEqual({ kind: ClientMessageKind.OrderMove, unitId: 4, tile: { x: 6, y: 1 } })
+    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }))
+    expect(order).toEqual({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } })
     expect(decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.RequestSnapshot }))).toEqual({
       kind: ClientMessageKind.RequestSnapshot,
     })

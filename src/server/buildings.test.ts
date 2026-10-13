@@ -428,7 +428,7 @@ describe('buildings', () => {
     expect(turret.tile).toEqual({ x: 4, y: 4 })
     expect(turret.pos).toEqual({ x: 4.5, z: 4.5 })
     expect(foe.health).toBeLessThan(health)
-    expect(game.orderMove(human.id, turret.id, { x: 8, y: 8 })).toBe(false)
+    expect(game.orderMove(human.id, [turret.id], { x: 8, y: 8 })).toBe(false)
     expect(turret.path).toEqual([])
   })
 })
