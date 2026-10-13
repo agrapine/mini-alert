@@ -27,6 +27,7 @@ import type { Player } from './player.ts'
 
 const PROGRESS_STEPS = 40
 const LEDGER_TICKS = 6
+const SNAPSHOT_COOLDOWN_MS = 1000
 const DRIFT_TILES = 0.25
 const DRIFT_TURN = 0.35
 const DRIFT_ALTITUDE = 0.25
@@ -73,6 +74,7 @@ type Memory = {
   rally: string | null
   primary: number | null
   lastSnapshotTick: number
+  lastSnapshotAt: number
   lastSentTick: number
   ledgerTick: number
   ackSent: number
@@ -196,7 +198,8 @@ export class ServerHost {
   private apply(session: Session, message: ClientMessage, lag: number) {
     if (message.kind === ClientMessageKind.RequestSnapshot) {
       const memory = this.memory.get(session)
-      if (memory && this.tickNo - memory.lastSnapshotTick < SNAPSHOT_COOLDOWN) return
+      const recent = memory && this.tickNo - memory.lastSnapshotTick < SNAPSHOT_COOLDOWN && performance.now() - memory.lastSnapshotAt < SNAPSHOT_COOLDOWN_MS
+      if (recent) return
       this.pushSync(session)
       return
     }
@@ -240,6 +243,7 @@ export class ServerHost {
     const credits = this.game.player(session.playerId)?.credits ?? 0
     this.remember(memory, units, cities, credits, training, rally, primary)
     memory.lastSnapshotTick = this.tickNo
+    memory.lastSnapshotAt = performance.now()
     memory.ackSent = session.ack
     const frame: ServerFrame = {
       tick: this.tickNo,
@@ -437,6 +441,7 @@ export class ServerHost {
       rally: null,
       primary: null,
       lastSnapshotTick: -SNAPSHOT_COOLDOWN,
+      lastSnapshotAt: -SNAPSHOT_COOLDOWN_MS,
       lastSentTick: this.tickNo,
       ledgerTick: this.tickNo,
       ackSent: 0,

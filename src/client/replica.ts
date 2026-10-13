@@ -25,6 +25,12 @@ const TELEPORT_DISTANCE = 3
 const LEAD_TILES = 3
 const SLACK_SECONDS = 1
 const SLACK_TICKS = 1
+const RATE_WINDOW_MS = 6000
+const RATE_MIN_SPAN_MS = 2000
+const AHEAD_LIMIT = 20
+const NOMINAL_RATE = 1 / SIM_STEP
+const SLOW_RATE = 0.8 * NOMINAL_RATE
+const JITTER_TICKS = 15
 const REPLAY_LIMIT = 15
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
@@ -67,6 +73,8 @@ export class Replica {
   private serverEstimate = 0
   private slack = Infinity
   private slackAge = 0
+  private arrivals: { at: number; tick: number }[] = []
+  private rate = NOMINAL_RATE
   private askedTick = -SNAPSHOT_GAP
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
@@ -95,6 +103,8 @@ export class Replica {
     this.serverEstimate = 0
     this.slack = Infinity
     this.slackAge = 0
+    this.arrivals = []
+    this.rate = NOMINAL_RATE
     this.wantsSnapshot = false
     this.terrainRevision = 0
     this.knownTiles = 0
@@ -112,10 +122,10 @@ export class Replica {
     this.settle(Infinity)
   }
 
-  apply(frame: ServerFrame) {
+  apply(frame: ServerFrame, now = performance.now()) {
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
     this.serverTick = frame.tick
-    this.noteArrival(frame.tick, snapshot)
+    this.noteArrival(frame.tick, snapshot, now)
     if (!snapshot && this.world && !this.closeTo(frame.tick)) return
     this.frameOccupancy = null
     for (const event of frame.events) this.applyEvent(event, frame.tick)
@@ -174,8 +184,8 @@ export class Replica {
     const expected = Math.round(this.serverEstimate)
     if (this.world && !this.closeTo(expected)) return this.dueSnapshot()
     const scale = timeScale(this.localTick, expected)
-    this.serverEstimate += dt / SIM_STEP
-    this.accumulator += dt * scale
+    this.serverEstimate += dt * this.rate
+    this.accumulator += dt * scale * this.rate * SIM_STEP
     let steps = 0
     while (this.accumulator >= SIM_STEP && steps < CATCHUP_STEPS) {
       this.accumulator -= SIM_STEP
@@ -220,14 +230,47 @@ export class Replica {
 
   /**
    * The server clock follows the earliest-arriving frames: a frame ahead of the estimate moves it forward, a late
-   * one only records how late it was. When every frame of a window arrived late, the estimate eases back by at
-   * most a tick, so jitter never pulls the clock back but drift still does.
+   * one records how late it was and keeps the estimate within AHEAD_LIMIT of it. When every frame of a window
+   * arrived late, the estimate eases back by at most a tick, so jitter never pulls the clock back but drift still does.
    */
-  private noteArrival(tick: number, snapshot: boolean) {
+  private noteArrival(tick: number, snapshot: boolean, now: number) {
+    this.measureRate(tick, now)
     const late = this.serverEstimate - tick
     if (snapshot || late < 0) this.serverEstimate = tick
-    else this.slack = Math.min(this.slack, late)
+    else {
+      if (late > AHEAD_LIMIT) this.serverEstimate = tick + AHEAD_LIMIT
+      this.slack = Math.min(this.slack, late)
+    }
     if (snapshot) this.slack = Infinity
+  }
+
+  /**
+   * How fast the server ticks, from how much later its punctual frames arrive over time: the least-late frame of
+   * the older and of the newer half of the window. Lag growth within JITTER_TICKS is jitter; a server that falls
+   * clearly further behind the wall clock sets the pace.
+   */
+  private measureRate(tick: number, now: number) {
+    this.arrivals.push({ at: now, tick })
+    while (this.arrivals.length > 2 && now - this.arrivals[0].at > RATE_WINDOW_MS) this.arrivals.shift()
+    const first = this.arrivals[0]
+    const span = now - first.at
+    if (span < RATE_MIN_SPAN_MS) return
+    const middle = first.at + span / 2
+    let older: { lag: number; at: number } | null = null
+    let newer: { lag: number; at: number } | null = null
+    for (const arrival of this.arrivals) {
+      const lag = (arrival.at / 1000) * NOMINAL_RATE - arrival.tick
+      if (arrival.at < middle) {
+        if (!older || lag < older.lag) older = { lag, at: arrival.at }
+      } else if (!newer || lag < newer.lag) newer = { lag, at: arrival.at }
+    }
+    if (!older || !newer || newer.at === older.at) return
+    if (newer.lag - older.lag <= JITTER_TICKS) {
+      this.rate = NOMINAL_RATE
+      return
+    }
+    const measured = NOMINAL_RATE - ((newer.lag - older.lag) * 1000) / (newer.at - older.at)
+    this.rate = measured < SLOW_RATE ? Math.max(0, measured) : NOMINAL_RATE
   }
 
   private settleSlack(dt: number) {

@@ -21,6 +21,9 @@ export type Scenery = {
   seed: number
 }
 
+/** Settled layouts by city, valid while the city keeps its layout object and its ruin count; ruins only grow. */
+const settledCities = new WeakMap<object, { layout: CityLayout; ruins: number; settled: CityLayout }>()
+
 const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 
 type CityRuntime = {
@@ -738,7 +741,11 @@ export class Game {
   }
 
   private live(city: CityRuntime): CityLayout {
-    return settledCity(city.layout, city.ruins)
+    const cached = settledCities.get(city)
+    if (cached && cached.layout === city.layout && cached.ruins === city.ruins.length) return cached.settled
+    const settled = settledCity(city.layout, city.ruins)
+    settledCities.set(city, { layout: city.layout, ruins: city.ruins.length, settled })
+    return settled
   }
 
   private buildingTargets() {

@@ -103,9 +103,10 @@ describe('replica drawing', () => {
       frames.push({ tick, at })
     }
     const paces: number[] = []
+    const start = performance.now()
     for (let half = 22; half < 260; half++) {
       const now = half / 2
-      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, ack: 0, events: [] })
+      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, ack: 0, events: [] }, start + (now - 11) * SIM_STEP * 1000)
       const before = replica.localTick
       replica.advance(SIM_STEP / 2)
       paces.push(replica.localTick - before)
@@ -117,6 +118,29 @@ describe('replica drawing', () => {
       worst = Math.max(worst, Math.abs(steps - 6))
     }
     expect(worst).toBeLessThanOrEqual(1)
+  })
+
+  it('keeps a steady pace when sparse frames arrive with uneven delays', () => {
+    const replica = joined(scout(1.5, []))
+    const delays = [0, 15, 0, 3, 15, 0]
+    const frames: { tick: number; at: number }[] = []
+    for (let tick = 40, at = 0; tick < 1500; tick += 60) {
+      at = Math.max(at, tick + 2 + delays[frames.length % delays.length])
+      frames.push({ tick, at })
+    }
+    const start = performance.now()
+    const paces: number[] = []
+    let second = replica.localTick
+    for (let half = 22; half < 3000; half++) {
+      const now = half / 2
+      while (frames.length > 0 && frames[0].at <= now) replica.apply({ tick: frames.shift()?.tick ?? 0, ack: 0, events: [] }, start + (now - 11) * SIM_STEP * 1000)
+      replica.advance(SIM_STEP / 2)
+      if (half % 60 === 0) {
+        paces.push(replica.localTick - second)
+        second = replica.localTick
+      }
+    }
+    expect(Math.max(...paces.slice(3).map((pace) => Math.abs(pace - 30)))).toBeLessThanOrEqual(2)
   })
 
   it('replays a correction from an older tick up to the local tick', () => {
@@ -177,5 +201,21 @@ describe('replica drawing', () => {
     for (let i = 0; i < 9; i++) replica.advance(SIM_STEP)
     expect(replica.queue()[0].progress).toBeCloseTo(0.2 + (0.1 / 6) * (replica.localTick - 16), 5)
     expect(replica.queue()[0].progress).toBeGreaterThan(0.2)
+  })
+
+  it('keeps pace with a server running at a tenth of real time', () => {
+    const replica = joined(scout(2.5, []))
+    let now = performance.now()
+    let tick = 10
+    for (let frame = 0; frame < 60; frame++) {
+      for (let i = 0; i < 60; i++) {
+        replica.advance(1 / 60)
+        now += 1000 / 60
+      }
+      tick += 3
+      replica.apply({ tick, ack: 0, events: [] }, now)
+    }
+    expect(replica.wantsSnapshot).toBe(false)
+    expect(Math.abs(replica.localTick - tick)).toBeLessThanOrEqual(8)
   })
 })
