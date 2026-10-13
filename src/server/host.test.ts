@@ -183,6 +183,41 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === scout.id)).toBe(true)
   })
 
+  it('answers an attack order with the server state of a unit whose client led it elsewhere', () => {
+    const game = new Game(new World(32, 16))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 6, y: 8 }, Math.PI / 2)
+    const target = game.spawn(enemy, UnitTypeId.MedTank, { x: 17, y: 8 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    const client = new Replica()
+    const deliver = () => {
+      for (const frame of frames.splice(0)) client.apply(frame)
+    }
+    deliver()
+    const goal = { x: 11, y: 8 }
+    client.predictMove([tank.id], goal)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [tank.id], tile: goal }, 1, client.localTick)
+    deliver()
+    for (let i = 0; i < 5; i++) {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      deliver()
+    }
+
+    client.predictAttack([tank.id], { x: target.pos.x, z: target.pos.z }, target.id)
+    play.command({ kind: ClientMessageKind.OrderAttack, unitIds: [tank.id], targetId: target.id }, 2, client.localTick)
+    deliver()
+    const held = client.unit(tank.id)
+    expect(held?.path).toEqual(tank.path)
+    expect(held?.x).toBeCloseTo(tank.pos.x)
+    expect(held?.z).toBeCloseTo(tank.pos.z)
+    expect(held?.attackId).toBe(target.id)
+  })
+
   it('sends nothing while idle and a tick keepalive after five seconds', () => {
     const game = new Game(new World(32, 32))
     const player = game.addPlayer()

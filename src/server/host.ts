@@ -34,6 +34,7 @@ const DRIFT_ALTITUDE = 0.25
 const BACKSTOP_TICKS = 300
 const CATCH_UP_TICKS = 15
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
+const NO_UNITS: ReadonlySet<number> = new Set()
 
 type VisibleCity = CityRecord & { layout: CityLayout }
 
@@ -46,7 +47,7 @@ type Session = {
   /** Remote players get a command's result at once instead of on the next tick. */
   echo: boolean
   ack: number
-  /** What a remote player's client holds: fed every frame sent and stepped like the client, so units are corrected only when they drift from it. */
+  /** What a remote player's client holds apart from its own order guesses: fed every frame sent and stepped like the client, so units are corrected when they drift from it or are ordered. */
   shadow: Replica | null
   send(message: ServerFrame): void
 }
@@ -191,7 +192,8 @@ export class ServerHost {
 
   private onCommand(session: Session, message: ClientMessage, tick?: number) {
     this.apply(session, message, tick === undefined ? 0 : Math.max(0, Math.min(CATCH_UP_TICKS, this.tickNo - tick)))
-    if (session.echo) this.pushTick(session, this.game.unitSnapshots(), [], [], [])
+    if (!session.echo) return
+    this.pushTick(session, this.game.unitSnapshots(), [], [], [], session.playing ? orderedUnits(message) : NO_UNITS)
   }
 
   /** `lag` is how many ticks the sender's own simulation ran past the moment it issued the command. */
@@ -274,6 +276,7 @@ export class ServerHost {
     shots: readonly ShotEvent[],
     hits: readonly ShotHit[],
     yields: readonly MapPoint[],
+    ordered = NO_UNITS,
   ) {
     const memory = this.memory.get(session)
     if (!memory) return
@@ -302,7 +305,8 @@ export class ServerHost {
         memory.route.set(unit.id, this.routeOf(unit))
         memory.motionTick.set(unit.id, this.tickNo)
       }
-      if (freshUnit || (mobile && routeChanged) || (held && drifted(held.get(unit.id), unit))) {
+      const answered = ordered.has(unit.id) && unit.ownerId === session.playerId
+      if (freshUnit || answered || (mobile && routeChanged) || (held && drifted(held.get(unit.id), unit))) {
         events.push({ kind: ServerEventKind.UnitMotion, unit })
         commitMotion()
       } else if (due && (held ? unit.path.length > 0 || unit.speed !== 0 : mobile)) {
@@ -678,6 +682,14 @@ function discOffsets(radius: number): TileCoord[] {
     for (let x = -reach; x <= reach; x++) if (x * x + y * y <= radius * radius) offsets.push({ x, y })
   }
   return offsets
+}
+
+function orderedUnits(message: ClientMessage): ReadonlySet<number> {
+  const order =
+    message.kind === ClientMessageKind.OrderMove ||
+    message.kind === ClientMessageKind.OrderAttack ||
+    message.kind === ClientMessageKind.OrderAttackGround
+  return order ? new Set(message.unitIds) : NO_UNITS
 }
 
 function trainingKinds(training: readonly TrainJob[]): string {
