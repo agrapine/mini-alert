@@ -18,13 +18,13 @@ import {
 import type { CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
-import { friendsOf, growExplored, stampSight } from '../shared/vision.ts'
+import { EXPLORE_MARGIN, friendsOf } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
 
-const UNSET = 255
 const PROGRESS_STEPS = 40
+const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 
 type VisibleCity = CityRecord & { layout: CityLayout }
 
@@ -37,8 +37,12 @@ type Session = {
 }
 
 type Memory = {
+  owner: number
   explored: Uint8Array
-  visible: Uint8Array
+  /** Holds `sight` for tiles in view this tick and `sight - 1` for tiles in view last tick. */
+  visible: Uint32Array
+  sight: number
+  felledSeen: number
   seen: Set<number>
   route: Map<number, number>
   motionTick: Map<number, number>
@@ -50,7 +54,6 @@ type Memory = {
   training: string | null
   rally: string | null
   primary: number | null
-  terrainSent: Uint8Array
   lastSnapshotTick: number
   lastSentTick: number
 }
@@ -345,10 +348,12 @@ export class ServerHost {
 
   private blank(playerId: number): Memory {
     const tiles = this.game.world.width * this.game.world.height
-    void playerId
     return {
+      owner: playerId,
       explored: new Uint8Array(tiles),
-      visible: new Uint8Array(tiles),
+      visible: new Uint32Array(tiles),
+      sight: 1,
+      felledSeen: 0,
       seen: new Set(),
       route: new Map(),
       motionTick: new Map(),
@@ -360,7 +365,6 @@ export class ServerHost {
       training: null,
       rally: null,
       primary: null,
-      terrainSent: new Uint8Array(tiles).fill(UNSET),
       lastSnapshotTick: -SNAPSHOT_COOLDOWN,
       lastSentTick: this.tickNo,
     }
@@ -368,45 +372,50 @@ export class ServerHost {
 
   private reveal(memory: Memory, units: readonly UnitSnapshot[]): TileCoord[] {
     const { width, height } = this.game.world
-    const before = memory.explored.slice()
-    const playerId = this.ownerOf(memory)
-    const friends = friendsOf(units, playerId, this.game.citySights())
-    const revealed = new Uint8Array(memory.explored.length)
-    stampSight(width, height, friends, revealed, memory.visible)
-    for (const unit of units) {
-      if (unit.ownerId !== playerId || unit.health <= 0) continue
-      const span = spanOf(UNIT_TYPES[unit.typeId])
-      for (let dy = 0; dy < span.y; dy++) {
-        for (let dx = 0; dx < span.x; dx++) {
-          const x = unit.tileX + dx
-          const y = unit.tileY + dy
-          if (x < 0 || y < 0 || x >= width || y >= height) continue
-          const index = y * width + x
-          revealed[index] = 1
-          memory.visible[index] = 1
+    const fresh: TileCoord[] = []
+    const sight = ++memory.sight
+    const see = (x: number, y: number) => {
+      const index = y * width + x
+      const before = memory.visible[index]
+      memory.visible[index] = sight
+      if (before === sight || before === sight - 1) return
+      for (const offset of MARGIN_OFFSETS) {
+        const nx = x + offset.x
+        const ny = y + offset.y
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const near = ny * width + nx
+        if (memory.explored[near] === 1) continue
+        memory.explored[near] = 1
+        fresh.push({ x: nx, y: ny })
+      }
+    }
+    for (const friend of friendsOf(units, memory.owner, this.game.citySights())) {
+      const reach = Math.ceil(friend.sight)
+      const originX = Math.floor(friend.x)
+      const originY = Math.floor(friend.z)
+      const reachSq = friend.sight * friend.sight
+      for (let y = Math.max(0, originY - reach); y <= Math.min(height - 1, originY + reach); y++) {
+        for (let x = Math.max(0, originX - reach); x <= Math.min(width - 1, originX + reach); x++) {
+          const cx = x + 0.5 - friend.x
+          const cz = y + 0.5 - friend.z
+          if (cx * cx + cz * cz <= reachSq) see(x, y)
         }
       }
     }
-    growExplored(revealed, width, height)
-    for (let i = 0; i < revealed.length; i++) if (revealed[i] === 1) memory.explored[i] = 1
-    const fresh: TileCoord[] = []
-    for (let i = 0; i < memory.explored.length; i++) {
-      if (memory.explored[i] === 1 && before[i] === 0) fresh.push({ x: i % width, y: Math.floor(i / width) })
+    for (const unit of units) {
+      if (unit.ownerId !== memory.owner || unit.health <= 0) continue
+      const span = spanOf(UNIT_TYPES[unit.typeId])
+      for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
+        for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) see(x, y)
+      }
     }
     return fresh
   }
 
-  private ownerOf(memory: Memory): number {
-    for (const [session, known] of this.memory) {
-      if (known === memory) return session.playerId
-    }
-    return 0
-  }
-
   private knows(memory: Memory, unit: UnitSnapshot, width: number): boolean {
-    if (unit.ownerId === this.ownerOf(memory)) return true
+    if (unit.ownerId === memory.owner) return true
     const index = unit.tileY * width + unit.tileX
-    return index >= 0 && index < memory.visible.length && memory.visible[index] === 1
+    return index >= 0 && index < memory.visible.length && memory.visible[index] === memory.sight
   }
 
   private pointVisible(memory: Memory, x: number, z: number, width: number, height: number): boolean {
@@ -436,7 +445,7 @@ export class ServerHost {
     const tx = Math.floor(x)
     const ty = Math.floor(z)
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return false
-    return memory.visible[ty * width + tx] === 1
+    return memory.visible[ty * width + tx] === memory.sight
   }
 
   private visibleCities(memory: Memory): VisibleCity[] {
@@ -479,14 +488,12 @@ export class ServerHost {
     const cells = []
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const index = y * width + x
-        if (memory.explored[index] !== 1) continue
-        const terrain = this.game.world.terrainAt(x, y)
-        cells.push({ x, y, terrain, shift: this.game.world.shiftAt(x, y) })
-        memory.terrainSent[index] = terrain
+        if (memory.explored[y * width + x] !== 1) continue
+        cells.push({ x, y, terrain: this.game.world.terrainAt(x, y), shift: this.game.world.shiftAt(x, y) })
       }
     }
-    const scenery = this.game.scenery
+    const felled = this.game.felled()
+    memory.felledSeen = felled.length
     return {
       width,
       height,
@@ -494,31 +501,27 @@ export class ServerHost {
       coast: [],
       holes: [],
       roads: [],
-      towns: scenery.towns.filter((point) => this.pointVisible(memory, point.x, point.y, width, height)),
-      cleared: this.game.clearedTiles().filter((tile) => memory.explored[tile.y * width + tile.x] === 1),
+      towns: this.game.scenery.towns.filter((point) => this.pointVisible(memory, point.x, point.y, width, height)),
+      cleared: felled.filter((tile) => memory.explored[tile.y * width + tile.x] === 1),
     }
   }
 
   private changedMap(memory: Memory, fresh: readonly TileCoord[]): MapData | null {
     const { width, height } = this.game.world
-    const wanted = new Set(fresh.map((tile) => `${tile.x},${tile.y}`))
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const index = y * width + x
-        if (memory.explored[index] !== 1) continue
-        const terrain = this.game.world.terrainAt(x, y)
-        if (memory.terrainSent[index] !== terrain) wanted.add(`${x},${y}`)
-      }
+    const wanted = new Set(fresh.map((tile) => tile.y * width + tile.x))
+    const felled = this.game.felled()
+    for (let i = memory.felledSeen; i < felled.length; i++) {
+      const index = felled[i].y * width + felled[i].x
+      if (memory.explored[index] === 1) wanted.add(index)
     }
+    memory.felledSeen = felled.length
     if (wanted.size === 0) return null
     const cells = []
-    for (const key of wanted) {
-      const [x, y] = key.split(',').map(Number)
-      const terrain = this.game.world.terrainAt(x, y)
-      cells.push({ x, y, terrain, shift: this.game.world.shiftAt(x, y) })
-      memory.terrainSent[y * width + x] = terrain
+    for (const index of wanted) {
+      const x = index % width
+      const y = (index - x) / width
+      cells.push({ x, y, terrain: this.game.world.terrainAt(x, y), shift: this.game.world.shiftAt(x, y) })
     }
-    const scenery = this.game.scenery
     return {
       width,
       height,
@@ -526,8 +529,8 @@ export class ServerHost {
       coast: [],
       holes: [],
       roads: [],
-      towns: scenery.towns.filter((point) => wanted.has(`${Math.floor(point.x)},${Math.floor(point.y)}`)),
-      cleared: this.game.clearedTiles().filter((tile) => wanted.has(`${tile.x},${tile.y}`)),
+      towns: this.game.scenery.towns.filter((point) => wanted.has(Math.floor(point.y) * width + Math.floor(point.x))),
+      cleared: felled.filter((tile) => wanted.has(tile.y * width + tile.x)),
     }
   }
 
@@ -573,4 +576,13 @@ function stateKey(state: CityState): string {
 function shapeKey(layout: CityLayout): string {
   const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model}`).join(';')
   return `${layout.tiles.length}:${layout.streets.length}:${buildings}`
+}
+
+function discOffsets(radius: number): TileCoord[] {
+  const offsets: TileCoord[] = []
+  const reach = Math.ceil(radius)
+  for (let y = -reach; y <= reach; y++) {
+    for (let x = -reach; x <= reach; x++) if (x * x + y * y <= radius * radius) offsets.push({ x, y })
+  }
+  return offsets
 }

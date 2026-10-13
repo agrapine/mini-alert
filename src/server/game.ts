@@ -176,6 +176,10 @@ export class Game {
     }))
   }
 
+  felled(): readonly TileCoord[] {
+    return this.fallen
+  }
+
   clearedTiles(): TileCoord[] {
     return this.fallen.map((tile) => ({ x: tile.x, y: tile.y }))
   }

@@ -49,6 +49,23 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
   })
 
+  it('explores terrain two tiles past sight without revealing units there', () => {
+    const game = new Game(new World(64, 64))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    game.spawn(player, UnitTypeId.Scout, { x: 20, y: 20 })
+    const sight = SCOUT.weapon.sight
+    const hidden = game.spawn(enemy, UnitTypeId.Scout, { x: 20, y: 20 + sight + 1 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (message) => frames.push(message)).sync()
+    const snapshot = events(frames).find((event) => event.kind === ServerEventKind.Snapshot)
+    const explored = new Set(snapshot?.map.cells.map((cell) => `${cell.x},${cell.y}`))
+    expect(explored.has(`${20 + sight + 2},20`)).toBe(true)
+    expect(explored.has(`${20 + sight + 3},20`)).toBe(false)
+    expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
+  })
+
   it('answers an order before the next tick', () => {
     const game = new Game(new World(32, 32))
     const player = game.addPlayer()
