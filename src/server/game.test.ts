@@ -78,10 +78,10 @@ describe('skirmish orders', () => {
 describe('movement', () => {
   it('spreads a group move over distinct tiles around the target', () => {
     const { game, player } = battle(16, 9)
-    const tanks = [2, 4, 6].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 1, y }, Math.PI / 2))
+    const tanks = [0, 2, 4, 6, 8].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 1, y }, Math.PI / 2))
     expect(game.orderMove(player.id, tanks.map((tank) => tank.id), { x: 12, y: 4 })).toBe(true)
     const goals = tanks.map((tank) => `${tank.path.at(-1)?.x},${tank.path.at(-1)?.y}`)
-    expect(new Set(goals).size).toBe(3)
+    expect(new Set(goals).size).toBe(5)
 
     ticks(game, 30)
     for (const tank of tanks) expect(Math.hypot(tank.tile.x - 12, tank.tile.y - 4)).toBeLessThan(2)

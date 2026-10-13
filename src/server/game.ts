@@ -19,6 +19,8 @@ export type Scenery = {
   seed: number
 }
 
+const CONVOY_SIZE = 4
+
 const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 
 type CityRuntime = {
@@ -424,9 +426,11 @@ export class Game {
     }
     for (const [domain, crew] of crews) {
       const goals = this.pathfinder.landing(tile, domain, crew)
+      const route = crew.length >= CONVOY_SIZE ? this.pathfinder.convoy(goals, crew, domain) : null
       for (const goal of goals) {
         const unit = takeNearest(crew, goal)
-        if (unit.orderMove(goal, this.pathfinder, this.units)) moved = true
+        const ordered = route ? unit.travel(route(unit, goal)) : unit.orderMove(goal, this.pathfinder, this.units)
+        if (ordered) moved = true
       }
     }
     return moved

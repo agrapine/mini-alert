@@ -3,12 +3,13 @@ import { MoveDomain, spanOf } from '../../shared/unit-types.ts'
 import { flightLine } from '../../shared/motion.ts'
 import type { Unit } from '../units/unit.ts'
 import type { World } from '../world.ts'
-import { Cell, findPath } from '../../shared/astar.ts'
+import { Cell, descend, distanceField, findPath, type PathGrid } from '../../shared/astar.ts'
 
 const EMPTY = 0
 const POCKET = 256
 const LANDING_RADIUS = 24
 const LANDING_OFFSETS = ringOffsets(LANDING_RADIUS)
+const APPROACH = 6
 
 export class PathFinder {
   readonly world: World
@@ -70,12 +71,32 @@ export class PathFinder {
       return flightLine(start, goal)
     }
     if (this.isolated(start, goal, domain)) return null
-    const grid = {
+    return findPath(this.grid(ignoreUnitId, domain), start, goal)
+  }
+
+  /**
+   * Routes for a group sharing one flood from all of its goals: each mover walks down the flood until it is
+   * APPROACH away from the goals, then plans the last stretch to its own goal. Valid until the next call.
+   */
+  convoy(goals: readonly TileCoord[], movers: readonly Unit[], domain: MoveDomain): (unit: Unit, goal: TileCoord) => TileCoord[] | null {
+    const grid = this.grid(EMPTY, domain)
+    const field = distanceField(grid, goals, movers.map((unit) => unit.tile))
+    return (unit, goal) => {
+      const direct = () => this.findPath(unit.tile, goal, unit.id, domain)
+      const trunk = descend(grid, field, unit.tile)
+      const cut = trunk?.findIndex((tile) => field(tile.x, tile.y) <= APPROACH) ?? -1
+      if (!trunk || cut < 0) return direct()
+      const last = this.findPath(trunk[cut], goal, unit.id, domain)
+      return last ? [...trunk.slice(0, cut + 1), ...last] : direct()
+    }
+  }
+
+  private grid(ignoreUnitId: number, domain: MoveDomain): PathGrid {
+    return {
       width: this.width,
       height: this.world.height,
       cell: (x: number, y: number) => this.cell(x, y, ignoreUnitId, domain),
     }
-    return findPath(grid, start, goal)
   }
 
   /** Distinct free tiles nearest the target, one per mover, skipping pockets the movers cannot reach. */

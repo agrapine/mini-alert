@@ -64,9 +64,12 @@ export abstract class Unit {
   orderMove(tile: TileCoord, paths: PathFinder, units: readonly Unit[] = []): boolean {
     if (this.type.topSpeed <= 0) return false
     if (domainOf(this.type) === MoveDomain.Air) return this.orderAir(tile, paths, units)
+    return this.travel(paths.findPath(this.tile, tile, this.id, domainOf(this.type)))
+  }
+
+  travel(path: readonly TileCoord[] | null): boolean {
     this.returning = false
     this.orbit = null
-    const path = paths.findPath(this.tile, tile, this.id, domainOf(this.type))
     if (path === null || path.length === 0) return false
     this.commitPath(path)
     return true
