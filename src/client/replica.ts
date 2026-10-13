@@ -16,6 +16,7 @@ import {
 } from '../shared/protocol.ts'
 import { Terrain, isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
 import { domainOf, Locomotion, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
+import { planMoves, type RouteMap } from '../shared/route.ts'
 
 const CATCHUP_STEPS = 8
 const FAST_FORWARD_LIMIT = 900
@@ -187,6 +188,14 @@ export class Replica {
     return this.dueSnapshot()
   }
 
+  /** Steps straight to `tick` without wall-clock pacing; the server keeps a copy of each client this way. */
+  simulateTo(tick: number) {
+    while (this.localTick < tick) {
+      this.localTick += 1
+      this.stepUnits(SIM_STEP)
+    }
+  }
+
   /** Units posed between the last two sim steps, plus any correction still blending out. */
   drawn(): UnitSnapshot[] {
     const alpha = Math.min(1, this.accumulator / SIM_STEP)
@@ -339,12 +348,70 @@ export class Replica {
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
-  /** Starts ordered units toward `tile` along a short straight lead until the server's route arrives. */
+  /** Plans the move the server will plan for the same order, from what this player knows of the map. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
+    const surface: UnitSnapshot[] = []
     for (const unit of this.ordered(unitIds)) {
       unit.attackId = null
       unit.attackPoint = null
-      this.lead(unit, tile)
+      const type = UNIT_TYPES[unit.typeId]
+      if (type.topSpeed > 0 && domainOf(type) !== MoveDomain.Air) surface.push(unit)
+    }
+    const map = this.routeMap()
+    if (!map || surface.length === 0) return
+    const movers = surface.map((unit) => ({ id: unit.id, tile: { x: unit.tileX, y: unit.tileY }, domain: domainOf(UNIT_TYPES[unit.typeId]) }))
+    const routes = planMoves(map, movers, tile)
+    for (const unit of surface) {
+      const path = routes.get(unit.id)
+      if (!path || path.length === 0) continue
+      unit.path = path
+      unit.goal = { ...path[path.length - 1] }
+    }
+  }
+
+  /** The map as this player knows it: unexplored tiles count as open, city buildings and units as the server stamps them. */
+  private routeMap(): RouteMap | null {
+    const world = this.world
+    if (!world) return null
+    const { width, height } = world
+    const blocked = new Uint8Array(width * height)
+    for (const city of this.settledLayouts()) {
+      if (city) for (const building of city.buildings) blocked[building.y * width + building.x] = 1
+    }
+    const cleared = new Uint8Array(width * height)
+    for (const tile of this.cleared) cleared[tile.y * width + tile.x] = 1
+    const holders = new Int32Array(width * height)
+    const soft = new Uint8Array(width * height)
+    for (const unit of this.units) {
+      const type = UNIT_TYPES[unit.typeId]
+      if (unit.health <= 0 || domainOf(type) === MoveDomain.Air) continue
+      const span = spanOf(type)
+      for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
+        for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) {
+          holders[y * width + x] = unit.id
+          soft[y * width + x] = type.topSpeed > 0 ? 1 : 0
+        }
+      }
+    }
+    return {
+      width,
+      height,
+      terrainOpen(x, y, domain) {
+        if (x < 0 || y < 0 || x >= width || y >= height) return false
+        const index = y * width + x
+        if (blocked[index] === 1) return false
+        if (domain === MoveDomain.Air || world.known[index] === 0) return true
+        const terrain = world.terrain[index]
+        if (domain === MoveDomain.Water) return terrain === Terrain.Water || terrain === Terrain.Lake
+        return isWalkableTerrain(terrain) || cleared[index] === 1
+      },
+      occupant(x, y) {
+        const id = holders[y * width + x]
+        return id === 0 ? null : id
+      },
+      movable(x, y) {
+        return soft[y * width + x] === 1
+      },
     }
   }
 

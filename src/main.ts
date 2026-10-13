@@ -45,7 +45,7 @@ const replica = new Replica()
 const net = new Net()
 const port: ClientPort = {
   send(message) {
-    return net.sendGame(message)
+    return net.sendGame(message, replica.localTick)
   },
   onServer() {},
 }
@@ -201,7 +201,7 @@ net.onGame = (frame) => {
   }
   if (!hadWorld && replica.world) mountWorld()
   if (frame.events.some((event) => event.kind === ServerEventKind.Snapshot)) aimOnce()
-  if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
+  if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot }, replica.localTick)
 }
 net.connect()
 
@@ -551,7 +551,7 @@ const frame = (now: number) => {
   last = now
   const view = live.view
   if (view) {
-    if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
+    if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot }, replica.localTick)
     if (replica.world) view.syncTerrain(replica.world, replica.terrainRevision, replica.knownTiles)
     view.syncCities(replica.settledLayouts(), replica.cityRevision)
     view.update(frameDt)
@@ -582,5 +582,5 @@ window.setInterval(() => {
     net.drop()
     return
   }
-  if (!document.hidden) net.sendGame({ kind: ClientMessageKind.Ping })
+  if (!document.hidden) net.sendGame({ kind: ClientMessageKind.Ping }, replica.localTick)
 }, PING_MS)

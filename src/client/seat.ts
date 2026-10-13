@@ -1,4 +1,5 @@
 const TOKEN = /^[a-f0-9]{32}$/
+const TAB_KEY = 'rts.tab'
 
 export function ensureSeatToken(
   loc: { hash: string } = location,
@@ -14,6 +15,20 @@ export function ensureSeatToken(
 export function holdSeatToken(token: string, loc: { hash: string } = location, write: (token: string) => void = writeSeatToken) {
   if (!TOKEN.test(token) || loc.hash === `#${token}`) return
   write(token)
+}
+
+/** One id per browser tab that survives reloads, so a reloaded tab can take back its seat. */
+export function tabToken(store?: Pick<Storage, 'getItem' | 'setItem'>): string {
+  try {
+    const tabs = store ?? sessionStorage
+    const saved = tabs.getItem(TAB_KEY)
+    if (saved && TOKEN.test(saved)) return saved
+    const next = randomToken()
+    tabs.setItem(TAB_KEY, next)
+    return next
+  } catch {
+    return randomToken()
+  }
 }
 
 export function randomToken(): string {

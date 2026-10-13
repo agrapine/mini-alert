@@ -52,15 +52,15 @@ export function decodeServerFrame(bytes: Uint8Array): ServerFrame | null {
   }
 }
 
-export function encodeClientMessage(message: ClientMessage, seq: number): Uint8Array {
-  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message), seq } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
+export function encodeClientMessage(message: ClientMessage, seq: number, tick: number): Uint8Array {
+  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message), seq, tick } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
 }
 
-export function decodeClientMessage(bytes: Uint8Array): { seq: number; message: ClientMessage } | null {
+export function decodeClientMessage(bytes: Uint8Array): { seq: number; tick: number; message: ClientMessage } | null {
   try {
     const command = fromBinary(ClientCommandSchema, bytes)
     const message = decodeClient(command)
-    return message ? { seq: command.seq, message } : null
+    return message ? { seq: command.seq, tick: command.tick, message } : null
   } catch {
     return null
   }

@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WebSocketServer, type RawData } from 'ws'
+import { WebSocketServer, type RawData, type WebSocket } from 'ws'
 import { decodeClientMessage, encodeServerFrame } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
 import { SIM_STEP } from '../shared/motion.ts'
@@ -14,6 +14,7 @@ import { serveClient } from './static.ts'
 
 const PORT = Number(process.env.PORT) || 8787
 const STEP = SIM_STEP
+const PING_MS = 5000
 const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist')
 
 const lobby = new Lobby()
@@ -34,7 +35,11 @@ const sockets = new WebSocketServer({
   perMessageDeflate: { threshold: 0 },
 })
 
+const answered = new WeakSet<WebSocket>()
+
 sockets.on('connection', (socket, request) => {
+  answered.add(socket)
+  socket.on('pong', () => answered.add(socket))
   const link: LobbySocket = {
     send(message) {
       send(socket, Channel.Lobby, message)
@@ -47,7 +52,7 @@ sockets.on('connection', (socket, request) => {
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
       const command = decodeClientMessage(bytesOf(data))
-      if (command) lobby.onGame(member, command.message, command.seq)
+      if (command) lobby.onGame(member, command.message, command.seq, command.tick)
       return
     }
     const wire = readWire(data)
@@ -58,6 +63,16 @@ sockets.on('connection', (socket, request) => {
 })
 
 runFixedStep(STEP * 1000, () => lobby.tick(STEP))
+setInterval(() => {
+  for (const socket of sockets.clients) {
+    if (!answered.has(socket)) {
+      socket.terminate()
+      continue
+    }
+    answered.delete(socket)
+    socket.ping()
+  }
+}, PING_MS)
 setInterval(() => lobby.onSave(), saveIntervalMs())
 
 let closed = false

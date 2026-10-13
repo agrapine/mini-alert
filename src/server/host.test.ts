@@ -44,9 +44,72 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(false)
 
     frames.length = 0
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 1)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 1, host.tickNo)
     host.tick(SIM_STEP)
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
+  })
+
+  it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
+    const game = new Game(new World(32, 20))
+    const player = game.addPlayer()
+    const tanks = [4, 6, 8, 10, 12, 14].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 3, y }, Math.PI / 2))
+    const host = new ServerHost(game)
+    const inbox: { frame: ServerFrame; due: number }[] = []
+    const delays = [0, 3, 1, 4, 0, 2]
+    let sent = 0
+    const play = host.attach(player.id, true, (frame) => inbox.push({ frame, due: host.tickNo + delays[sent++ % delays.length] }))
+    play.sync()
+    const client = new Replica()
+    client.apply(inbox.shift()?.frame as ServerFrame)
+    const server = new Map<number, Map<number, { x: number; z: number }>>()
+    const ids = tanks.map((tank) => tank.id)
+    let seq = 0
+    let worst = 0
+    for (let tick = 0; tick < 30 * 14; tick++) {
+      if (tick === 10 || tick === 200) {
+        const target = tick === 10 ? { x: 26, y: 9 } : { x: 8, y: 16 }
+        client.predictMove(ids, target)
+        play.command({ kind: ClientMessageKind.OrderMove, unitIds: ids, tile: target }, ++seq, client.localTick)
+      }
+      if (tick >= 60 && tick < 90) tanks[0].speed = 0
+      host.tick(SIM_STEP)
+      server.set(host.tickNo, new Map(game.units.map((unit) => [unit.id, { x: unit.pos.x, z: unit.pos.z }])))
+      while (inbox.length > 0 && inbox[0].due <= host.tickNo) client.apply(inbox.shift()?.frame as ServerFrame)
+      client.advance(SIM_STEP)
+      const truth = server.get(client.localTick)
+      if (!truth) continue
+      for (const unit of client.units) {
+        const real = truth.get(unit.id)
+        if (real) worst = Math.max(worst, Math.hypot(real.x - unit.x, real.z - unit.z))
+      }
+    }
+    expect(worst).toBeLessThan(0.5)
+  })
+
+  it('predicts on the client the routes the server plans for a move order', () => {
+    const wall = []
+    for (let y = 2; y < 12; y++) wall.push({ x: 12, y })
+    const game = new Game(new World(24, 16, wall))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    const tanks = [3, 5, 7, 9, 11].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 4, y }, Math.PI / 2))
+    game.spawn(enemy, UnitTypeId.MedTank, { x: 14, y: 8 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (message) => frames.push(message)).sync()
+    const replica = new Replica()
+    replica.apply(frames[0])
+    const orders: [number[], { x: number; y: number }][] = [
+      [[tanks[0].id], { x: 20, y: 3 }],
+      [tanks.map((tank) => tank.id), { x: 14, y: 8 }],
+    ]
+    for (const [ids, target] of orders) {
+      replica.predictMove(ids, target)
+      game.orderMove(player.id, ids, target)
+      for (const id of ids) {
+        expect(replica.unit(id)?.path).toEqual(game.units.find((unit) => unit.id === id)?.path)
+      }
+    }
   })
 
   it('explores terrain two tiles past sight without revealing units there', () => {
@@ -103,7 +166,7 @@ describe('host snapshots', () => {
     const watch = host.attach(player.id, false, (message) => frames.push(message))
     watch.sync()
     frames.length = 0
-    watch.command({ kind: ClientMessageKind.Ping }, 7)
+    watch.command({ kind: ClientMessageKind.Ping }, 7, host.tickNo)
     expect(frames.map((frame) => frame.ack)).toEqual([7])
   })
 
@@ -116,7 +179,7 @@ describe('host snapshots', () => {
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
     frames.length = 0
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 2)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 2, host.tickNo)
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === scout.id)).toBe(true)
   })
 
@@ -157,7 +220,7 @@ describe('host snapshots', () => {
     const frames: ServerFrame[] = []
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 30, y: 8 } }, 3)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 30, y: 8 } }, 3, host.tickNo)
     for (let i = 0; i < 90; i++) host.tick(SIM_STEP)
     const patches = events(frames).filter((event) => event.kind === ServerEventKind.MapPatch)
     expect(patches.length).toBeGreaterThan(0)
@@ -180,10 +243,10 @@ describe('host snapshots', () => {
     const frames: ServerFrame[] = []
     const play = host.attach(player.id, true, (message) => frames.push(message))
     play.sync()
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 16, y: 4 } }, 4)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 16, y: 4 } }, 4, host.tickNo)
     for (let i = 0; i < 31; i++) host.tick(SIM_STEP)
     frames.length = 0
-    play.command({ kind: ClientMessageKind.RequestSnapshot }, 5)
+    play.command({ kind: ClientMessageKind.RequestSnapshot }, 5, host.tickNo)
     const frame = frames.at(-1)
     expect(frame?.tick).toBe(host.tickNo)
     expect(frame?.events.some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)

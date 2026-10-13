@@ -87,6 +87,19 @@ describe('movement', () => {
     for (const tank of tanks) expect(Math.hypot(tank.tile.x - 12, tank.tile.y - 4)).toBeLessThan(2)
   })
 
+  it('catches a late move order up to where the ordering client already shows the unit', () => {
+    const late = battle(24, 8)
+    const prompt = battle(24, 8)
+    const lagged = late.game.spawn(late.player, UnitTypeId.Scout, { x: 1, y: 3 }, Math.PI / 2)
+    const timely = prompt.game.spawn(prompt.player, UnitTypeId.Scout, { x: 1, y: 3 }, Math.PI / 2)
+    expect(late.game.orderMove(late.player.id, [lagged.id], { x: 18, y: 3 }, 5)).toBe(true)
+    expect(prompt.game.orderMove(prompt.player.id, [timely.id], { x: 18, y: 3 })).toBe(true)
+    for (let i = 0; i < 5; i++) prompt.game.tick(STEP)
+    expect(lagged.pos.x).toBeCloseTo(timely.pos.x, 9)
+    expect(lagged.pos.x).toBeGreaterThan(1.5)
+    expect(lagged.path).toEqual(timely.path)
+  })
+
   it('stops a move into a sealed pocket at the nearest reachable tile', () => {
     const wall = []
     for (let y = 3; y <= 5; y++) for (let x = 11; x <= 13; x++) if (x !== 12 || y !== 4) wall.push({ x, y })

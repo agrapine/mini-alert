@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ensureSeatToken, holdSeatToken } from './seat.ts'
+import { ensureSeatToken, holdSeatToken, tabToken } from './seat.ts'
 
 describe('seat token', () => {
   it('keeps a hash and writes one when the page has none', () => {
@@ -27,5 +27,13 @@ describe('seat token', () => {
     holdSeatToken('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', loc, write)
     expect(written).toEqual(['bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'])
     expect(loc.hash).toBe('#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+  })
+
+  it('keeps one tab id across reloads of the same tab', () => {
+    const saved = new Map<string, string>()
+    const store = { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) }
+    const first = tabToken(store)
+    expect(tabToken(store)).toBe(first)
+    expect(tabToken({ getItem: () => null, setItem() {} })).not.toBe(first)
   })
 })
