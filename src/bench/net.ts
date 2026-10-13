@@ -112,10 +112,10 @@ export type ClientRow = {
   resyncRequests: number
   snapshotsAfterJoin: number
   droppedFrames: number
-  echoMs: Spread
-  ownError: Spread
-  enemyError: Spread
-  lagTicks: number
+  echoMs: Spread | null
+  ownError: Spread | null
+  enemyError: Spread | null
+  lagTicks: number | null
 }
 
 export type ServerRow = { hostMs: number; gameMs: number; aiMs: number; networkMs: number; worstMs: number }
@@ -170,10 +170,11 @@ class Samples {
     this.values[this.length++] = value
   }
 
-  spread(): Spread {
+  spread(): Spread | null {
+    if (this.length === 0) return null
     const sorted = this.values.slice(0, this.length).sort()
-    const at = (q: number) => (sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)])
-    return { p50: round(at(0.5)), p95: round(at(0.95)), p99: round(at(0.99)), max: round(sorted.length === 0 ? 0 : sorted[sorted.length - 1]) }
+    const at = (q: number) => round(sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)])
+    return { p50: at(0.5), p95: at(0.95), p99: at(0.99), max: round(sorted[sorted.length - 1]) }
   }
 }
 
@@ -601,7 +602,7 @@ function clientRow(remote: Remote, seconds: number): ClientRow {
     echoMs: remote.echo.spread(),
     ownError: remote.own.spread(),
     enemyError: remote.enemy.spread(),
-    lagTicks: round(remote.lag / remote.lagSamples),
+    lagTicks: remote.lagSamples === 0 ? null : round(remote.lag / remote.lagSamples),
   }
 }
 
@@ -711,10 +712,10 @@ function tableRow(row: Row, client: number): string {
     c.resyncRequests,
     c.snapshotsAfterJoin,
     c.droppedFrames,
-    `${c.echoMs.p50} / ${c.echoMs.p95} / ${c.echoMs.max}`,
+    c.echoMs ? `${c.echoMs.p50} / ${c.echoMs.p95} / ${c.echoMs.max}` : '–',
     spread(c.ownError),
     spread(c.enemyError),
-    c.lagTicks.toFixed(2),
+    c.lagTicks?.toFixed(2) ?? '–',
     s.hostMs.toFixed(2),
     s.gameMs.toFixed(2),
     s.aiMs.toFixed(2),
@@ -724,8 +725,8 @@ function tableRow(row: Row, client: number): string {
   ].join(' | ')} |`
 }
 
-function spread(value: Spread): string {
-  return `${value.p95.toFixed(3)} / ${value.p99.toFixed(3)} / ${value.max.toFixed(2)}`
+function spread(value: Spread | null): string {
+  return value ? `${value.p95.toFixed(3)} / ${value.p99.toFixed(3)} / ${value.max.toFixed(2)}` : '–'
 }
 
 function numberArg(flag: string, fallback: number): number {
