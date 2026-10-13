@@ -571,6 +571,7 @@ body.match #lobby {
 }
 
 .lobby-head,
+.lobby-you,
 .lobby-actions,
 .size-row,
 .slot-row,

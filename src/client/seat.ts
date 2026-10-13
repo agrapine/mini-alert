@@ -21,6 +21,11 @@ export function seatToken(loc: { hash: string } = location, store?: Store, clear
   return next
 }
 
+/** The address that opens the game as `seat`. The query stays behind, so visit flags such as `?admin=1` do not travel with it. */
+export function seatLink(seat: string, loc: { origin: string; pathname: string } = location): string {
+  return `${loc.origin}${loc.pathname}#${seat}`
+}
+
 function randomToken(): string {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)

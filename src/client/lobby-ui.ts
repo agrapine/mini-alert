@@ -21,6 +21,7 @@ import type { Terrain } from '../shared/tiles.ts'
 
 export type LobbyActions = {
   setName(name: string): void
+  copyLink(): Promise<void>
   createGame(): void
   joinGame(id: number): void
   leave(): void
@@ -88,7 +89,25 @@ export class LobbyView {
     this.nameInput.spellcheck = false
     this.nameInput.ariaLabel = 'Name'
     this.nameInput.addEventListener('change', () => this.actions.setName(this.nameInput.value))
-    head.append(titleRow, this.nameInput)
+    const you = document.createElement('div')
+    you.className = 'lobby-you'
+    const copyLink = document.createElement('button')
+    copyLink.type = 'button'
+    const copyLabel = 'Copy my link'
+    copyLink.textContent = copyLabel
+    copyLink.title = 'Open this link on another device to play as you there. Anyone who opens it plays as you.'
+    const say = (text: string) => {
+      copyLink.textContent = text
+      window.setTimeout(() => (copyLink.textContent = copyLabel), 2000)
+    }
+    copyLink.addEventListener('click', () => {
+      this.actions.copyLink().then(
+        () => say('Link copied'),
+        () => say('Copy failed'),
+      )
+    })
+    you.append(this.nameInput, copyLink)
+    head.append(titleRow, you)
 
     const columns = document.createElement('div')
     columns.className = 'lobby-columns'

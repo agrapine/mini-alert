@@ -13,13 +13,13 @@ export class Net {
   onClose: () => void = () => {}
   /** Smoothed time from sending a command to the frame that acknowledges it, in milliseconds. */
   rtt: number | null = null
+  readonly seat = seatToken()
 
   private socket: WebSocket | null = null
   private retry = 0
   private seq = 0
   private readonly sentAt = new Map<number, number>()
   private heardAt = 0
-  private readonly seat = seatToken()
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'

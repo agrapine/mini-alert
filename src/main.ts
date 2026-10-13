@@ -8,6 +8,7 @@ import { bindMenu } from './client/menu.ts'
 import { Net } from './client/net.ts'
 import { bindInput, orderAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
+import { seatLink } from './client/seat.ts'
 import { GameView } from './client/render/view.ts'
 import { populationOf } from './shared/cities.ts'
 import { baysFree } from './shared/flight.ts'
@@ -92,6 +93,9 @@ const lobby = new LobbyView(lobbyRoot, {
     if (!saved) return
     claimedName = saved
     net.sendLobby({ kind: LobbyClientKind.SetName, name: saved })
+  },
+  async copyLink() {
+    await navigator.clipboard.writeText(seatLink(net.seat))
   },
   createGame() {
     music.lobby()

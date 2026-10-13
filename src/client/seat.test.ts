@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { seatToken } from './seat.ts'
+import { seatLink, seatToken } from './seat.ts'
 
 function browser() {
   const saved = new Map<string, string>()
@@ -23,5 +23,13 @@ describe('seat token', () => {
     expect(seatToken({ hash: `#${linked}` }, store, () => (cleared += 1))).toBe(linked)
     expect(cleared).toBe(1)
     expect(seatToken({ hash: '' }, store)).toBe(linked)
+  })
+
+  it('plays the same seat in another browser that opens its link, without the page query', () => {
+    const seat = seatToken({ hash: '' }, browser())
+    const page = { origin: 'https://mini.test', pathname: '/', search: '?admin=1' }
+    const link = new URL(seatLink(seat, page))
+    expect(link.href).toBe(`https://mini.test/#${seat}`)
+    expect(seatToken(link, browser(), () => {})).toBe(seat)
   })
 })
