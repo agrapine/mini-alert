@@ -300,10 +300,9 @@ describe('host snapshots', () => {
       tileY: unit.tileY,
       path: unit.path.map((tile) => ({ x: tile.x, y: tile.y })),
     }
-    for (let i = 0; i < 2; i++) {
-      stepMotion(shadow, SCOUT, SIM_STEP)
-      replica.advance(SIM_STEP)
-    }
+    const joinedAt = replica.localTick
+    for (let i = 0; i < 2; i++) stepMotion(shadow, SCOUT, SIM_STEP)
+    while (replica.localTick < joinedAt + 2) replica.advance(SIM_STEP)
     expect(shadow.path.length).toBeGreaterThan(0)
     const stepped = replica.unit(scout.id)
     expect(stepped?.x).toBeCloseTo(shadow.x)

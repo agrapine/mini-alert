@@ -3,6 +3,8 @@ import { tileCenter, type TileCoord } from './tiles.ts'
 import { Locomotion, type UnitType } from './unit-types.ts'
 
 const ARRIVE = 0.38
+const RETREAT_TICKS = 10
+const RETREAT_SCALE = 0.95
 const BEHIND = (Math.PI * 2) / 3
 
 export const SIM_STEP = 1 / 30
@@ -58,11 +60,11 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+/** Clock speed that closes the gap to the server: gently within RETREAT_TICKS ahead of it, steeply beyond. */
 export function timeScale(localTick: number, serverTick: number): number {
   const gap = serverTick - localTick
-  if (gap < -2) return Math.max(0, 1 + gap * 0.05)
-  if (gap > 2) return Math.min(2, 1 + gap * 0.05)
-  return 1
+  if (gap < -RETREAT_TICKS) return Math.max(0, RETREAT_SCALE + (gap + RETREAT_TICKS) * 0.05)
+  return Math.min(2, Math.max(RETREAT_SCALE, 1 + gap * 0.05))
 }
 
 export function stepMotion(

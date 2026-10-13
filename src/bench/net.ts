@@ -116,6 +116,7 @@ export type ClientRow = {
   ownError: Spread | null
   enemyError: Spread | null
   lagTicks: number | null
+  ticksPerSec: number | null
 }
 
 export type ServerRow = { hostMs: number; gameMs: number; aiMs: number; networkMs: number; worstMs: number }
@@ -209,6 +210,7 @@ type Remote = {
   enemy: Samples
   lag: number
   lagSamples: number
+  firstTick: number | null
 }
 
 type Tally = { host: number; game: number; ai: number; worst: number; ticks: number; tee: number }
@@ -376,6 +378,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
       enemy: new Samples(),
       lag: 0,
       lagSamples: 0,
+      firstTick: null,
       play: host.attach(player.id, true, (frame) => {
         const bytes = encodeServerFrame(frame)
         tee(tag, frame, bytes)
@@ -386,6 +389,11 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
         remote.framesSent += 1
         for (const event of frame.events) remote.events.set(event.kind, (remote.events.get(event.kind) ?? 0) + 1)
       }),
+    }
+    replica.onCorrection = (jump) => {
+      if (!measuring) return
+      remote.corrections += 1
+      if (jump > VISIBLE_JUMP) remote.visibleCorrections += 1
     }
     remote.play.sync()
     return remote
@@ -416,23 +424,9 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
     const replica = remote.replica
     const snapshot = frame.events.some((event) => event.kind === ServerEventKind.Snapshot)
     if (snapshot && replica.world) remote.snapshots += 1
-    const held = new Map<number, Pose>()
-    for (const event of frame.events) {
-      if (event.kind !== ServerEventKind.UnitMotion) continue
-      const unit = replica.unit(event.unit.id)
-      if (unit) held.set(unit.id, { x: unit.x, z: unit.z })
-    }
     const joined = replica.world !== null
     replica.apply(frame, now)
     if (!snapshot && joined && Math.abs(frame.tick - replica.localTick) > SNAPSHOT_GAP) remote.dropped += 1
-    else if (measuring) {
-      for (const [id, was] of held) {
-        const unit = replica.unit(id)
-        if (!unit) continue
-        remote.corrections += 1
-        if (Math.hypot(unit.x - was.x, unit.z - was.z) > VISIBLE_JUMP) remote.visibleCorrections += 1
-      }
-    }
     for (const [seq, at] of remote.sentAt) {
       if (seq > frame.ack) continue
       if (measuring) remote.echo.push(now - at)
@@ -455,6 +449,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
     if (!measuring || !replica.world) return
     remote.lag += host.tickNo - replica.localTick
     remote.lagSamples += 1
+    remote.firstTick ??= replica.localTick
     const at = replica.localTick - 1 + replica.drawPhase()
     const floor = Math.floor(at)
     const from = history.get(floor)
@@ -603,6 +598,7 @@ function clientRow(remote: Remote, seconds: number): ClientRow {
     ownError: remote.own.spread(),
     enemyError: remote.enemy.spread(),
     lagTicks: remote.lagSamples === 0 ? null : round(remote.lag / remote.lagSamples),
+    ticksPerSec: remote.firstTick === null ? null : round((remote.replica.localTick - remote.firstTick) / seconds),
   }
 }
 
@@ -652,7 +648,7 @@ Options:
 
 const COLUMNS = [
   'case', 'raw B/s', 'deflated B/s', 'frames/s', 'events/s', 'corr/s', 'visible/s', 'resync', 'snap', 'drop',
-  'echo ms p50/p95/max', 'own p95/p99/max', 'enemy p95/p99/max', 'lag', 'host', 'game', 'ai', 'net', 'worst', 'hash',
+  'echo ms p50/p95/max', 'own p95/p99/max', 'enemy p95/p99/max', 'lag', 'ticks/s', 'host', 'game', 'ai', 'net', 'worst', 'hash',
 ]
 
 const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : ''
@@ -716,6 +712,7 @@ function tableRow(row: Row, client: number): string {
     spread(c.ownError),
     spread(c.enemyError),
     c.lagTicks?.toFixed(2) ?? '–',
+    c.ticksPerSec?.toFixed(2) ?? '–',
     s.hostMs.toFixed(2),
     s.gameMs.toFixed(2),
     s.aiMs.toFixed(2),

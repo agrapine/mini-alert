@@ -53,6 +53,50 @@ function joined(...units: UnitSnapshot[]): Replica {
 
 const road = [{ x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 4 }, { x: 6, y: 4 }, { x: 7, y: 4 }, { x: 8, y: 4 }, { x: 9, y: 4 }]
 
+function convoy(): UnitSnapshot[] {
+  return [3, 4, 5].map((row, index) => {
+    const path = Array.from({ length: 12 }, (_, step) => ({ x: 2 + step, y: row }))
+    return { ...scout(1.5, path), id: index + 1, z: row + 0.5, tileY: row }
+  })
+}
+
+/** Every third tick's UnitMotion for the convoy, with routes the clients cannot predict switched at ticks 90 and 150. */
+function convoyFrames(): ServerFrame[] {
+  const server = joined(...convoy())
+  const frames: ServerFrame[] = []
+  for (let tick = 13; tick <= 240; tick += 3) {
+    server.simulateTo(tick)
+    if (tick === 90) server.predictMove([1], { x: 14, y: 1 })
+    if (tick === 150) server.predictMove([2, 3], { x: 3, y: 12 })
+    frames.push({ tick, ack: 0, events: server.units.map((unit) => ({ kind: ServerEventKind.UnitMotion, unit: structuredClone(unit) })) })
+  }
+  return frames
+}
+
+/** Feeds `frames` delayed by `delays` ticks in turn, in order, rendering every half tick; `now` maps tick time to arrival time. */
+function fedLate(frames: ServerFrame[], delays: number[], now: (time: number, index: number) => number, onRender?: (replica: Replica) => void): Replica {
+  const replica = joined(...convoy())
+  let at = 0
+  const queue = frames.map((frame, index) => ({ frame, at: (at = Math.max(at, frame.tick + delays[index % delays.length])) }))
+  let index = 0
+  for (let half = 21; half < 2 * (at + 30); half++) {
+    while (queue.length > 0 && queue[0].at <= half / 2) replica.apply(queue.shift()?.frame as ServerFrame, now(half / 2, index++))
+    replica.advance(SIM_STEP / 2)
+    onRender?.(replica)
+  }
+  return replica
+}
+
+function fedOnTime(frames: ServerFrame[], tick: number): Replica {
+  const replica = joined(...convoy())
+  for (const frame of frames) {
+    replica.simulateTo(frame.tick)
+    replica.apply(frame)
+  }
+  replica.simulateTo(tick)
+  return replica
+}
+
 describe('replica drawing', () => {
   it('poses a moving unit between its last two sim steps', () => {
     const replica = joined(scout(2.5, road))
@@ -145,10 +189,39 @@ describe('replica drawing', () => {
 
   it('replays a correction from an older tick up to the local tick', () => {
     const replica = joined(scout(2.5, road))
-    for (let i = 0; i < 10; i++) replica.advance(SIM_STEP)
-    expect(replica.localTick).toBe(20)
+    while (replica.localTick < 20) replica.advance(SIM_STEP)
     replica.apply({ tick: 15, ack: 0, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(3.5, road.slice(1)) }] })
     expect(replica.units[0].x).toBeGreaterThan(3.5 + 4 * SIM_STEP * 3 * 0.9)
+  })
+
+  it('holds a frame stamped ahead of the local tick until the clock reaches that tick', () => {
+    const replica = joined(scout(2.5, road))
+    replica.apply({ tick: 12, ack: 0, events: [{ kind: ServerEventKind.UnitMotion, unit: scout(4.5, road.slice(2)) }] })
+    expect(replica.units[0].x).toBe(2.5)
+    while (replica.localTick < 12) replica.advance(SIM_STEP)
+    expect(replica.localTick).toBe(12)
+    expect(replica.units[0].x).toBe(4.5)
+  })
+
+  it('ends a convoy fed frames up to four ticks late where frames fed on time leave it', () => {
+    const frames = convoyFrames()
+    const start = performance.now()
+    const late = fedLate(frames, [0, 4, 1, 3, 2, 4, 0], (time) => start + (time - 10) * SIM_STEP * 1000)
+    expect(late.localTick).toBeGreaterThan(240)
+    expect(late.units).toEqual(fedOnTime(frames, late.localTick).units)
+  })
+
+  it('holds frames by ticks alone, whatever the arrival clock reads', () => {
+    const frames = convoyFrames()
+    const start = performance.now()
+    const delays = [0, 4, 1, 3, 2, 4, 0]
+    const seen: { tick: number; units: UnitSnapshot[] }[] = []
+    const first = fedLate(frames, delays, (time) => start + (time - 10) * SIM_STEP * 1000, (replica) => seen.push({ tick: replica.localTick, units: structuredClone(replica.units) }))
+    let render = 0
+    const second = fedLate(frames, delays, (time, index) => start + (time - 10) * SIM_STEP * 1050 + (index % 3) * 9, (replica) => {
+      expect({ tick: replica.localTick, units: replica.units }).toEqual(seen[render++])
+    })
+    expect(second.units).toEqual(first.units)
   })
 
   it('counts a city update apart from terrain changes', () => {
@@ -183,9 +256,9 @@ describe('replica drawing', () => {
   it('shows an expected unit in the queue until its command is acknowledged', () => {
     const replica = joined(scout(2.5, []))
     replica.expectTraining(5, UnitTypeId.MedTank)
-    replica.apply({ tick: 11, ack: 4, events: [] })
+    replica.apply({ tick: 10, ack: 4, events: [] })
     expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, progress: 0 }])
-    replica.apply({ tick: 12, ack: 5, events: [] })
+    replica.apply({ tick: 10, ack: 5, events: [] })
     expect(replica.queue()).toEqual([])
   })
 
