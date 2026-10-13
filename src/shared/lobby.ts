@@ -49,6 +49,7 @@ export const enum LobbyServerKind {
   Waiting = 1,
   GameLobby = 2,
   Preview = 3,
+  Replaced = 4,
 }
 
 export const enum SlotKind {
@@ -195,7 +196,6 @@ export type LobbyClientMessage =
 export type WaitingRoom = {
   kind: LobbyServerKind.Waiting
   you: Person
-  token: string
   people: Person[]
   games: GameCard[]
   chat: ChatLine[]
@@ -204,7 +204,6 @@ export type WaitingRoom = {
 export type GameLobbyState = {
   kind: LobbyServerKind.GameLobby
   you: Person
-  token: string
   gameId: number
   hostId: number
   status: RoomStatus
@@ -233,7 +232,12 @@ export type StartPoint = {
   y: number
 }
 
-export type LobbyServerMessage = WaitingRoom | GameLobbyState | MapPreview
+/** A newer connection took this seat; the receiving tab stays offline until asked to play again. */
+export type Replaced = {
+  kind: LobbyServerKind.Replaced
+}
+
+export type LobbyServerMessage = WaitingRoom | GameLobbyState | MapPreview | Replaced
 
 export type WireToServer = {
   channel: Channel

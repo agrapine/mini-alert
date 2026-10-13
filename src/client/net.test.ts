@@ -35,7 +35,7 @@ afterEach(() => {
 describe('net', () => {
   it('reconnects at once when a silent socket is dropped, ignoring its late close', async () => {
     vi.stubGlobal('window', {})
-    vi.stubGlobal('location', { protocol: 'http:', host: 'test', hash: `#${'a'.repeat(32)}`, pathname: '/', search: '' })
+    vi.stubGlobal('location', { protocol: 'http:', host: 'test', hash: '', pathname: '/', search: '' })
     vi.stubGlobal('WebSocket', FakeSocket)
     const { Net } = await import('./net.ts')
     const net = new Net()
@@ -53,5 +53,27 @@ describe('net', () => {
     first.emit('close')
     expect(closes).toBe(1)
     expect(net.quietFor()).toBeNull()
+  })
+
+  it('stays offline after pause until asked to connect', async () => {
+    const retries: unknown[] = []
+    vi.stubGlobal('window', { setTimeout: (run: unknown) => retries.push(run) })
+    vi.stubGlobal('location', { protocol: 'http:', host: 'test', hash: '', pathname: '/', search: '' })
+    vi.stubGlobal('WebSocket', FakeSocket)
+    const { Net } = await import('./net.ts')
+    const net = new Net()
+    net.connect()
+    const first = FakeSocket.made[0]
+    first.readyState = FakeSocket.OPEN
+    first.emit('open')
+
+    net.pause()
+    first.emit('close')
+    expect(first.closed).toBe(true)
+    expect(retries).toEqual([])
+    expect(FakeSocket.made).toHaveLength(1)
+
+    net.connect()
+    expect(FakeSocket.made[1]?.url).toBe(first.url)
   })
 })

@@ -36,14 +36,18 @@ import { Game } from './game.ts'
 const CHAT_LIMIT = 40
 const NAME_LIMIT = 16
 const TEXT_LIMIT = 200
+const WAITING_HOLD_SECONDS = 10 * 60
 
 export type LobbySocket = {
   send(message: LobbyServerMessage): void
   sendGame(message: ServerFrame): void
+  close(): void
 }
 
+/** A connection's handle on its member; it stops acting for the member once that connection closes or a newer one takes the seat. */
 export type LobbyMember = {
   readonly id: number
+  readonly socket: LobbySocket
 }
 
 type Slot = {
@@ -57,8 +61,8 @@ type Member = {
   token: string
   name: string
   socket: LobbySocket | null
-  /** The browser tab holding the socket; the same tab may replace a socket the server still thinks is live. */
-  tab: string | null
+  /** Lobby clock reading when the member went offline; null while connected. */
+  leftAt: number | null
   gameId: number | null
   admin: boolean
 }
@@ -104,6 +108,7 @@ export class Lobby {
   private readonly tokens = new Map<string, number>()
   private readonly games = new Map<number, GameRoom>()
   private readonly hallChat: ChatLine[] = []
+  private clock = 0
 
   gameIds(): number[] {
     return [...this.games.keys()]
@@ -144,7 +149,7 @@ export class Lobby {
         token: member.token,
         name: typeof member.name === 'string' && member.name ? member.name : `Player ${member.id}`,
         socket: null,
-        tab: null,
+        leftAt: this.clock,
         gameId: typeof member.gameId === 'number' ? member.gameId : null,
         admin: member.admin === true,
       })
@@ -211,24 +216,22 @@ export class Lobby {
     return { host, factions, seats: new Map(), owners }
   }
 
-  connect(socket: LobbySocket, token?: string | null, tab: string | null = null): LobbyMember {
+  connect(socket: LobbySocket, token?: string | null): LobbyMember {
     const clean = cleanToken(token)
-    if (clean) {
-      const prior = this.memberByToken(clean)
-      if (prior?.socket && tab !== null && prior.tab === tab) this.disconnect(prior, prior.socket)
-      if (prior && !prior.socket) {
-        prior.socket = socket
-        prior.tab = tab
-        this.reenter(prior)
-        return prior
-      }
+    const prior = clean === null ? undefined : this.memberByToken(clean)
+    if (prior) {
+      if (prior.socket) this.replace(prior, prior.socket)
+      prior.socket = socket
+      prior.leftAt = null
+      this.reenter(prior)
+      return { id: prior.id, socket }
     }
     const member: Member = {
       id: this.nextId++,
-      token: clean && !this.tokens.has(clean) ? clean : this.mintToken(),
+      token: clean ?? this.mintToken(),
       name: '',
       socket,
-      tab,
+      leftAt: null,
       gameId: null,
       admin: false,
     }
@@ -236,14 +239,14 @@ export class Lobby {
     this.tokens.set(member.token, member.id)
     this.members.set(member.id, member)
     this.refreshWaiting()
-    return member
+    return { id: member.id, socket }
   }
 
-  disconnect(member: LobbyMember, socket?: LobbySocket) {
-    const client = this.members.get(member.id)
-    if (!client?.socket) return
-    if (socket && client.socket !== socket) return
+  disconnect(member: LobbyMember) {
+    const client = this.live(member)
+    if (!client) return
     client.socket = null
+    client.leftAt = this.clock
     this.detachSeat(client)
     const game = this.gameOf(client)
     if (game) this.refreshGame(game)
@@ -251,7 +254,7 @@ export class Lobby {
   }
 
   onLobby(member: LobbyMember, message: LobbyClientMessage) {
-    const client = this.members.get(member.id)
+    const client = this.live(member)
     if (!client || !message || typeof message.kind !== 'number') return
     if (message.kind === LobbyClientKind.SetName) this.rename(client, message.name)
     else if (message.kind === LobbyClientKind.CreateGame) this.createGame(client)
@@ -271,12 +274,14 @@ export class Lobby {
   }
 
   onGame(member: LobbyMember, message: ClientMessage, seq: number, tick: number) {
-    const client = this.members.get(member.id)
+    const client = this.live(member)
     if (!client?.gameId) return
     this.games.get(client.gameId)?.match?.seats.get(client.id)?.command(message, seq, tick)
   }
 
   tick(dt: number) {
+    this.clock += dt
+    this.dropAway()
     for (const game of this.games.values()) {
       if (!game.match) continue
       if (!this.awake(game)) continue
@@ -628,6 +633,26 @@ export class Lobby {
     match.seats.set(client.id, seat)
   }
 
+  private replace(client: Member, socket: LobbySocket) {
+    this.detachSeat(client)
+    socket.send({ kind: LobbyServerKind.Replaced })
+    socket.close()
+  }
+
+  private dropAway() {
+    let dropped = false
+    for (const game of this.games.values()) {
+      if (game.status !== RoomStatus.Waiting) continue
+      for (const id of game.memberIds) {
+        const member = this.members.get(id)
+        if (!member || member.leftAt === null || this.clock - member.leftAt < WAITING_HOLD_SECONDS) continue
+        this.dropFromGame(member, false)
+        dropped = true
+      }
+    }
+    if (dropped) this.refreshWaiting()
+  }
+
   private detachSeat(client: Member) {
     const game = this.gameOf(client)
     const seat = game?.match?.seats.get(client.id)
@@ -640,6 +665,11 @@ export class Lobby {
       if (this.members.get(id)?.socket) return true
     }
     return false
+  }
+
+  private live(member: LobbyMember): Member | undefined {
+    const client = this.members.get(member.id)
+    return client?.socket === member.socket ? client : undefined
   }
 
   private memberByToken(token: string): Member | undefined {
@@ -817,7 +847,6 @@ export class Lobby {
     return {
       kind: LobbyServerKind.Waiting,
       you: { id: member.id, name: member.name },
-      token: member.token,
       people,
       games,
       chat: this.hallChat.slice(),
@@ -828,7 +857,6 @@ export class Lobby {
     return {
       kind: LobbyServerKind.GameLobby,
       you: { id: member.id, name: member.name },
-      token: member.token,
       gameId: game.id,
       hostId: game.hostId,
       status: game.status,

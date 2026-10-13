@@ -25,6 +25,8 @@
 - Units are corrected only when your view drifts from the server, about ninety percent fewer position updates.
 - Long matches no longer slow down as cities get damaged: the server keeps each city's layout instead of rebuilding it for every unit every tick (about 12x faster in a war-torn match).
 - If the server ever falls behind, the game slows down with it instead of throwing away updates, which left holes in the map and kept asking for full resyncs.
+- One seat per browser: new tabs, bookmarks and home-screen launches play as the same person instead of appearing twice. Opening the game in another tab moves you there, and the old tab offers to play here instead. The address bar no longer carries your seat, so sharing the page address does not hand it over. To play as yourself on another device, use Copy my link in the lobby and open the link there.
+- Anyone disconnected from an unstarted game for ten minutes leaves it, freeing their slot and passing on the host, and a game nobody is left in closes. Started matches keep their seats.
 
 ## 0.4
 

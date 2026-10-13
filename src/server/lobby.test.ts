@@ -15,17 +15,21 @@ import { ClientMessageKind, ServerEventKind, type ServerEvent, type ServerFrame 
 import { Game } from './game.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 
-function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerFrame[] } {
+function fake(): LobbySocket & { lobby: LobbyServerMessage[]; game: ServerFrame[]; closed: boolean } {
   const lobby: LobbyServerMessage[] = []
   const game: ServerFrame[] = []
   return {
     lobby,
     game,
+    closed: false,
     send(message) {
       lobby.push(message)
     },
     sendGame(message) {
       game.push(message)
+    },
+    close() {
+      this.closed = true
     },
   }
 }
@@ -323,8 +327,9 @@ describe('lobby', () => {
     expect(sim.ais).toEqual([])
 
     const again = new Lobby()
+    const soloToken = 'face00face00face00face00face00fa'
     const soloSock = fake()
-    const solo = again.connect(soloSock)
+    const solo = again.connect(soloSock, soloToken)
     again.onLobby(solo, { kind: LobbyClientKind.CreateGame })
     await settled()
     const second = latest<GameLobbyState>(soloSock, LobbyServerKind.GameLobby)
@@ -351,7 +356,7 @@ describe('lobby', () => {
     expect(purse()).toBe(frozen)
     again.disconnect(solo)
     expect(opened(again).games.has(second.gameId)).toBe(true)
-    again.onLobby(solo, { kind: LobbyClientKind.LeaveRoom })
+    again.onLobby(again.connect(fake(), soloToken), { kind: LobbyClientKind.LeaveRoom })
     expect(opened(again).games.has(second.gameId)).toBe(false)
   })
 
@@ -364,7 +369,6 @@ describe('lobby', () => {
     lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
     await settled()
     const created = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
-    expect(created.token).toBe(token)
     lobby.onLobby(host, { kind: LobbyClientKind.TakeSlot, index: 0 })
     lobby.onLobby(host, { kind: LobbyClientKind.SetSlotAi, index: 1 })
     lobby.disconnect(host)
@@ -383,6 +387,7 @@ describe('lobby', () => {
     expect(playing.spectating).toBe(false)
     const seat = playing.seatId
     lobby.disconnect(back)
+    lobby.tick(60 * 60)
 
     const againSock = fake()
     const again = lobby.connect(againSock, token)
@@ -392,18 +397,13 @@ describe('lobby', () => {
     expect(resumed.seatId).toBe(seat)
     expect(gameEvents(againSock).some((event) => event.kind === ServerEventKind.Snapshot)).toBe(true)
     expect(gameEvents(againSock).some((event) => event.kind === ServerEventKind.Welcome && event.playerId === seat)).toBe(true)
-
-    const otherSock = fake()
-    const other = lobby.connect(otherSock, token)
-    expect(other.id).not.toBe(host.id)
-    expect(latest<WaitingRoom>(otherSock, LobbyServerKind.Waiting).token).not.toBe(token)
   })
 
-  it('lets the same tab take its seat back before its old socket closes', async () => {
+  it('gives the seat to the newest connection and tells the older one, which no longer acts', async () => {
     const token = 'abc123abc123abc123abc123abc123ab'
     const lobby = new Lobby()
     const firstSock = fake()
-    const first = lobby.connect(firstSock, token, 'tab-1')
+    const first = lobby.connect(firstSock, token)
     lobby.onLobby(first, { kind: LobbyClientKind.CreateGame })
     await settled()
     lobby.onLobby(first, { kind: LobbyClientKind.TakeSlot, index: 0 })
@@ -412,15 +412,54 @@ describe('lobby', () => {
     const seat = latest<GameLobbyState>(firstSock, LobbyServerKind.GameLobby).seatId
 
     const secondSock = fake()
-    const second = lobby.connect(secondSock, token, 'tab-1')
+    const second = lobby.connect(secondSock, token)
     expect(second.id).toBe(first.id)
+    expect(firstSock.lobby.at(-1)).toEqual({ kind: LobbyServerKind.Replaced })
+    expect(firstSock.closed).toBe(true)
     const resumed = latest<GameLobbyState>(secondSock, LobbyServerKind.GameLobby)
     expect(resumed.seatId).toBe(seat)
     expect(resumed.spectating).toBe(false)
 
-    lobby.disconnect(first, firstSock)
+    lobby.onLobby(first, { kind: LobbyClientKind.LeaveRoom })
+    lobby.disconnect(first)
     secondSock.game.length = 0
     lobby.onGame(second, { kind: ClientMessageKind.Ping }, 9, 0)
     expect(secondSock.game.map((frame) => frame.ack)).toEqual([9])
+  })
+
+  it('frees the place of anyone away from a waiting room for ten minutes and closes the room once empty', async () => {
+    const token = 'abc123abc123abc123abc123abc123ab'
+    const lobby = new Lobby()
+    const hostSock = fake()
+    const guestSock = fake()
+    const hallSock = fake()
+    const host = lobby.connect(hostSock, token)
+    const guest = lobby.connect(guestSock)
+    lobby.connect(hallSock)
+    lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const created = latest<GameLobbyState>(hostSock, LobbyServerKind.GameLobby)
+    lobby.onLobby(guest, { kind: LobbyClientKind.JoinGame, gameId: created.gameId })
+    lobby.onLobby(host, { kind: LobbyClientKind.TakeSlot, index: 0 })
+    lobby.onLobby(guest, { kind: LobbyClientKind.TakeSlot, index: 1 })
+
+    lobby.disconnect(host)
+    lobby.tick(9 * 60)
+    const backSock = fake()
+    const back = lobby.connect(backSock, token)
+    expect(latest<GameLobbyState>(backSock, LobbyServerKind.GameLobby).slots[0]).toMatchObject({ kind: SlotKind.Human, clientId: host.id })
+
+    lobby.disconnect(back)
+    lobby.tick(9 * 60)
+    expect(latest<GameLobbyState>(guestSock, LobbyServerKind.GameLobby).hostId).toBe(host.id)
+    lobby.tick(60)
+    const left = latest<GameLobbyState>(guestSock, LobbyServerKind.GameLobby)
+    expect(left.hostId).toBe(guest.id)
+    expect(left.slots[0].kind).toBe(SlotKind.Open)
+    expect(left.slots[1]).toMatchObject({ kind: SlotKind.Human, clientId: guest.id })
+
+    lobby.disconnect(guest)
+    lobby.tick(10 * 60)
+    expect(latest<WaitingRoom>(hallSock, LobbyServerKind.Waiting).games).toEqual([])
   })
 })

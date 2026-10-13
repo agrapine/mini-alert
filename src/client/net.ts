@@ -1,5 +1,5 @@
 import { logGameIn, logGameOut, logGameUndecodable, logLobbyIn, logLobbyOut } from './debug-net.ts'
-import { ensureSeatToken, tabToken } from './seat.ts'
+import { seatToken } from './seat.ts'
 import { decodeServerFrame, encodeClientMessage } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage, type LobbyServerMessage } from '../shared/lobby.ts'
 import { type ClientMessage, type ServerFrame } from '../shared/protocol.ts'
@@ -13,18 +13,17 @@ export class Net {
   onClose: () => void = () => {}
   /** Smoothed time from sending a command to the frame that acknowledges it, in milliseconds. */
   rtt: number | null = null
+  readonly seat = seatToken()
 
   private socket: WebSocket | null = null
   private retry = 0
   private seq = 0
   private readonly sentAt = new Map<number, number>()
   private heardAt = 0
-  private readonly tab = tabToken()
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-    const seat = encodeURIComponent(ensureSeatToken())
-    const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${seat}&tab=${this.tab}`)
+    const socket = new WebSocket(`${protocol}://${location.host}/ws?seat=${this.seat}`)
     socket.binaryType = 'arraybuffer'
     this.socket = socket
     socket.addEventListener('open', () => {
@@ -95,6 +94,13 @@ export class Net {
     socket.close()
     this.onClose()
     this.connect()
+  }
+
+  /** Closes the socket and stays offline until `connect` is called again. */
+  pause() {
+    const socket = this.socket
+    this.socket = null
+    socket?.close()
   }
 
   sendLobby(message: LobbyClientMessage) {
