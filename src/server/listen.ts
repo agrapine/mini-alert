@@ -6,7 +6,7 @@ import { WebSocketServer, type RawData } from 'ws'
 import { decodeClientMessage, encodeServerFrame } from '../shared/codec.ts'
 import { Channel, type LobbyClientMessage } from '../shared/lobby.ts'
 import { SIM_STEP } from '../shared/motion.ts'
-import type { ClientMessage, ServerFrame } from '../shared/protocol.ts'
+import type { ServerFrame } from '../shared/protocol.ts'
 import { runFixedStep } from './clock.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
@@ -46,14 +46,13 @@ sockets.on('connection', (socket, request) => {
   const member = lobby.connect(link, seatQuery(request.url))
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
-      const message = decodeClientMessage(bytesOf(data))
-      if (message) lobby.onGame(member, message)
+      const command = decodeClientMessage(bytesOf(data))
+      if (command) lobby.onGame(member, command.message, command.seq)
       return
     }
     const wire = readWire(data)
     if (!wire) return
     if (wire.channel === Channel.Lobby) lobby.onLobby(member, wire.message as LobbyClientMessage)
-    else if (wire.channel === Channel.Game) lobby.onGame(member, wire.message as ClientMessage)
   })
   socket.on('close', () => lobby.disconnect(member, link))
 })

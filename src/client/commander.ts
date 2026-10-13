@@ -51,7 +51,8 @@ export class Commander {
     const mobile = UNIT_TYPES[unit.typeId].topSpeed > 0
     if (!mobile && unit.typeId !== UnitTypeId.Factory) return
     if (this.selectedIds.length === 1 && this.selectedIds[0] === id && unit.typeId === UnitTypeId.Factory) {
-      this.port.send({ kind: ClientMessageKind.SetPrimary, unitId: id })
+      const seq = this.port.send({ kind: ClientMessageKind.SetPrimary, unitId: id })
+      if (seq !== null) this.replica.expectPrimary(seq, id)
       return
     }
     this.selectedIds = [id]
@@ -119,20 +120,21 @@ export class Commander {
 
   setRally(tile: TileCoord) {
     if (this.spectating || !this.factorySelected()) return
-    this.port.send({ kind: ClientMessageKind.SetRally, tile })
+    const seq = this.port.send({ kind: ClientMessageKind.SetRally, tile })
+    if (seq !== null) this.replica.expectRally(seq, tile)
   }
 
   orderMove(tile: TileCoord) {
     const unitIds = this.orderable()
     if (unitIds.length === 0) return
-    this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile })
+    if (this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile }) === null) return
     this.replica.predictMove(unitIds, tile)
   }
 
   orderAttack(targetId: number) {
     const unitIds = this.orderable()
     if (unitIds.length === 0) return
-    this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId })
+    if (this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId }) === null) return
     const target = this.replica.unit(targetId)
     if (target) this.replica.predictAttack(unitIds, target, targetId)
   }
@@ -140,7 +142,7 @@ export class Commander {
   orderAttackGround(tile: TileCoord) {
     const unitIds = this.orderable()
     if (unitIds.length === 0) return
-    this.port.send({ kind: ClientMessageKind.OrderAttackGround, unitIds, tile })
+    if (this.port.send({ kind: ClientMessageKind.OrderAttackGround, unitIds, tile }) === null) return
     this.replica.predictAttack(unitIds, { x: tile.x + 0.5, z: tile.y + 0.5 }, null)
   }
 
@@ -151,7 +153,8 @@ export class Commander {
 
   spawn(typeId: UnitTypeId) {
     if (this.spectating) return
-    this.port.send({ kind: ClientMessageKind.Spawn, typeId })
+    const seq = this.port.send({ kind: ClientMessageKind.Spawn, typeId })
+    if (seq !== null) this.replica.expectTraining(seq, typeId)
   }
 
   cancelSpawn(typeId: UnitTypeId) {
@@ -202,13 +205,15 @@ export class Commander {
 
   placeBuilding(tile: TileCoord) {
     if (this.spectating || this.placing === null) return
-    this.port.send({ kind: ClientMessageKind.PlaceBuilding, typeId: this.placing, tile })
+    const seq = this.port.send({ kind: ClientMessageKind.PlaceBuilding, typeId: this.placing, tile })
+    if (seq !== null) this.replica.expectSite(seq, { typeId: this.placing, tile })
     this.placing = null
   }
 
   placeCity(tile: TileCoord) {
     if (this.spectating || !this.raising) return
-    this.port.send({ kind: ClientMessageKind.PlaceCity, tile })
+    const seq = this.port.send({ kind: ClientMessageKind.PlaceCity, tile })
+    if (seq !== null) this.replica.expectSite(seq, { typeId: null, tile })
     this.raising = false
     this.aim = null
   }

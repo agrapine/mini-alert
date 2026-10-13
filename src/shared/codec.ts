@@ -35,6 +35,7 @@ export function encodeServerFrame(frame: ServerFrame): Uint8Array {
   return toBinary(ServerFrameSchema, create(ServerFrameSchema, {
     tick: frame.tick,
     events: frame.events.map(encodeEvent),
+    ack: frame.ack,
   }))
 }
 
@@ -44,19 +45,22 @@ export function decodeServerFrame(bytes: Uint8Array): ServerFrame | null {
     return {
       tick: wire.tick,
       events: wire.events.flatMap(decodeEvent),
+      ack: wire.ack,
     }
   } catch {
     return null
   }
 }
 
-export function encodeClientMessage(message: ClientMessage): Uint8Array {
-  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message) } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
+export function encodeClientMessage(message: ClientMessage, seq: number): Uint8Array {
+  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message), seq } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
 }
 
-export function decodeClientMessage(bytes: Uint8Array): ClientMessage | null {
+export function decodeClientMessage(bytes: Uint8Array): { seq: number; message: ClientMessage } | null {
   try {
-    return decodeClient(fromBinary(ClientCommandSchema, bytes))
+    const command = fromBinary(ClientCommandSchema, bytes)
+    const message = decodeClient(command)
+    return message ? { seq: command.seq, message } : null
   } catch {
     return null
   }
@@ -161,7 +165,7 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
   }
 }
 
-function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } {
+function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } | { case: 'ping'; value: Record<string, never> } {
   switch (message.kind) {
     case ClientMessageKind.OrderMove:
       return { case: 'orderMove', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
@@ -185,6 +189,8 @@ function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { uni
       return { case: 'placeCity', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.RequestSnapshot:
       return { case: 'requestSnapshot', value: {} }
+    case ClientMessageKind.Ping:
+      return { case: 'ping', value: {} }
   }
 }
 
@@ -231,6 +237,7 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
     return { kind: ClientMessageKind.PlaceCity, tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'requestSnapshot') return { kind: ClientMessageKind.RequestSnapshot }
+  if (body.case === 'ping') return { kind: ClientMessageKind.Ping }
   return null
 }
 

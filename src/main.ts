@@ -45,7 +45,7 @@ const replica = new Replica()
 const net = new Net()
 const port: ClientPort = {
   send(message) {
-    net.sendGame(message)
+    return net.sendGame(message)
   },
   onServer() {},
 }
@@ -334,6 +334,7 @@ const credits = document.querySelector<HTMLElement>('#credits')
 const forces = document.querySelector<HTMLElement>('#forces')
 const population = document.querySelector<HTMLElement>('#population')
 const cities = document.querySelector<HTMLElement>('#cities')
+const ping = document.querySelector<HTMLElement>('#ping')
 const orders = document.querySelector<HTMLElement>('#orders')
 const fullscreen = document.querySelector<HTMLButtonElement>('#fullscreen')
 const NEEDS_FACTORY = new Set<UnitTypeId>([UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
@@ -353,6 +354,9 @@ fullscreen?.addEventListener('click', () => {
 })
 
 const COUNT_SECONDS = 0.15
+const PING_MS = 2000
+const SLOW_PING_MS = 150
+const BAD_PING_MS = 300
 let shownCredits = replica.credits
 
 function heldCities(): { cities: number; population: number } {
@@ -387,18 +391,25 @@ const refreshHud = (dt: number) => {
   let army = 0
   for (const unit of own) army += UNIT_TYPES[unit.typeId].supply
   let queued = 0
-  for (const job of replica.training) queued += UNIT_TYPES[job.typeId].supply
+  const queue = replica.queue()
+  for (const job of queue) queued += UNIT_TYPES[job.typeId].supply
   if (forces) {
     forces.textContent = String(army)
     forces.classList.toggle('over', army > held.population)
   }
   if (population) population.textContent = String(held.population)
   if (cities) cities.textContent = String(held.cities)
+  if (ping) {
+    const rtt = net.rtt
+    ping.textContent = rtt === null ? '–' : `${Math.round(rtt)} ms`
+    ping.classList.toggle('slow', rtt !== null && rtt > SLOW_PING_MS)
+    ping.classList.toggle('bad', rtt !== null && rtt > BAD_PING_MS)
+  }
   const ready = new Set<number>()
   for (const unit of own) {
     if (unit.progress >= 1 && UNIT_TYPES[unit.typeId].topSpeed <= 0) ready.add(unit.typeId)
   }
-  const head = replica.training[0]
+  const head = queue[0]
   const armed = player.placingType()
   const pending = structureQueue()
   const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
@@ -412,7 +423,7 @@ const refreshHud = (dt: number) => {
     let count = 0
     let progress = 0
     if (training) {
-      for (const job of replica.training) if (job.typeId === entry.id) count += 1
+      for (const job of queue) if (job.typeId === entry.id) count += 1
       progress = head?.typeId === entry.id ? head.progress : 0
     } else {
       const site = pending.get(entry.id)
@@ -421,7 +432,7 @@ const refreshHud = (dt: number) => {
     }
     const gate = training ? ready.has(yardOf(entry.id)) : !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
     const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, replica.training) > 0)
+    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, queue) > 0)
     paintTile(entry, count, progress, gate && room, gate || count > 0 || progress > 0, !training && armed === entry.id)
   }
 }
@@ -544,6 +555,7 @@ const frame = (now: number) => {
     view.syncCities(replica.settledLayouts(), replica.cityRevision)
     view.update(frameDt)
     refreshHud(frameDt)
+    view.showExpectedSites(replica.expectedSiteList())
     view.render(
       replica.drawn(),
       player.selected(),
@@ -552,8 +564,8 @@ const frame = (now: number) => {
       replica.playerId,
       replica.cities,
       replica.settledLayouts(),
-      replica.primaryFactoryId,
-      replica.rally,
+      replica.shownPrimary(),
+      replica.shownRally(),
       replica.cleared,
       replica.takeYields(),
     )
@@ -561,3 +573,7 @@ const frame = (now: number) => {
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
+
+window.setInterval(() => {
+  if (live.view && !document.hidden) net.sendGame({ kind: ClientMessageKind.Ping })
+}, PING_MS)

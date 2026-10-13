@@ -33,6 +33,7 @@ type Session = {
   playing: boolean
   /** Remote players get a command's result at once instead of on the next tick. */
   echo: boolean
+  ack: number
   send(message: ServerFrame): void
 }
 
@@ -56,12 +57,13 @@ type Memory = {
   primary: number | null
   lastSnapshotTick: number
   lastSentTick: number
+  ackSent: number
 }
 
 export type RemotePlay = {
   readonly playing: boolean
   retire(): void
-  command(message: ClientMessage): void
+  command(message: ClientMessage, seq: number): void
   setView(playerId: number): void
   sync(): void
   close(): void
@@ -87,6 +89,7 @@ export class ServerHost {
       playerId: player.id,
       playing: true,
       echo: false,
+      ack: 0,
       send: (message) => link.server.send(message),
     }
     link.server.onClient((message) => this.onCommand(session, message))
@@ -95,7 +98,7 @@ export class ServerHost {
   }
 
   attach(playerId: number, playing: boolean, send: (message: ServerFrame) => void): RemotePlay {
-    const session: Session = { playerId, playing, echo: true, send }
+    const session: Session = { playerId, playing, echo: true, ack: 0, send }
     this.sessions.push(session)
     return {
       get playing() {
@@ -104,7 +107,10 @@ export class ServerHost {
       retire() {
         session.playing = false
       },
-      command: (message) => this.onCommand(session, message),
+      command: (message, seq) => {
+        session.ack = seq
+        this.onCommand(session, message)
+      },
       setView: (next) => {
         if (session.playing) return
         session.playerId = next
@@ -163,6 +169,11 @@ export class ServerHost {
   }
 
   private onCommand(session: Session, message: ClientMessage) {
+    this.apply(session, message)
+    if (session.echo) this.pushTick(session, this.game.unitSnapshots(), [], [], [])
+  }
+
+  private apply(session: Session, message: ClientMessage) {
     if (message.kind === ClientMessageKind.RequestSnapshot) {
       const memory = this.memory.get(session)
       if (memory && this.tickNo - memory.lastSnapshotTick < SNAPSHOT_COOLDOWN) return
@@ -192,7 +203,6 @@ export class ServerHost {
     } else if (message.kind === ClientMessageKind.SetRally) {
       this.game.setRally(playerId, message.tile)
     }
-    if (session.echo) this.pushTick(session, this.game.unitSnapshots(), [], [], [])
   }
 
   private pushSync(session: Session) {
@@ -210,8 +220,10 @@ export class ServerHost {
     const credits = this.game.player(session.playerId)?.credits ?? 0
     this.remember(memory, units, cities, credits, training, rally, primary)
     memory.lastSnapshotTick = this.tickNo
+    memory.ackSent = session.ack
     session.send({
       tick: this.tickNo,
+      ack: session.ack,
       events: [
         { kind: ServerEventKind.Welcome, playerId: session.playerId },
         {
@@ -287,9 +299,11 @@ export class ServerHost {
     const seenYields = yields.filter((point) => this.lit(memory, point.x, point.y, width, height))
     if (seenYields.length > 0) events.push({ kind: ServerEventKind.Yields, yields: seenYields })
     this.economy(session, memory, events)
-    if (events.length === 0 && this.tickNo - memory.lastSentTick < KEEPALIVE_TICKS) return
+    const acked = memory.ackSent !== session.ack
+    if (events.length === 0 && !acked && this.tickNo - memory.lastSentTick < KEEPALIVE_TICKS) return
     memory.lastSentTick = this.tickNo
-    session.send({ tick: this.tickNo, events })
+    memory.ackSent = session.ack
+    session.send({ tick: this.tickNo, events, ack: session.ack })
   }
 
   private economy(session: Session, memory: Memory, events: ServerEvent[]) {
@@ -367,6 +381,7 @@ export class ServerHost {
       primary: null,
       lastSnapshotTick: -SNAPSHOT_COOLDOWN,
       lastSentTick: this.tickNo,
+      ackSent: 0,
     }
   }
 

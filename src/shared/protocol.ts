@@ -14,6 +14,7 @@ export const enum ClientMessageKind {
   OrderAttackGround = 9,
   PlaceCity = 10,
   RequestSnapshot = 11,
+  Ping = 12,
 }
 
 export const enum ServerEventKind {
@@ -92,6 +93,10 @@ export type RequestSnapshot = {
   kind: ClientMessageKind.RequestSnapshot
 }
 
+export type Ping = {
+  kind: ClientMessageKind.Ping
+}
+
 export type ClientMessage =
   | OrderMove
   | OrderSpawn
@@ -104,6 +109,7 @@ export type ClientMessage =
   | SetRally
   | PlaceCity
   | RequestSnapshot
+  | Ping
 
 export type WelcomeEvent = {
   kind: ServerEventKind.Welcome
@@ -313,10 +319,12 @@ export type ServerEvent =
 export type ServerFrame = {
   tick: number
   events: ServerEvent[]
+  ack: number
 }
 
 export type ClientPort = {
-  send(message: ClientMessage): void
+  /** Sends a command and returns its sequence number, or null when there is no connection to send on. */
+  send(message: ClientMessage): number | null
   onServer(handler: (message: ServerFrame) => void): void
 }
 

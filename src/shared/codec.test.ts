@@ -8,6 +8,7 @@ describe('protobuf frames', () => {
   it('round-trips a server frame and a client command', () => {
     const frame: ServerFrame = {
       tick: 12,
+      ack: 41,
       events: [
         { kind: ServerEventKind.Welcome, playerId: 3 },
         {
@@ -52,15 +53,17 @@ describe('protobuf frames', () => {
     }
     const back = decodeServerFrame(encodeServerFrame(frame))
     expect(back?.tick).toBe(12)
+    expect(back?.ack).toBe(41)
     expect(back?.events[0]).toMatchObject({ kind: ServerEventKind.Welcome, playerId: 3 })
     expect(back?.events[1]).toMatchObject({ kind: ServerEventKind.UnitMotion, unit: { id: 4, x: expect.closeTo(1.25), path: [{ x: 3, y: 2 }] } })
     expect(back?.events[2]).toMatchObject({ kind: ServerEventKind.MapPatch, map: { cells: [{ x: 1, y: 2, terrain: Terrain.Land, shift: 0x88 }] } })
     expect(back?.events[5]).toMatchObject({ kind: ServerEventKind.Credits, credits: expect.closeTo(9989.583333333334) })
 
-    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }))
-    expect(order).toEqual({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } })
-    expect(decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.RequestSnapshot }))).toEqual({
-      kind: ClientMessageKind.RequestSnapshot,
+    const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }, 42))
+    expect(order).toEqual({ seq: 42, message: { kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } } })
+    expect(decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.Ping }, 43))).toEqual({
+      seq: 43,
+      message: { kind: ClientMessageKind.Ping },
     })
   })
 
@@ -69,6 +72,7 @@ describe('protobuf frames', () => {
     const state = { ownerId: 1, color: 0, progress: 0.5, challengerId: 0, challengerColor: 0, grown: 0, ruins: [{ x: 3, y: 2 }], sites: [] }
     const frame: ServerFrame = {
       tick: 1,
+      ack: 0,
       events: [
         {
           kind: ServerEventKind.MapPatch,

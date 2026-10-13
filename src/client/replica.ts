@@ -28,6 +28,8 @@ const REPLAY_LIMIT = 15
 
 type Pose = { x: number; z: number; facing: number; turretYaw: number; altitude: number }
 
+export type ExpectedSite = { typeId: UnitTypeId | null; tile: TileCoord }
+
 type Shown = {
   before: Pose
   drift: Pose
@@ -67,6 +69,10 @@ export class Replica {
   private askedTick = -SNAPSHOT_GAP
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
+  private expectedTraining: { seq: number; typeId: UnitTypeId }[] = []
+  private expectedRally: { seq: number; tile: TileCoord } | null = null
+  private expectedPrimary: { seq: number; id: number } | null = null
+  private expectedSites: (ExpectedSite & { seq: number })[] = []
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
 
@@ -100,6 +106,7 @@ export class Replica {
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
     this.shown.clear()
+    this.settle(Infinity)
   }
 
   apply(frame: ServerFrame) {
@@ -109,6 +116,48 @@ export class Replica {
     if (!snapshot && this.world && !this.closeTo(frame.tick)) return
     this.frameOccupancy = null
     for (const event of frame.events) this.applyEvent(event, frame.tick)
+    this.settle(frame.ack)
+  }
+
+  expectTraining(seq: number, typeId: UnitTypeId) {
+    this.expectedTraining.push({ seq, typeId })
+  }
+
+  expectRally(seq: number, tile: TileCoord) {
+    this.expectedRally = { seq, tile }
+  }
+
+  expectPrimary(seq: number, id: number) {
+    this.expectedPrimary = { seq, id }
+  }
+
+  expectSite(seq: number, site: ExpectedSite) {
+    this.expectedSites.push({ seq, ...site })
+  }
+
+  /** The training queue with commands the server has not answered yet appended. */
+  queue(): TrainJob[] {
+    if (this.expectedTraining.length === 0) return this.training
+    return [...this.training, ...this.expectedTraining.map((job) => ({ typeId: job.typeId, progress: 0 }))]
+  }
+
+  shownRally(): TileCoord | null {
+    return this.expectedRally?.tile ?? this.rally
+  }
+
+  shownPrimary(): number {
+    return this.expectedPrimary?.id ?? this.primaryFactoryId
+  }
+
+  expectedSiteList(): readonly ExpectedSite[] {
+    return this.expectedSites
+  }
+
+  private settle(ack: number) {
+    this.expectedTraining = this.expectedTraining.filter((job) => job.seq > ack)
+    this.expectedSites = this.expectedSites.filter((site) => site.seq > ack)
+    if (this.expectedRally && this.expectedRally.seq <= ack) this.expectedRally = null
+    if (this.expectedPrimary && this.expectedPrimary.seq <= ack) this.expectedPrimary = null
   }
 
   advance(dt: number): boolean {
