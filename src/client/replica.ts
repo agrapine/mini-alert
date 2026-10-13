@@ -73,6 +73,8 @@ export class Replica {
   private expectedRally: { seq: number; tile: TileCoord } | null = null
   private expectedPrimary: { seq: number; id: number } | null = null
   private expectedSites: (ExpectedSite & { seq: number })[] = []
+  private trainingTick = 0
+  private trainingRate = 0
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
 
@@ -135,10 +137,16 @@ export class Replica {
     this.expectedSites.push({ seq, ...site })
   }
 
-  /** The training queue with commands the server has not answered yet appended. */
+  /** The training queue, its head advanced at the rate the server last reported, with unanswered orders appended. */
   queue(): TrainJob[] {
-    if (this.expectedTraining.length === 0) return this.training
-    return [...this.training, ...this.expectedTraining.map((job) => ({ typeId: job.typeId, progress: 0 }))]
+    const elapsed = Math.max(0, this.localTick - this.trainingTick)
+    const jobs = this.training.map((job, index) =>
+      index === 0 && this.trainingRate > 0
+        ? { typeId: job.typeId, progress: Math.min(1, job.progress + this.trainingRate * elapsed) }
+        : job,
+    )
+    for (const job of this.expectedTraining) jobs.push({ typeId: job.typeId, progress: 0 })
+    return jobs
   }
 
   shownRally(): TileCoord | null {
@@ -414,6 +422,8 @@ export class Replica {
       this.units = event.units.map(copyUnit)
       this.credits = event.credits
       this.training = event.training
+      this.trainingRate = 0
+      this.trainingTick = this.serverTick
       this.primaryFactoryId = event.primaryFactoryId
       this.rally = event.rally
       this.installCities(event.cities, true)
@@ -471,6 +481,12 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.Training) {
+      const head = event.training[0]
+      const before = this.training[0]
+      const ticks = tick - this.trainingTick
+      const same = head !== undefined && before !== undefined && head.typeId === before.typeId && ticks > 0
+      this.trainingRate = same ? Math.max(0, (head.progress - before.progress) / ticks) : 0
+      this.trainingTick = tick
       this.training = event.training
       return
     }

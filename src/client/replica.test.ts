@@ -170,4 +170,18 @@ describe('replica drawing', () => {
     replica.apply({ tick: 12, ack: 5, events: [] })
     expect(replica.queue()).toEqual([])
   })
+
+  it('advances the head of the training queue between updates', () => {
+    const replica = joined(scout(2.5, []))
+    const update = (tick: number, progress: number) => ({
+      tick,
+      ack: 0,
+      events: [{ kind: ServerEventKind.Training as const, training: [{ typeId: UnitTypeId.Scout, progress }] }],
+    })
+    replica.apply(update(10, 0.1))
+    replica.apply(update(16, 0.2))
+    for (let i = 0; i < 9; i++) replica.advance(SIM_STEP)
+    expect(replica.queue()[0].progress).toBeCloseTo(0.2 + (0.1 / 6) * (replica.localTick - 16), 5)
+    expect(replica.queue()[0].progress).toBeGreaterThan(0.2)
+  })
 })
