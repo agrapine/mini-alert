@@ -39,6 +39,7 @@
 - The map preview is a radar: a glowing square frame with range rings, a crosshair and a turning sweep that goes amber while the map draws. In the waiting room a radar scope above Requests shows every battle as a blip in the colour of its state; phones leave it out.
 - On a phone the waiting room and game rooms scroll, and each panel shows all of its content instead of being squeezed into one screen and overlapping the next.
 - Units brushing past city buildings no longer twitch: your game stops them at a building's edge, as the server does.
+- Units stay exactly where they belong between server updates: a correction eases in only what it changes instead of knocking the unit up to a step off its glide.
 
 ## 0.4
 
