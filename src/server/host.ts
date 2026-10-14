@@ -16,10 +16,10 @@ import {
   type ShotHit,
   type UnitSnapshot,
 } from '../shared/protocol.ts'
-import type { CityLayout } from '../shared/cities.ts'
+import { CITY_SIGHT, type CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
-import { EXPLORE_MARGIN, friendsOf, type CitySight } from '../shared/vision.ts'
+import { EXPLORE_MARGIN, type CitySight, type SightSource } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
@@ -36,7 +36,16 @@ const CATCH_UP_TICKS = 15
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 const NO_UNITS: ReadonlySet<number> = new Set()
 
-type VisibleCity = CityRecord & { layout: CityLayout }
+type LayoutClip = { source: CityLayout; layout: CityLayout; shape: string }
+
+type StateClip = { source: string; state: CityState; core: string; progress: number }
+
+type VisibleCity = { index: number; layout: LayoutClip; state: StateClip }
+
+type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
+
+/** What an owner's cities and structures light: `discs` holds x, z, sight per source and `rects` tileX, tileY, spanX, spanY per structure. */
+type StaticLayer = { discs: number[]; rects: number[]; lit: Uint8Array }
 
 /** A change that may wait for the next frame going out anyway, or for the ledger cadence. */
 type Deferred = { event: ServerEvent; commit(): void }
@@ -58,6 +67,8 @@ type Memory = {
   /** Holds `sight` for tiles in view this tick and `sight - 1` for tiles in view last tick. */
   visible: Uint32Array
   sight: number
+  /** The static layer `visible` was last stamped against; its tiles count as in view whether or not `visible` holds them. */
+  layer: StaticLayer | null
   felledSeen: number
   /** Tiles explored or changed since the last map patch went out. */
   unsentTiles: Set<number>
@@ -69,6 +80,9 @@ type Memory = {
   cityCore: Map<number, string>
   cityProgress: Map<number, number>
   cityShape: Map<number, string>
+  /** Cities clipped to `explored`; an entry is dropped when the session explores a tile inside that city's bounds. */
+  layoutClips: Map<number, LayoutClip>
+  stateClips: Map<number, StateClip>
   credits: number | null
   trainingKinds: string | null
   training: string | null
@@ -101,6 +115,10 @@ export class ServerHost {
   private sights: CitySight[] | null = null
   private states: CityState[] | null = null
   private layouts: CityLayout[] | null = null
+  private stateKeys: string[] | null = null
+  private cityBounds: Bounds[] | null = null
+  private layers = new Map<number, StaticLayer>()
+  private checkedLayers: Map<number, StaticLayer> | null = null
 
   constructor(
     readonly game: Game,
@@ -242,6 +260,9 @@ export class ServerHost {
     this.sights = null
     this.states = null
     this.layouts = null
+    this.stateKeys = null
+    this.cityBounds = null
+    this.checkedLayers = null
   }
 
   private pushSync(session: Session) {
@@ -252,13 +273,14 @@ export class ServerHost {
     const living = this.game.unitSnapshots()
     this.reveal(memory, living)
     const units = living.filter((unit) => this.knows(memory, unit, width))
-    const cities = this.visibleCities(memory)
+    const visible = this.visibleCities(memory)
+    const cities: CityRecord[] = visible.map((city) => ({ index: city.index, state: city.state.state, layout: city.layout.layout }))
     const map = this.mapOf(memory)
     const training = this.game.trainingFor(session.playerId)
     const rally = this.game.rally(session.playerId)
     const primary = this.game.primaryFactory(session.playerId)
     const credits = this.game.player(session.playerId)?.credits ?? 0
-    this.remember(memory, units, cities, credits, training, rally, primary)
+    this.remember(memory, units, visible, credits, training, rally, primary)
     memory.lastSnapshotTick = this.tickNo
     memory.lastSnapshotAt = performance.now()
     memory.ackSent = session.ack
@@ -297,6 +319,7 @@ export class ServerHost {
     if (!memory) return
     const { width, height } = this.game.world
     const fresh = this.reveal(memory, living)
+    this.unclip(memory, fresh)
     const shadow = session.shadow
     shadow?.simulateTo(this.tickNo)
     const held = shadow ? new Map(shadow.units.map((unit) => [unit.id, unit])) : null
@@ -426,9 +449,9 @@ export class ServerHost {
     memory.cityProgress.clear()
     memory.cityShape.clear()
     for (const city of cities) {
-      memory.cityCore.set(city.index, coreKey(city.state))
-      memory.cityProgress.set(city.index, progressStep(city.state))
-      memory.cityShape.set(city.index, shapeKey(city.layout))
+      memory.cityCore.set(city.index, city.state.core)
+      memory.cityProgress.set(city.index, city.state.progress)
+      memory.cityShape.set(city.index, city.layout.shape)
     }
     memory.credits = credits
     memory.trainingKinds = trainingKinds(training)
@@ -444,6 +467,7 @@ export class ServerHost {
       explored: new Uint8Array(tiles),
       visible: new Uint32Array(tiles),
       sight: 1,
+      layer: null,
       felledSeen: 0,
       unsentTiles: new Set(),
       seen: new Set(),
@@ -454,6 +478,8 @@ export class ServerHost {
       cityCore: new Map(),
       cityProgress: new Map(),
       cityShape: new Map(),
+      layoutClips: new Map(),
+      stateClips: new Map(),
       credits: null,
       trainingKinds: null,
       training: null,
@@ -471,11 +497,15 @@ export class ServerHost {
     const { width, height } = this.game.world
     const fresh: TileCoord[] = []
     const sight = ++memory.sight
+    const layer = this.staticLayer(memory.owner, units)
+    // A changed layer rescans every source, so the tiles it newly lights explore their margins in source order.
+    const whole = memory.layer !== layer
+    memory.layer = layer
     const see = (x: number, y: number) => {
       const index = y * width + x
       const before = memory.visible[index]
       memory.visible[index] = sight
-      if (before === sight || before === sight - 1) return
+      if (before === sight || before === sight - 1 || (!whole && layer.lit[index] === 1)) return
       for (const offset of MARGIN_OFFSETS) {
         const nx = x + offset.x
         const ny = y + offset.y
@@ -486,8 +516,19 @@ export class ServerHost {
         fresh.push({ x: nx, y: ny })
       }
     }
-    this.sights ??= this.game.citySights()
-    for (const friend of friendsOf(units, memory.owner, this.sights)) {
+    const friends: SightSource[] = []
+    for (const unit of units) {
+      if (unit.ownerId !== memory.owner || unit.health <= 0 || unit.progress < 1) continue
+      if (!whole && isStructure(unit)) continue
+      const sight = UNIT_TYPES[unit.typeId].weapon.sight
+      if (sight > 0) friends.push({ x: unit.x, z: unit.z, sight })
+    }
+    if (whole) {
+      for (const city of (this.sights ??= this.game.citySights())) {
+        if (city.ownerId === memory.owner) friends.push({ x: city.x, z: city.z, sight: CITY_SIGHT })
+      }
+    }
+    for (const friend of friends) {
       const reach = Math.ceil(friend.sight)
       const originX = Math.floor(friend.x)
       const originY = Math.floor(friend.z)
@@ -502,6 +543,7 @@ export class ServerHost {
     }
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0) continue
+      if (!whole && isStructure(unit)) continue
       const span = spanOf(UNIT_TYPES[unit.typeId])
       for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
         for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) see(x, y)
@@ -510,10 +552,60 @@ export class ServerHost {
     return fresh
   }
 
+  /** The owner's static layer, rebuilt when its sources differ by value from the ones it was built from. */
+  private staticLayer(owner: number, units: readonly UnitSnapshot[]): StaticLayer {
+    this.checkedLayers ??= new Map()
+    const checked = this.checkedLayers.get(owner)
+    if (checked) return checked
+    const discs: number[] = []
+    const rects: number[] = []
+    for (const unit of units) {
+      if (unit.ownerId !== owner || unit.health <= 0 || !isStructure(unit)) continue
+      const type = UNIT_TYPES[unit.typeId]
+      if (unit.progress >= 1 && type.weapon.sight > 0) discs.push(unit.x, unit.z, type.weapon.sight)
+      const span = spanOf(type)
+      rects.push(unit.tileX, unit.tileY, span.x, span.y)
+    }
+    for (const city of (this.sights ??= this.game.citySights())) {
+      if (city.ownerId === owner) discs.push(city.x, city.z, CITY_SIGHT)
+    }
+    let layer = this.layers.get(owner)
+    if (!layer || !sameValues(layer.discs, discs) || !sameValues(layer.rects, rects)) {
+      layer = { discs, rects, lit: this.stampStatic(discs, rects) }
+      this.layers.set(owner, layer)
+    }
+    this.checkedLayers.set(owner, layer)
+    return layer
+  }
+
+  private stampStatic(discs: readonly number[], rects: readonly number[]): Uint8Array {
+    const { width, height } = this.game.world
+    const lit = new Uint8Array(width * height)
+    for (let i = 0; i < discs.length; i += 3) {
+      const reach = Math.ceil(discs[i + 2])
+      const originX = Math.floor(discs[i])
+      const originY = Math.floor(discs[i + 1])
+      const reachSq = discs[i + 2] * discs[i + 2]
+      for (let y = Math.max(0, originY - reach); y <= Math.min(height - 1, originY + reach); y++) {
+        for (let x = Math.max(0, originX - reach); x <= Math.min(width - 1, originX + reach); x++) {
+          const cx = x + 0.5 - discs[i]
+          const cz = y + 0.5 - discs[i + 1]
+          if (cx * cx + cz * cz <= reachSq) lit[y * width + x] = 1
+        }
+      }
+    }
+    for (let i = 0; i < rects.length; i += 4) {
+      for (let y = Math.max(0, rects[i + 1]); y < Math.min(height, rects[i + 1] + rects[i + 3]); y++) {
+        for (let x = Math.max(0, rects[i]); x < Math.min(width, rects[i] + rects[i + 2]); x++) lit[y * width + x] = 1
+      }
+    }
+    return lit
+  }
+
   private knows(memory: Memory, unit: UnitSnapshot, width: number): boolean {
     if (unit.ownerId === memory.owner) return true
     const index = unit.tileY * width + unit.tileX
-    return index >= 0 && index < memory.visible.length && memory.visible[index] === memory.sight
+    return index >= 0 && index < memory.visible.length && (memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1)
   }
 
   private pointVisible(memory: Memory, x: number, z: number, width: number, height: number): boolean {
@@ -543,36 +635,77 @@ export class ServerHost {
     const tx = Math.floor(x)
     const ty = Math.floor(z)
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return false
-    return memory.visible[ty * width + tx] === memory.sight
+    const index = ty * width + tx
+    return memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1
   }
 
   private visibleCities(memory: Memory): VisibleCity[] {
     const records: VisibleCity[] = []
+    const { width } = this.game.world
     const states = (this.states ??= this.game.cityStates())
     const layouts = (this.layouts ??= this.game.cityLayouts())
+    const keys = (this.stateKeys ??= states.map(stateKey))
     for (let index = 0; index < states.length; index++) {
-      const layout = clipLayout(layouts[index], memory.explored, this.game.world.width)
-      if (!layout || layout.tiles.length === 0) continue
-      const state = clipState(states[index], memory.explored, this.game.world.width)
-      records.push({ index, state, layout })
+      let layout = memory.layoutClips.get(index)
+      if (layout?.source !== layouts[index]) {
+        const clipped = clipLayout(layouts[index], memory.explored, width)
+        layout = { source: layouts[index], layout: clipped, shape: shapeKey(clipped) }
+        memory.layoutClips.set(index, layout)
+      }
+      if (layout.layout.tiles.length === 0) continue
+      let state = memory.stateClips.get(index)
+      if (state?.source !== keys[index]) {
+        const clipped = clipState(states[index], memory.explored, width)
+        state = { source: keys[index], state: clipped, core: coreKey(clipped), progress: progressStep(clipped) }
+        memory.stateClips.set(index, state)
+      }
+      records.push({ index, layout, state })
     }
     return records
+  }
+
+  private unclip(memory: Memory, fresh: readonly TileCoord[]) {
+    if (fresh.length === 0) return
+    const bounds = (this.cityBounds ??= this.citySpans())
+    for (let index = 0; index < bounds.length; index++) {
+      const box = bounds[index]
+      if (!fresh.some((tile) => tile.x >= box.minX && tile.x <= box.maxX && tile.y >= box.minY && tile.y <= box.maxY)) continue
+      memory.layoutClips.delete(index)
+      memory.stateClips.delete(index)
+    }
+  }
+
+  private citySpans(): Bounds[] {
+    const states = (this.states ??= this.game.cityStates())
+    const layouts = (this.layouts ??= this.game.cityLayouts())
+    return layouts.map((layout, index) => {
+      const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+      const state = states[index]
+      for (const points of [layout.tiles, layout.buildings, layout.streets, state.ruins, state.sites]) {
+        for (const point of points) {
+          box.minX = Math.min(box.minX, point.x)
+          box.minY = Math.min(box.minY, point.y)
+          box.maxX = Math.max(box.maxX, point.x)
+          box.maxY = Math.max(box.maxY, point.y)
+        }
+      }
+      return box
+    })
   }
 
   private changedCities(memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
     const live = new Set<number>()
     for (const city of this.visibleCities(memory)) {
-      const index = city.index
+      const { index } = city
+      const { shape } = city.layout
+      const { core, progress } = city.state
       live.add(index)
-      const shape = shapeKey(city.layout)
-      const core = coreKey(city.state)
-      const progress = progressStep(city.state)
       const reshaped = memory.cityShape.get(index) !== shape
       const recast = memory.cityCore.get(index) !== core
       if (!reshaped && !recast && memory.cityProgress.get(index) === progress) continue
       const event: ServerEvent = {
         kind: ServerEventKind.CityUpdate,
-        city: { index, state: city.state, layout: reshaped ? city.layout : null },
+        city: { index, state: city.state.state, layout: reshaped ? city.layout.layout : null },
       }
       const commit = () => {
         memory.cityShape.set(index, shape)
@@ -650,8 +783,7 @@ export class ServerHost {
   }
 }
 
-function clipLayout(layout: CityLayout | undefined, explored: Uint8Array, width: number): CityLayout | null {
-  if (!layout) return null
+function clipLayout(layout: CityLayout, explored: Uint8Array, width: number): CityLayout {
   const seen = (x: number, y: number) => {
     const index = y * width + x
     return index >= 0 && index < explored.length && explored[index] === 1
@@ -682,6 +814,10 @@ function coreKey(state: CityState): string {
   return `${state.ownerId}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
 }
 
+function stateKey(state: CityState): string {
+  return `${state.color}:${state.challengerColor}:${state.progress}:${coreKey(state)}`
+}
+
 function progressStep(state: CityState): number {
   return Math.round(state.progress * PROGRESS_STEPS)
 }
@@ -689,6 +825,16 @@ function progressStep(state: CityState): number {
 function shapeKey(layout: CityLayout): string {
   const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model}`).join(';')
   return `${layout.tiles.length}:${layout.streets.length}:${buildings}`
+}
+
+function isStructure(unit: UnitSnapshot): boolean {
+  return UNIT_TYPES[unit.typeId].topSpeed === 0
+}
+
+function sameValues(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 function discOffsets(radius: number): TileCoord[] {
