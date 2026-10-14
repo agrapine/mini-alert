@@ -8,6 +8,7 @@ import { LobbyView, type LobbyActions } from './lobby-ui.ts'
 
 const css = readFileSync(join(import.meta.dirname, 'lobby.css'), 'utf8')
 const NO_PREFERENCE = '@media (prefers-reduced-motion: no-preference)'
+const PHONE = '@media (max-width: 960px)'
 const MOVING = new Set(['transform', 'opacity'])
 const COLOUR_SYNTAX = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i
 const NOT_LITERALS = new Set(['transparent', 'currentcolor', 'none', 'inherit', 'initial', 'unset', 'revert'])
@@ -160,6 +161,11 @@ describe('lobby.css', () => {
       return getComputedStyle(layer).color
     }
     expect([sweep(hostRoom()), sweep(drawingRoom())]).toEqual(['#3cde73', '#f0a830'])
+  })
+
+  it('sizes each row of the phone lobby grid to its panel', () => {
+    const rows = all.filter(({ scopes, property }) => scopes[0] === PHONE && property === 'grid-auto-rows')
+    expect(rows.map(({ scopes, value }) => [scopes[1], value])).toEqual([['.lobby-grid, .lobby-grid.room', 'max-content']])
   })
 
   it('stays within 20 000 bytes', () => {

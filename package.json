@@ -11,6 +11,7 @@
     "build": "tsc && vite build && esbuild src/server/listen.ts --bundle --platform=node --format=esm --packages=external --outfile=build/server/listen.js",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:phone": "vitest run --mode phone",
     "ai": "tsx src/ai/sim.ts",
     "proto": "buf generate",
     "bench": "tsx src/bench/net.ts"
