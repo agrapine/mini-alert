@@ -36,7 +36,13 @@ const CATCH_UP_TICKS = 15
 const MARGIN_OFFSETS = discOffsets(EXPLORE_MARGIN)
 const NO_UNITS: ReadonlySet<number> = new Set()
 
-type VisibleCity = CityRecord & { layout: CityLayout }
+type LayoutClip = { source: CityLayout; layout: CityLayout; shape: string }
+
+type StateClip = { source: string; state: CityState; core: string; progress: number }
+
+type VisibleCity = { index: number; layout: LayoutClip; state: StateClip }
+
+type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
 
 /** A change that may wait for the next frame going out anyway, or for the ledger cadence. */
 type Deferred = { event: ServerEvent; commit(): void }
@@ -69,6 +75,9 @@ type Memory = {
   cityCore: Map<number, string>
   cityProgress: Map<number, number>
   cityShape: Map<number, string>
+  /** Cities clipped to `explored`; an entry is dropped when the session explores a tile inside that city's bounds. */
+  layoutClips: Map<number, LayoutClip>
+  stateClips: Map<number, StateClip>
   credits: number | null
   trainingKinds: string | null
   training: string | null
@@ -101,6 +110,8 @@ export class ServerHost {
   private sights: CitySight[] | null = null
   private states: CityState[] | null = null
   private layouts: CityLayout[] | null = null
+  private stateKeys: string[] | null = null
+  private cityBounds: Bounds[] | null = null
 
   constructor(
     readonly game: Game,
@@ -242,6 +253,8 @@ export class ServerHost {
     this.sights = null
     this.states = null
     this.layouts = null
+    this.stateKeys = null
+    this.cityBounds = null
   }
 
   private pushSync(session: Session) {
@@ -252,13 +265,14 @@ export class ServerHost {
     const living = this.game.unitSnapshots()
     this.reveal(memory, living)
     const units = living.filter((unit) => this.knows(memory, unit, width))
-    const cities = this.visibleCities(memory)
+    const visible = this.visibleCities(memory)
+    const cities: CityRecord[] = visible.map((city) => ({ index: city.index, state: city.state.state, layout: city.layout.layout }))
     const map = this.mapOf(memory)
     const training = this.game.trainingFor(session.playerId)
     const rally = this.game.rally(session.playerId)
     const primary = this.game.primaryFactory(session.playerId)
     const credits = this.game.player(session.playerId)?.credits ?? 0
-    this.remember(memory, units, cities, credits, training, rally, primary)
+    this.remember(memory, units, visible, credits, training, rally, primary)
     memory.lastSnapshotTick = this.tickNo
     memory.lastSnapshotAt = performance.now()
     memory.ackSent = session.ack
@@ -297,6 +311,7 @@ export class ServerHost {
     if (!memory) return
     const { width, height } = this.game.world
     const fresh = this.reveal(memory, living)
+    this.unclip(memory, fresh)
     const shadow = session.shadow
     shadow?.simulateTo(this.tickNo)
     const held = shadow ? new Map(shadow.units.map((unit) => [unit.id, unit])) : null
@@ -426,9 +441,9 @@ export class ServerHost {
     memory.cityProgress.clear()
     memory.cityShape.clear()
     for (const city of cities) {
-      memory.cityCore.set(city.index, coreKey(city.state))
-      memory.cityProgress.set(city.index, progressStep(city.state))
-      memory.cityShape.set(city.index, shapeKey(city.layout))
+      memory.cityCore.set(city.index, city.state.core)
+      memory.cityProgress.set(city.index, city.state.progress)
+      memory.cityShape.set(city.index, city.layout.shape)
     }
     memory.credits = credits
     memory.trainingKinds = trainingKinds(training)
@@ -454,6 +469,8 @@ export class ServerHost {
       cityCore: new Map(),
       cityProgress: new Map(),
       cityShape: new Map(),
+      layoutClips: new Map(),
+      stateClips: new Map(),
       credits: null,
       trainingKinds: null,
       training: null,
@@ -548,31 +565,71 @@ export class ServerHost {
 
   private visibleCities(memory: Memory): VisibleCity[] {
     const records: VisibleCity[] = []
+    const { width } = this.game.world
     const states = (this.states ??= this.game.cityStates())
     const layouts = (this.layouts ??= this.game.cityLayouts())
+    const keys = (this.stateKeys ??= states.map(stateKey))
     for (let index = 0; index < states.length; index++) {
-      const layout = clipLayout(layouts[index], memory.explored, this.game.world.width)
-      if (!layout || layout.tiles.length === 0) continue
-      const state = clipState(states[index], memory.explored, this.game.world.width)
-      records.push({ index, state, layout })
+      let layout = memory.layoutClips.get(index)
+      if (layout?.source !== layouts[index]) {
+        const clipped = clipLayout(layouts[index], memory.explored, width)
+        layout = { source: layouts[index], layout: clipped, shape: shapeKey(clipped) }
+        memory.layoutClips.set(index, layout)
+      }
+      if (layout.layout.tiles.length === 0) continue
+      let state = memory.stateClips.get(index)
+      if (state?.source !== keys[index]) {
+        const clipped = clipState(states[index], memory.explored, width)
+        state = { source: keys[index], state: clipped, core: coreKey(clipped), progress: progressStep(clipped) }
+        memory.stateClips.set(index, state)
+      }
+      records.push({ index, layout, state })
     }
     return records
+  }
+
+  private unclip(memory: Memory, fresh: readonly TileCoord[]) {
+    if (fresh.length === 0) return
+    const bounds = (this.cityBounds ??= this.citySpans())
+    for (let index = 0; index < bounds.length; index++) {
+      const box = bounds[index]
+      if (!fresh.some((tile) => tile.x >= box.minX && tile.x <= box.maxX && tile.y >= box.minY && tile.y <= box.maxY)) continue
+      memory.layoutClips.delete(index)
+      memory.stateClips.delete(index)
+    }
+  }
+
+  private citySpans(): Bounds[] {
+    const states = (this.states ??= this.game.cityStates())
+    const layouts = (this.layouts ??= this.game.cityLayouts())
+    return layouts.map((layout, index) => {
+      const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+      const state = states[index]
+      for (const points of [layout.tiles, layout.buildings, layout.streets, state.ruins, state.sites]) {
+        for (const point of points) {
+          box.minX = Math.min(box.minX, point.x)
+          box.minY = Math.min(box.minY, point.y)
+          box.maxX = Math.max(box.maxX, point.x)
+          box.maxY = Math.max(box.maxY, point.y)
+        }
+      }
+      return box
+    })
   }
 
   private changedCities(memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
     const live = new Set<number>()
     for (const city of this.visibleCities(memory)) {
-      const index = city.index
+      const { index } = city
+      const { shape } = city.layout
+      const { core, progress } = city.state
       live.add(index)
-      const shape = shapeKey(city.layout)
-      const core = coreKey(city.state)
-      const progress = progressStep(city.state)
       const reshaped = memory.cityShape.get(index) !== shape
       const recast = memory.cityCore.get(index) !== core
       if (!reshaped && !recast && memory.cityProgress.get(index) === progress) continue
       const event: ServerEvent = {
         kind: ServerEventKind.CityUpdate,
-        city: { index, state: city.state, layout: reshaped ? city.layout : null },
+        city: { index, state: city.state.state, layout: reshaped ? city.layout.layout : null },
       }
       const commit = () => {
         memory.cityShape.set(index, shape)
@@ -650,8 +707,7 @@ export class ServerHost {
   }
 }
 
-function clipLayout(layout: CityLayout | undefined, explored: Uint8Array, width: number): CityLayout | null {
-  if (!layout) return null
+function clipLayout(layout: CityLayout, explored: Uint8Array, width: number): CityLayout {
   const seen = (x: number, y: number) => {
     const index = y * width + x
     return index >= 0 && index < explored.length && explored[index] === 1
@@ -680,6 +736,10 @@ function coreKey(state: CityState): string {
   const ruins = state.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')
   const sites = state.sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
   return `${state.ownerId}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
+}
+
+function stateKey(state: CityState): string {
+  return `${state.color}:${state.challengerColor}:${state.progress}:${coreKey(state)}`
 }
 
 function progressStep(state: CityState): number {
