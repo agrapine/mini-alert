@@ -19,9 +19,8 @@ ENV SAVE_DIR=/data
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY tsconfig.json ./
-COPY src ./src
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/build ./build
 
 RUN mkdir /data && chown node:node /data
 VOLUME /data
@@ -33,4 +32,4 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD ["node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
-CMD ["node", "--import", "tsx", "src/server/listen.ts"]
+CMD ["node", "build/server/listen.js"]
