@@ -7,7 +7,7 @@
 - Minimap: left press jumps the camera at once and dragging keeps panning; right click sends the selected units there.
 - Units can be ordered into the fog. A group spreads over free tiles around the target, and a target on water, forest, or an enclosed spot sends units to the nearest reachable tile.
 - Middle-click panning always lets go when the button is released.
-- Smoother play over the network: units glide between server updates, corrections blend in instead of jumping, units start moving the moment you give an order, and a backgrounded tab catches up without reloading the map.
+- Smoother play over the network: units glide between server updates, corrections blend in instead of jumping, units standing still start moving the moment you give an order, and a backgrounded tab catches up without reloading the map.
 - Much less network traffic (about 5x less during battles and captures) and faster pathfinding, so large orders no longer stall the server.
 - Steady unit speed on jittery connections: late network packets no longer slow the game down and speed it back up.
 - Orders get their answer from the server straight away instead of on the next server tick.
@@ -21,7 +21,7 @@
 - Fewer network messages: routine updates (credits, training and build progress, map reveals, capture progress, position checks) are batched about five times a second, roughly halving messages in battle and cutting them by four fifths while only training.
 - A connection that goes silent, for example when a phone switches networks, reconnects within seconds and keeps your seat.
 - Reloading the page keeps your seat, and the server notices dropped connections within about twenty seconds.
-- Move orders take the exact route at once: your game plans the same path the server will, and the server allows for your ping so both stay in step.
+- Move orders send units standing still on the exact route at once: your game plans the same path the server will, and the server allows for your ping so both stay in step.
 - Units are corrected only when your view drifts from the server, about ninety percent fewer position updates.
 - Long matches no longer slow down as cities get damaged: the server keeps each city's layout instead of rebuilding it for every unit every tick (about 12x faster in a war-torn match).
 - If the server ever falls behind, the game slows down with it instead of throwing away updates, which left holes in the map and kept asking for full resyncs.
@@ -42,6 +42,7 @@
 - Units stay exactly where they belong between server updates: a correction eases in only what it changes instead of knocking the unit up to a step off its glide.
 - A late network packet no longer leaves units drifting on screen: your game replays every unit from the packet's moment, not only the units it corrects.
 - Units no longer slowly slide away from where the server has them: the server checks your view against exactly the positions your game receives.
+- Redirecting units already on the move no longer makes them jump back: they keep their course until the server answers, then take the new route from where they are.
 
 ## 0.4
 
