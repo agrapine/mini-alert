@@ -240,4 +240,14 @@ describe('request board', () => {
     }
     expect(texts(admin)).toEqual(Array.from({ length: 10 }, (_, i) => `Request ${11 - i}`))
   })
+
+  it('leaves the board untouched when any record of a saved board is bad', () => {
+    const lobby = new Lobby()
+    const ada = seat(lobby, 'Ada')
+    post(lobby, ada, 'Naval units')
+    const saved = lobby.savedBoard()
+    const record = { id: 7, text: 'Old', authorId: ada.member.id, author: 'Ada', voters: [ada.member.id] }
+    expect(() => lobby.loadBoard({ nextId: 9, open: [record], done: [{ ...record, id: 8, voters: 7 }] })).toThrow()
+    expect(lobby.savedBoard()).toEqual(saved)
+  })
 })
