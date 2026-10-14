@@ -263,7 +263,7 @@ function build(brain: Brain, layouts: readonly (CityLayout | null)[], zone: Zone
 function train(brain: Brain): ClientMessage[] {
   if (!finishedFactory(brain)) return []
   const typeId = nextTrain(brain)
-  if (!typeId || supplyUsed(brain) + UNIT_TYPES[typeId].supply > population(brain)) return []
+  if (typeId === null || supplyUsed(brain) + UNIT_TYPES[typeId].supply > population(brain)) return []
   return [{ kind: ClientMessageKind.Spawn, typeId }]
 }
 
