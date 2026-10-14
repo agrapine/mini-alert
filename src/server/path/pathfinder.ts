@@ -1,15 +1,15 @@
 import { isWalkableTerrain, Terrain, type TileCoord } from '../../shared/tiles.ts'
 import { MoveDomain, spanOf } from '../../shared/unit-types.ts'
-import { flightLine } from '../../shared/motion.ts'
+import { Cell } from '../../shared/astar.ts'
+import { cellAt, findRoute, type RouteMap } from '../../shared/route.ts'
 import type { Unit } from '../units/unit.ts'
 import type { World } from '../world.ts'
-import { findPath } from './astar.ts'
 import { __TRACE__, traceBegin, traceEnd } from '../trace.ts'
 import { TraceSlot } from '../../shared/trace.ts'
 
 const EMPTY = 0
 
-export class PathFinder {
+export class PathFinder implements RouteMap {
   readonly world: World
   private readonly occupants: Int32Array
   private readonly blocked: Uint8Array
@@ -24,6 +24,10 @@ export class PathFinder {
 
   get width(): number {
     return this.world.width
+  }
+
+  get height(): number {
+    return this.world.height
   }
 
   inBounds(x: number, y: number): boolean {
@@ -51,45 +55,22 @@ export class PathFinder {
   }
 
   isWalkable(x: number, y: number, ignoreUnitId: number, domain = MoveDomain.Ground): boolean {
-    if (!this.terrainOpen(x, y, domain)) return false
-    const occupantId = this.occupants[y * this.world.width + x]
-    return occupantId === EMPTY || occupantId === ignoreUnitId
+    return cellAt(this, x, y, ignoreUnitId, domain) === Cell.Open
   }
 
   isPassable(x: number, y: number, ignoreUnitId: number, domain = MoveDomain.Ground): boolean {
-    if (!this.terrainOpen(x, y, domain)) return false
-    const occupantId = this.occupants[y * this.world.width + x]
-    if (occupantId === EMPTY || occupantId === ignoreUnitId) return true
-    return this.soft[this.index(x, y)] === 1
-  }
-
-  stepCost(x: number, y: number, ignoreUnitId: number): number {
-    if (!this.world.inBounds(x, y)) return 1
-    const occupantId = this.occupants[y * this.world.width + x]
-    if (occupantId === EMPTY || occupantId === ignoreUnitId) return 1
-    return this.soft[this.index(x, y)] === 1 ? 3 : 1
+    return cellAt(this, x, y, ignoreUnitId, domain) !== Cell.Blocked
   }
 
   findPath(start: TileCoord, goal: TileCoord, ignoreUnitId: number, domain = MoveDomain.Ground): TileCoord[] | null {
     __TRACE__ && traceBegin(TraceSlot.Path)
-    const path = this.search(start, goal, ignoreUnitId, domain)
+    const path = findRoute(this, start, goal, ignoreUnitId, domain)
     __TRACE__ && traceEnd()
     return path
   }
 
-  private search(start: TileCoord, goal: TileCoord, ignoreUnitId: number, domain: MoveDomain): TileCoord[] | null {
-    if (domain === MoveDomain.Air) {
-      if (!this.inBounds(start.x, start.y) || !this.inBounds(goal.x, goal.y)) return null
-      return flightLine(start, goal)
-    }
-    const grid = {
-      width: this.width,
-      inBounds: (x: number, y: number) => this.inBounds(x, y),
-      isWalkable: (x: number, y: number, ignore: number) => this.isWalkable(x, y, ignore, domain),
-      isPassable: (x: number, y: number, ignore: number) => this.isPassable(x, y, ignore, domain),
-      stepCost: (x: number, y: number, ignore: number) => this.stepCost(x, y, ignore),
-    }
-    return findPath(grid, start, goal, ignoreUnitId)
+  movable(x: number, y: number): boolean {
+    return this.soft[y * this.world.width + x] === 1
   }
 
   claim(unit: Unit, tile: TileCoord, footprint: number, domain = MoveDomain.Ground): boolean {
@@ -106,9 +87,9 @@ export class PathFinder {
     this.clearFootprint(unit.tile, span.x, unit.id, span.y)
   }
 
-  private terrainOpen(x: number, y: number, domain: MoveDomain): boolean {
+  terrainOpen(x: number, y: number, domain: MoveDomain): boolean {
     if (!this.world.inBounds(x, y)) return false
-    if (this.blocked[this.index(x, y)] !== 0) return false
+    if (this.blocked[y * this.world.width + x] !== 0) return false
     if (domain === MoveDomain.Air) return true
     const terrain = this.world.terrainAt(x, y)
     if (domain === MoveDomain.Water) return terrain === Terrain.Water || terrain === Terrain.Lake

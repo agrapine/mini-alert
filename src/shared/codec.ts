@@ -6,6 +6,7 @@ import {
   type CityRecord,
   type CityState,
   type ClientMessage,
+  type MapCell,
   type MapData,
   type MapPoint,
   type ServerEvent,
@@ -28,10 +29,13 @@ import {
   type WireFrame,
 } from './wire.ts'
 
+const ORIGIN: TileCoord = { x: 0, y: 0 }
+
 export function encodeServerFrame(frame: ServerFrame): Uint8Array {
   return toBinary(ServerFrameSchema, create(ServerFrameSchema, {
     tick: frame.tick,
     events: frame.events.map(encodeEvent),
+    ack: frame.ack,
   }))
 }
 
@@ -41,19 +45,22 @@ export function decodeServerFrame(bytes: Uint8Array): ServerFrame | null {
     return {
       tick: wire.tick,
       events: wire.events.flatMap(decodeEvent),
+      ack: wire.ack,
     }
   } catch {
     return null
   }
 }
 
-export function encodeClientMessage(message: ClientMessage): Uint8Array {
-  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message) } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
+export function encodeClientMessage(message: ClientMessage, seq: number, tick: number): Uint8Array {
+  return toBinary(ClientCommandSchema, create(ClientCommandSchema, { body: encodeClient(message), seq, tick } as Parameters<typeof create<typeof ClientCommandSchema>>[1]))
 }
 
-export function decodeClientMessage(bytes: Uint8Array): ClientMessage | null {
+export function decodeClientMessage(bytes: Uint8Array): { seq: number; tick: number; message: ClientMessage } | null {
   try {
-    return decodeClient(fromBinary(ClientCommandSchema, bytes))
+    const command = fromBinary(ClientCommandSchema, bytes)
+    const message = decodeClient(command)
+    return message ? { seq: command.seq, tick: command.tick, message } : null
   } catch {
     return null
   }
@@ -169,14 +176,14 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
   }
 }
 
-function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitId: number; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitId: number; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitId: number; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } {
+function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } | { case: 'ping'; value: Record<string, never> } {
   switch (message.kind) {
     case ClientMessageKind.OrderMove:
-      return { case: 'orderMove', value: { unitId: message.unitId, x: message.tile.x, y: message.tile.y } }
+      return { case: 'orderMove', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.Spawn:
       return { case: 'spawn', value: { typeId: message.typeId } }
     case ClientMessageKind.OrderAttack:
-      return { case: 'orderAttack', value: { unitId: message.unitId, targetId: message.targetId } }
+      return { case: 'orderAttack', value: { unitIds: message.unitIds, targetId: message.targetId } }
     case ClientMessageKind.PlaceBuilding:
       return { case: 'placeBuilding', value: { typeId: message.typeId, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.CancelSpawn:
@@ -188,27 +195,29 @@ function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { uni
     case ClientMessageKind.SetRally:
       return { case: 'setRally', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.OrderAttackGround:
-      return { case: 'orderAttackGround', value: { unitId: message.unitId, x: message.tile.x, y: message.tile.y } }
+      return { case: 'orderAttackGround', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.PlaceCity:
       return { case: 'placeCity', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.RequestSnapshot:
       return { case: 'requestSnapshot', value: {} }
+    case ClientMessageKind.Ping:
+      return { case: 'ping', value: {} }
   }
 }
 
 function decodeClient(command: { body: { case: string | undefined; value?: unknown } }): ClientMessage | null {
   const body = command.body
   if (body.case === 'orderMove') {
-    const value = body.value as { unitId: number; x: number; y: number }
-    return { kind: ClientMessageKind.OrderMove, unitId: value.unitId, tile: { x: value.x, y: value.y } }
+    const value = body.value as { unitIds: number[]; x: number; y: number }
+    return { kind: ClientMessageKind.OrderMove, unitIds: [...value.unitIds], tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'spawn') {
     const value = body.value as { typeId: number }
     return { kind: ClientMessageKind.Spawn, typeId: value.typeId as UnitTypeId }
   }
   if (body.case === 'orderAttack') {
-    const value = body.value as { unitId: number; targetId: number }
-    return { kind: ClientMessageKind.OrderAttack, unitId: value.unitId, targetId: value.targetId }
+    const value = body.value as { unitIds: number[]; targetId: number }
+    return { kind: ClientMessageKind.OrderAttack, unitIds: [...value.unitIds], targetId: value.targetId }
   }
   if (body.case === 'placeBuilding') {
     const value = body.value as { typeId: number; x: number; y: number }
@@ -231,14 +240,15 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
     return { kind: ClientMessageKind.SetRally, tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'orderAttackGround') {
-    const value = body.value as { unitId: number; x: number; y: number }
-    return { kind: ClientMessageKind.OrderAttackGround, unitId: value.unitId, tile: { x: value.x, y: value.y } }
+    const value = body.value as { unitIds: number[]; x: number; y: number }
+    return { kind: ClientMessageKind.OrderAttackGround, unitIds: [...value.unitIds], tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'placeCity') {
     const value = body.value as { x: number; y: number }
     return { kind: ClientMessageKind.PlaceCity, tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'requestSnapshot') return { kind: ClientMessageKind.RequestSnapshot }
+  if (body.case === 'ping') return { kind: ClientMessageKind.Ping }
   return null
 }
 
@@ -283,8 +293,7 @@ function encodeUnit(unit: UnitSnapshot): UnitMotionMsg {
     progress: unit.progress,
     tileX: unit.tileX,
     tileY: unit.tileY,
-    path: unit.path.map(encodeTile),
-    goal: unit.goal ? encodeTile(unit.goal) : undefined,
+    path: packTiles(unit.path, { x: unit.tileX, y: unit.tileY }),
     attackId: unit.attackId ?? 0,
     attackX: unit.attackPoint?.x ?? 0,
     attackZ: unit.attackPoint?.z ?? 0,
@@ -303,6 +312,7 @@ function encodeUnit(unit: UnitSnapshot): UnitMotionMsg {
 }
 
 function decodeUnit(unit: UnitMotionMsg): UnitSnapshot {
+  const path = unpackTiles(unit.path, { x: unit.tileX, y: unit.tileY })
   return {
     id: unit.id,
     typeId: unit.typeId as UnitTypeId,
@@ -317,8 +327,8 @@ function decodeUnit(unit: UnitMotionMsg): UnitSnapshot {
     progress: unit.progress,
     tileX: unit.tileX,
     tileY: unit.tileY,
-    path: unit.path.map(decodeTile),
-    goal: unit.goal ? decodeTile(unit.goal) : null,
+    path,
+    goal: path.length > 0 ? { ...path[path.length - 1] } : null,
     attackId: unit.attackId > 0 ? unit.attackId : null,
     attackPoint: unit.attackingGround ? { x: unit.attackX, z: unit.attackZ } : null,
     home: unit.homeSet ? { x: unit.homeX, y: unit.homeY } : null,
@@ -334,7 +344,7 @@ function encodeCity(city: CityRecord): CityUpdateMsg {
   return {
     index: city.index,
     state: encodeCityState(city.state),
-    layout: encodeLayout(city.layout),
+    layout: city.layout ? encodeLayout(city.layout) : undefined,
   } as CityUpdateMsg
 }
 
@@ -342,7 +352,7 @@ function decodeCity(city: CityUpdateMsg): CityRecord {
   return {
     index: city.index,
     state: city.state ? decodeCityState(city.state) : emptyCity(),
-    layout: city.layout ? decodeLayout(city.layout) : emptyLayout(),
+    layout: city.layout ? decodeLayout(city.layout) : null,
   }
 }
 
@@ -354,7 +364,7 @@ function encodeCityState(state: CityState): CityStateMsg {
     challengerId: state.challengerId,
     challengerColor: state.challengerColor,
     grown: state.grown,
-    ruins: state.ruins.map(encodeTile),
+    ruins: packTiles(state.ruins),
     sites: state.sites.map((site) => ({ x: site.x, y: site.y, model: site.model, yaw: site.yaw, at: site.at })),
   } as CityStateMsg
 }
@@ -367,7 +377,7 @@ function decodeCityState(state: CityStateMsg): CityState {
     challengerId: state.challengerId,
     challengerColor: state.challengerColor,
     grown: state.grown,
-    ruins: state.ruins.map(decodeTile),
+    ruins: unpackTiles(state.ruins),
     sites: state.sites.map((site) => ({ x: site.x, y: site.y, model: site.model, yaw: site.yaw, at: site.at })),
   }
 }
@@ -378,7 +388,7 @@ function encodeLayout(layout: CityLayout): CityLayoutMsg {
     y: layout.y,
     span: layout.span,
     seed: layout.seed,
-    tiles: layout.tiles.map(encodeTile),
+    tiles: packTiles(layout.tiles),
     buildings: layout.buildings.map((building) => ({
       x: building.x,
       y: building.y,
@@ -403,7 +413,7 @@ function decodeLayout(layout: CityLayoutMsg): CityLayout {
     y: layout.y,
     span: layout.span,
     seed: layout.seed,
-    tiles: layout.tiles.map(decodeTile),
+    tiles: unpackTiles(layout.tiles),
     buildings: layout.buildings.map((building) => ({
       x: building.x,
       y: building.y,
@@ -423,37 +433,75 @@ function decodeLayout(layout: CityLayoutMsg): CityLayout {
 }
 
 function encodeMap(map: MapData): WireMap {
+  const cells = map.cells
+    .map((cell) => ({ index: cell.y * map.width + cell.x, terrain: cell.terrain, shift: cell.shift }))
+    .sort((a, b) => a.index - b.index)
+  const steps: number[] = []
+  const terrain = new Uint8Array(cells.length)
+  const shifts = new Uint8Array(cells.length)
+  let previous = 0
+  cells.forEach((cell, i) => {
+    steps.push(cell.index - previous)
+    previous = cell.index
+    terrain[i] = cell.terrain
+    shifts[i] = cell.shift
+  })
   return {
     width: map.width,
     height: map.height,
-    cells: map.cells.map((cell) => ({ x: cell.x, y: cell.y, terrain: cell.terrain, shift: cell.shift })),
+    cellSteps: steps,
+    cellTerrain: terrain,
+    cellShifts: shifts,
     coast: map.coast.map(encodePoint),
     holes: map.holes.map((hole) => ({ points: hole.map(encodePoint) })),
     roads: map.roads.map((road) => ({ points: road.map(encodePoint) })),
     towns: map.towns.map(encodePoint),
-    cleared: map.cleared.map(encodeTile),
-  } as WireMap
+    cleared: packTiles(map.cleared),
+  } as unknown as WireMap
 }
 
 function decodeMap(map: WireMap): MapData {
+  const cells: MapCell[] = []
+  let index = 0
+  map.cellSteps.forEach((step, i) => {
+    index += step
+    const x = index % map.width
+    cells.push({ x, y: (index - x) / map.width, terrain: map.cellTerrain[i] as Terrain, shift: map.cellShifts[i] })
+  })
   return {
     width: map.width,
     height: map.height,
-    cells: map.cells.map((cell) => ({ x: cell.x, y: cell.y, terrain: cell.terrain as Terrain, shift: cell.shift })),
+    cells,
     coast: map.coast.map(decodePoint),
     holes: map.holes.map((hole) => hole.points.map(decodePoint)),
     roads: map.roads.map((road) => road.points.map(decodePoint)),
     towns: map.towns.map(decodePoint),
-    cleared: map.cleared.map(decodeTile),
+    cleared: unpackTiles(map.cleared),
   }
 }
 
-function encodeTile(tile: TileCoord): { x: number; y: number } {
-  return { x: tile.x, y: tile.y }
+function packTiles(tiles: readonly TileCoord[], from: TileCoord = ORIGIN): number[] {
+  const steps: number[] = []
+  let x = from.x
+  let y = from.y
+  for (const tile of tiles) {
+    steps.push(tile.x - x, tile.y - y)
+    x = tile.x
+    y = tile.y
+  }
+  return steps
 }
 
-function decodeTile(tile: { x: number; y: number }): TileCoord {
-  return { x: tile.x, y: tile.y }
+function unpackTiles(steps: readonly number[], from: TileCoord = ORIGIN): TileCoord[] {
+  const tiles: TileCoord[] = []
+  let x = from.x
+  let y = from.y
+  for (let i = 0; i + 1 < steps.length; i += 2) {
+    x += steps[i]
+    y += steps[i + 1]
+    tiles.push({ x, y })
+  }
+  return tiles
 }
 
 function encodePoint(point: MapPoint): { x: number; y: number } {
@@ -470,8 +518,4 @@ function emptyMap(): MapData {
 
 function emptyCity(): CityState {
   return { ownerId: 0, color: 0, progress: 0, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
-}
-
-function emptyLayout(): CityLayout {
-  return { x: 0, y: 0, span: 0, seed: 0, tiles: [], buildings: [], streets: [] }
 }

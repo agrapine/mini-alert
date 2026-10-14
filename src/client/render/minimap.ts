@@ -4,12 +4,12 @@ import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
 const DOT = 3.25
-const DRAG_PX = 8
+const FOG_REPAINT_MS = 200
 
 export type MinimapCommand = (
   tile: TileCoord,
-  mods: { ctrlKey: boolean; metaKey: boolean },
-) => boolean
+  mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
+) => void
 
 export class Minimap {
   private world: WorldSnapshot
@@ -21,12 +21,10 @@ export class Minimap {
   private readonly image: ImageData
   private readonly ctx: CanvasRenderingContext2D
   private tracking = false
-  private dragged = false
-  private downX = 0
-  private downY = 0
   private command: MinimapCommand | null = null
   private lastMask: Float32Array | null = null
   private fogSettled = false
+  private fogPaintedAt = -Infinity
   private cityHash = 0
 
   constructor(
@@ -50,17 +48,22 @@ export class Minimap {
     this.root.addEventListener('pointerup', this.onPointerUp)
     this.root.addEventListener('pointercancel', this.onPointerCancel)
     this.root.addEventListener('pointerleave', this.onPointerLeave)
+    this.root.addEventListener('contextmenu', preventMenu)
   }
 
   setHover(hover: (tile: TileCoord | null) => void) {
     this.hover = hover
   }
 
-  retile(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+  retile(world: WorldSnapshot) {
     this.world = world
-    this.layouts = layouts
     paintInto(this.pristine, world)
     this.base.set(this.pristine)
+    this.fogSettled = false
+  }
+
+  setLayouts(layouts: readonly (CityLayout | null)[]) {
+    this.layouts = layouts
     this.fogSettled = false
   }
 
@@ -74,14 +77,17 @@ export class Minimap {
     this.root.removeEventListener('pointerup', this.onPointerUp)
     this.root.removeEventListener('pointercancel', this.onPointerCancel)
     this.root.removeEventListener('pointerleave', this.onPointerLeave)
+    this.root.removeEventListener('contextmenu', preventMenu)
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
-    if (event.button !== 0) return
+    if (event.button === 2) {
+      const tile = this.tileAt(event.clientX, event.clientY)
+      if (tile) this.command?.(tile, event)
+      return
+    }
     this.tracking = true
-    this.dragged = false
-    this.downX = event.clientX
-    this.downY = event.clientY
+    this.jump(event.clientX, event.clientY)
     try {
       this.root.setPointerCapture(event.pointerId)
     } catch {
@@ -91,30 +97,16 @@ export class Minimap {
 
   private readonly onPointerMove = (event: PointerEvent) => {
     this.hover?.(this.tileAt(event.clientX, event.clientY))
-    if (!this.tracking) return
-    if (!this.dragged) {
-      const dx = event.clientX - this.downX
-      const dy = event.clientY - this.downY
-      if (dx * dx + dy * dy < DRAG_PX * DRAG_PX) return
-      this.dragged = true
-    }
-    this.jump(event.clientX, event.clientY)
+    if (this.tracking && event.buttons === 0) this.tracking = false
+    if (this.tracking) this.jump(event.clientX, event.clientY)
   }
 
-  private readonly onPointerUp = (event: PointerEvent) => {
-    if (!this.tracking || event.button !== 0) return
-    const dragged = this.dragged
+  private readonly onPointerUp = () => {
     this.tracking = false
-    this.dragged = false
-    if (dragged) return
-    const tile = this.tileAt(event.clientX, event.clientY)
-    if (tile && this.command?.(tile, event)) return
-    this.jump(event.clientX, event.clientY)
   }
 
   private readonly onPointerCancel = () => {
     this.tracking = false
-    this.dragged = false
   }
 
   private readonly onPointerLeave = () => {
@@ -131,7 +123,11 @@ export class Minimap {
     rally: TileCoord | null = null,
   ) {
     this.cityStates = cities
-    if (fog) this.applyFog(fog)
+    const now = performance.now()
+    if (fog && now - this.fogPaintedAt >= FOG_REPAINT_MS) {
+      this.fogPaintedAt = now
+      this.applyFog(fog)
+    }
     const ctx = this.marks.getContext('2d')
     if (!ctx) return
     const width = this.root.clientWidth
@@ -382,4 +378,8 @@ function paintInto(target: Uint8ClampedArray, world: WorldSnapshot) {
 
 function cssColor(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`
+}
+
+function preventMenu(event: Event) {
+  event.preventDefault()
 }

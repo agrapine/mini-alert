@@ -2,7 +2,8 @@ import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, InstancedMesh, Ma
 import type { CityState, MapPoint, ShotEvent, ShotHit, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { citySightOrigin, type CityLayout } from '../../shared/cities.ts'
 import { collectFriends, type CitySight, type SightSource } from '../../shared/vision.ts'
-import { UNIT_TYPES, UnitTypeId, buildStage, type WeaponKind } from '../../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId, buildStage, spanOf, type WeaponKind } from '../../shared/unit-types.ts'
+import type { ExpectedSite } from '../replica.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
@@ -18,6 +19,7 @@ import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from 
 const WRECK_HOLD = 4
 const WRECK_SINK = 1.6
 const BAR_ZOOM = 0.5
+const SURFACE_SECONDS = 0.5
 
 type Wreck = {
   group: Group
@@ -44,6 +46,8 @@ export class GameView {
   private props: PropField | null = null
   private readonly livingUnits: UnitSnapshot[] = []
   private readonly aliveIds = new Set<number>()
+  private readonly livingById = new Map<number, UnitSnapshot>()
+  private readonly shownSelection: UnitSnapshot[] = []
   private readonly selectedIds = new Set<number>()
   private readonly goalUnits: UnitSnapshot[] = []
   private readonly hoveredUnits: UnitSnapshot[] = []
@@ -52,7 +56,11 @@ export class GameView {
   private fog: Fog | null = null
   private surface: Group | null = null
   private propsEpoch = -1
+  private builtTerrain = -1
+  private syncedCities = -1
+  private sinceSurface = 0
   private readonly placement: Mesh[] = []
+  private readonly expectedSites: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
   private readonly wrecks: Wreck[] = []
@@ -96,7 +104,7 @@ export class GameView {
     this.stage.scene.add(this.rallyMark)
   }
 
-  mountTerrain(world: WorldSnapshot) {
+  mountTerrain(world: WorldSnapshot, revision: number, knownTiles: number) {
     const root = document.querySelector<HTMLElement>('#minimap')
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
@@ -109,19 +117,29 @@ export class GameView {
     sea.position.set(world.width / 2, 0, world.height / 2)
     this.stage.scene.add(sea)
     this.presentSurface(world)
+    this.builtTerrain = revision
     if (root && map && marks) {
       this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
     }
     this.cities = new CityLayer()
     void this.cities.load().then(() => this.stage.scene.add(this.cities!.root))
-    this.noteProps(world)
+    this.noteProps(world, knownTiles)
   }
 
-  noteMap(world: WorldSnapshot, layouts: readonly (CityLayout | null)[]) {
+  /** Rebuilds the island at most every SURFACE_SECONDS; the fog hides tiles revealed in between. */
+  syncTerrain(world: WorldSnapshot, revision: number, knownTiles: number) {
+    if (revision === this.builtTerrain || this.sinceSurface < SURFACE_SECONDS) return
+    this.builtTerrain = revision
+    this.sinceSurface = 0
     this.presentSurface(world)
-    this.minimap?.retile(world, layouts)
-    this.cities?.present(layouts, this.pendingCities)
-    this.noteProps(world)
+    this.minimap?.retile(world)
+    this.noteProps(world, knownTiles)
+  }
+
+  syncCities(layouts: readonly (CityLayout | null)[], revision: number) {
+    if (revision === this.syncedCities) return
+    this.syncedCities = revision
+    this.minimap?.setLayouts(layouts)
   }
 
   private presentSurface(world: WorldSnapshot) {
@@ -133,8 +151,8 @@ export class GameView {
     this.stage.scene.add(this.surface)
   }
 
-  private noteProps(world: WorldSnapshot) {
-    const epoch = knownStamp(world)
+  private noteProps(world: WorldSnapshot, knownTiles: number) {
+    const epoch = knownTiles
     if (epoch === this.propsEpoch) return
     this.propsEpoch = epoch
     const field = this.props ?? new PropField()
@@ -145,8 +163,6 @@ export class GameView {
       this.clearGround(this.pendingCleared, false)
     })
   }
-
-  private pendingCities: readonly (CityState | null)[] = []
 
   private ownedCitySights(playerId: number, states: readonly (CityState | null)[], layouts: readonly (CityLayout | null)[]) {
     const sights = this.citySights
@@ -208,6 +224,7 @@ export class GameView {
 
   update(dt: number) {
     this.shotDt = dt
+    this.sinceSurface += dt
     this.stage.update(dt)
   }
 
@@ -233,6 +250,28 @@ export class GameView {
 
   setShowRanges(on: boolean) {
     this.showRanges = on
+  }
+
+  showExpectedSites(sites: readonly ExpectedSite[]) {
+    while (this.expectedSites.length < sites.length) {
+      const mesh = new Mesh(
+        new PlaneGeometry(1, 1),
+        new MeshBasicMaterial({ color: 0xf6f1dc, transparent: true, opacity: 0.4, depthWrite: false }),
+      )
+      mesh.rotation.x = -Math.PI / 2
+      mesh.renderOrder = 4
+      this.stage.scene.add(mesh)
+      this.expectedSites.push(mesh)
+    }
+    for (let i = 0; i < this.expectedSites.length; i++) {
+      const mesh = this.expectedSites[i]
+      const site = sites[i]
+      mesh.visible = site !== undefined
+      if (!site) continue
+      const span = site.typeId === null ? { x: 1, y: 1 } : spanOf(UNIT_TYPES[site.typeId])
+      mesh.scale.set(span.x - 0.08, span.y - 0.08, 1)
+      mesh.position.set(site.tile.x + span.x / 2, TILE_TOP + 0.09, site.tile.y + span.y / 2)
+    }
   }
 
   showPlacement(cells: readonly { x: number; y: number; open: boolean }[] | null) {
@@ -335,7 +374,15 @@ export class GameView {
     }
     const alive = this.aliveIds
     alive.clear()
-    for (const unit of living) alive.add(unit.id)
+    this.livingById.clear()
+    for (const unit of living) {
+      alive.add(unit.id)
+      this.livingById.set(unit.id, unit)
+    }
+    const shownSelection = this.shownSelection
+    shownSelection.length = 0
+    for (const unit of selected) shownSelection.push(this.livingById.get(unit.id) ?? unit)
+    selected = shownSelection
     for (const [id, group] of this.units) {
       if (alive.has(id)) continue
       releaseMesh(group)
@@ -392,7 +439,6 @@ export class GameView {
     this.shots.strike(hits, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
-    this.pendingCities = cities
     if (playerId === null) this.friendBuffer.length = 0
     else collectFriends(living, playerId, this.ownedCitySights(playerId, cities, layouts), this.friendBuffer)
     this.fog?.update(this.shotDt, this.friendBuffer)
@@ -578,12 +624,6 @@ function disposeGroup(group: Group) {
   for (const material of materials) {
     if (!material.userData.retain) material.dispose()
   }
-}
-
-function knownStamp(world: WorldSnapshot): number {
-  let count = 0
-  for (const bit of world.known) count += bit
-  return count
 }
 
 function circleHitsRect(

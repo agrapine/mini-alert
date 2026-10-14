@@ -1,14 +1,14 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
-import { holdSeatToken } from './client/seat.ts'
 import { Commander } from './client/commander.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
 import { rememberedName, rememberName } from './client/player-name.ts'
 import { bindMenu } from './client/menu.ts'
 import { Net } from './client/net.ts'
-import { bindInput, commandAt } from './client/input/pointer.ts'
+import { bindInput, orderAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
+import { seatLink } from './client/seat.ts'
 import { GameView } from './client/render/view.ts'
 import { bindTrace } from './client/trace-pie.ts'
 import { populationOf } from './shared/cities.ts'
@@ -27,7 +27,9 @@ const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-if (!canvas || !lobbyRoot || !traceRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
+const elsewhere = document.querySelector<HTMLElement>('#elsewhere')
+const playHere = document.querySelector<HTMLButtonElement>('#elsewhere-play')
+if (!canvas || !lobbyRoot || !traceRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose || !elsewhere || !playHere) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
@@ -48,7 +50,7 @@ const replica = new Replica()
 const net = new Net()
 const port: ClientPort = {
   send(message) {
-    net.sendGame(message)
+    return net.sendGame(message, replica.localTick)
   },
   onServer() {},
 }
@@ -94,6 +96,9 @@ const lobby = new LobbyView(lobbyRoot, {
     if (!saved) return
     claimedName = saved
     net.sendLobby({ kind: LobbyClientKind.SetName, name: saved })
+  },
+  async copyLink() {
+    await navigator.clipboard.writeText(seatLink(net.seat))
   },
   createGame() {
     music.lobby()
@@ -145,14 +150,24 @@ net.onClose = () => {
   claimedName = null
   lobby.setConnected(false)
 }
+playHere.addEventListener('click', () => {
+  elsewhere.hidden = true
+  net.connect()
+})
 net.onLobby = (message) => {
+  if (message.kind === LobbyServerKind.Replaced) {
+    net.pause()
+    leaveMatch()
+    music.silent()
+    elsewhere.hidden = false
+    return
+  }
   if (message.kind === LobbyServerKind.Preview) {
     preview = message
     lobby.showPreview(message)
     return
   }
   if (message.kind === LobbyServerKind.Waiting) {
-    holdSeatToken(message.token)
     leaveMatch()
     music.silent()
     preview = null
@@ -160,7 +175,6 @@ net.onLobby = (message) => {
     claimName(message.you.name)
     return
   }
-  holdSeatToken(message.token)
   factions = message.factions
   seatId = message.seatId
   if (message.spectating !== spectating) {
@@ -207,11 +221,8 @@ net.onGame = (frame) => {
     return
   }
   if (!hadWorld && replica.world) mountWorld()
-  else if (replica.consumeMapChange() && live.view && replica.world) {
-    live.view.noteMap(replica.world, replica.settledLayouts())
-  }
   if (frame.events.some((event) => event.kind === ServerEventKind.Snapshot)) aimOnce()
-  if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
+  if (replica.advance(0)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot }, replica.localTick)
 }
 net.connect()
 
@@ -230,6 +241,7 @@ function leaveMatch() {
   toldWin = false
   aimed = false
   player.setSpectating(false)
+  player.reset()
   replica.reset()
   live.view?.dispose()
   live.view = null
@@ -250,8 +262,8 @@ function mountWorld() {
   live.view?.dispose()
   const view = new GameView(viewCanvas, world.width, world.height)
   live.view = view
-  view.mountTerrain(world)
-  view.setMinimapCommand((tile, mods) => commandAt(tile, replica, player, view, mods))
+  view.mountTerrain(world, replica.terrainRevision, replica.knownTiles)
+  view.setMinimapCommand((tile, mods) => orderAt(tile, replica, player, view, mods))
   view.setMinimapHover((tile) => {
     if (player.raisingCity()) player.setAim(tile)
   })
@@ -344,6 +356,7 @@ const credits = document.querySelector<HTMLElement>('#credits')
 const forces = document.querySelector<HTMLElement>('#forces')
 const population = document.querySelector<HTMLElement>('#population')
 const cities = document.querySelector<HTMLElement>('#cities')
+const ping = document.querySelector<HTMLElement>('#ping')
 const orders = document.querySelector<HTMLElement>('#orders')
 const fullscreen = document.querySelector<HTMLButtonElement>('#fullscreen')
 const NEEDS_FACTORY = new Set<UnitTypeId>([UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
@@ -363,6 +376,10 @@ fullscreen?.addEventListener('click', () => {
 })
 
 const COUNT_SECONDS = 0.15
+const PING_MS = 2000
+const STALL_MS = 6000
+const SLOW_PING_MS = 150
+const BAD_PING_MS = 300
 let shownCredits = replica.credits
 
 function heldCities(): { cities: number; population: number } {
@@ -397,18 +414,25 @@ const refreshHud = (dt: number) => {
   let army = 0
   for (const unit of own) army += UNIT_TYPES[unit.typeId].supply
   let queued = 0
-  for (const job of replica.training) queued += UNIT_TYPES[job.typeId].supply
+  const queue = replica.queue()
+  for (const job of queue) queued += UNIT_TYPES[job.typeId].supply
   if (forces) {
     forces.textContent = String(army)
     forces.classList.toggle('over', army > held.population)
   }
   if (population) population.textContent = String(held.population)
   if (cities) cities.textContent = String(held.cities)
+  if (ping) {
+    const rtt = net.rtt
+    ping.textContent = rtt === null ? '–' : `${Math.round(rtt)} ms`
+    ping.classList.toggle('slow', rtt !== null && rtt > SLOW_PING_MS)
+    ping.classList.toggle('bad', rtt !== null && rtt > BAD_PING_MS)
+  }
   const ready = new Set<number>()
   for (const unit of own) {
     if (unit.progress >= 1 && UNIT_TYPES[unit.typeId].topSpeed <= 0) ready.add(unit.typeId)
   }
-  const head = replica.training[0]
+  const head = queue[0]
   const armed = player.placingType()
   const pending = structureQueue()
   const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
@@ -422,7 +446,7 @@ const refreshHud = (dt: number) => {
     let count = 0
     let progress = 0
     if (training) {
-      for (const job of replica.training) if (job.typeId === entry.id) count += 1
+      for (const job of queue) if (job.typeId === entry.id) count += 1
       progress = head?.typeId === entry.id ? head.progress : 0
     } else {
       const site = pending.get(entry.id)
@@ -431,7 +455,7 @@ const refreshHud = (dt: number) => {
     }
     const gate = training ? ready.has(yardOf(entry.id)) : !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
     const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, replica.training) > 0)
+    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, queue) > 0)
     paintTile(entry, count, progress, gate && room, gate || count > 0 || progress > 0, !training && armed === entry.id)
   }
 }
@@ -549,20 +573,22 @@ const frame = (now: number) => {
   last = now
   const view = live.view
   if (view) {
-    if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot })
-    if (replica.consumeMapChange() && replica.world) view.noteMap(replica.world, replica.settledLayouts())
+    if (replica.advance(frameDt)) net.sendGame({ kind: ClientMessageKind.RequestSnapshot }, replica.localTick)
+    if (replica.world) view.syncTerrain(replica.world, replica.terrainRevision, replica.knownTiles)
+    view.syncCities(replica.settledLayouts(), replica.cityRevision)
     view.update(frameDt)
     refreshHud(frameDt)
+    view.showExpectedSites(replica.expectedSiteList())
     view.render(
-      replica.units,
+      replica.drawn(),
       player.selected(),
       replica.takeShots(),
       replica.takeHits(),
       replica.playerId,
       replica.cities,
       replica.settledLayouts(),
-      replica.primaryFactoryId,
-      replica.rally,
+      replica.shownPrimary(),
+      replica.shownRally(),
       replica.cleared,
       replica.takeYields(),
     )
@@ -570,3 +596,13 @@ const frame = (now: number) => {
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
+
+window.setInterval(() => {
+  if (!live.view) return
+  const quiet = net.quietFor()
+  if (quiet !== null && quiet > STALL_MS) {
+    net.drop()
+    return
+  }
+  if (!document.hidden) net.sendGame({ kind: ClientMessageKind.Ping }, replica.localTick)
+}, PING_MS)

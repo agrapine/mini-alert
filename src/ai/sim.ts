@@ -257,8 +257,8 @@ function thoughtText(thought: Thought | null): string {
 }
 
 function describeOrder(order: ClientMessage): string {
-  if (order.kind === ClientMessageKind.OrderMove) return `move #${order.unitId} ${order.tile.x},${order.tile.y}`
-  if (order.kind === ClientMessageKind.OrderAttack) return `attack #${order.unitId} #${order.targetId}`
+  if (order.kind === ClientMessageKind.OrderMove) return `move #${order.unitIds.join(',#')} ${order.tile.x},${order.tile.y}`
+  if (order.kind === ClientMessageKind.OrderAttack) return `attack #${order.unitIds.join(',#')} #${order.targetId}`
   if (order.kind === ClientMessageKind.Spawn) return `train ${UNIT_TYPES[order.typeId].label}`
   if (order.kind === ClientMessageKind.PlaceBuilding) return `build ${UNIT_TYPES[order.typeId].label} ${order.tile.x},${order.tile.y}`
   return 'order'

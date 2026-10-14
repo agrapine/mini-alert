@@ -4,6 +4,8 @@ import type { CitySight } from '../shared/vision.ts'
 import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
 import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
+import { SIM_STEP } from '../shared/motion.ts'
+import { planMoves } from '../shared/route.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { __TRACE__, traceBegin, traceEnd } from './trace.ts'
 import { TraceSlot } from '../shared/trace.ts'
@@ -21,6 +23,9 @@ export type Scenery = {
   towns: MapPoint[]
   seed: number
 }
+
+/** Settled layouts by city, valid while the city keeps its layout object and its ruin count; ruins only grow. */
+const settledCities = new WeakMap<object, { layout: CityLayout; ruins: number; settled: CityLayout }>()
 
 const EMPTY_SCENERY: Scenery = { coast: [], holes: [], roads: [], towns: [], seed: 0 }
 
@@ -178,6 +183,10 @@ export class Game {
         at: site.at,
       })),
     }))
+  }
+
+  felled(): readonly TileCoord[] {
+    return this.fallen
   }
 
   clearedTiles(): TileCoord[] {
@@ -413,38 +422,56 @@ export class Game {
     return unit
   }
 
-  orderMove(playerId: number, unitId: number, tile: TileCoord): boolean {
-    const unit = this.owned(playerId, unitId)
-    if (!unit) return false
-    unit.attackId = null
-    unit.attackPoint = null
-    return unit.orderMove(tile, this.pathfinder, this.units)
-  }
-
-  orderAttack(playerId: number, unitId: number, targetId: number): boolean {
-    const unit = this.owned(playerId, unitId)
-    const target = this.units.find((candidate) => candidate.id === targetId)
-    if (!unit || !target || target.id === unit.id || target.ownerId === unit.ownerId || target.health <= 0) {
-      return false
+  /** Moves the units toward the tile; ground and sea units then advance `lag` steps, as the ordering client already shows them. */
+  orderMove(playerId: number, unitIds: readonly number[], tile: TileCoord, lag = 0): boolean {
+    let moved = false
+    const surface: Unit[] = []
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (unit.type.topSpeed <= 0) continue
+      unit.attackId = null
+      unit.attackPoint = null
+      if (domainOf(unit.type) === MoveDomain.Air) {
+        if (unit.orderMove(tile, this.pathfinder, this.units)) moved = true
+      } else surface.push(unit)
     }
-    unit.attackPoint = null
-    unit.attackId = target.id
-    unit.step(0, this.pathfinder, this.units)
-    return true
+    const movers = surface.map((unit) => ({ id: unit.id, tile: unit.tile, domain: domainOf(unit.type) }))
+    const routes = planMoves(this.pathfinder, movers, tile)
+    for (const unit of surface) {
+      const path = routes.get(unit.id)
+      if (!path || !unit.travel(path)) continue
+      moved = true
+      for (let i = 0; i < lag; i++) unit.step(SIM_STEP, this.pathfinder, this.units)
+    }
+    return moved
   }
 
-  orderAttackGround(playerId: number, unitId: number, tile: TileCoord): boolean {
-    const unit = this.owned(playerId, unitId)
-    if (!unit || unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) return false
+  orderAttack(playerId: number, unitIds: readonly number[], targetId: number): boolean {
+    const target = this.units.find((candidate) => candidate.id === targetId)
+    if (!target || target.health <= 0) return false
+    let ordered = false
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (target.id === unit.id || target.ownerId === unit.ownerId) continue
+      unit.attackPoint = null
+      unit.attackId = target.id
+      unit.step(0, this.pathfinder, this.units)
+      ordered = true
+    }
+    return ordered
+  }
+
+  orderAttackGround(playerId: number, unitIds: readonly number[], tile: TileCoord): boolean {
     if (!this.world.inBounds(tile.x, tile.y)) return false
     const point = { x: tile.x + 0.5, z: tile.y + 0.5 }
-    if (unit.type.topSpeed <= 0 && Math.hypot(point.x - unit.pos.x, point.z - unit.pos.z) > unit.type.weapon.range) {
-      return false
+    let ordered = false
+    for (const unit of this.ownedAll(playerId, unitIds)) {
+      if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
+      if (unit.type.topSpeed <= 0 && Math.hypot(point.x - unit.pos.x, point.z - unit.pos.z) > unit.type.weapon.range) continue
+      unit.attackId = null
+      unit.attackPoint = point
+      unit.step(0, this.pathfinder, this.units)
+      ordered = true
     }
-    unit.attackId = null
-    unit.attackPoint = point
-    unit.step(0, this.pathfinder, this.units)
-    return true
+    return ordered
   }
 
   tick(dt: number): ShotEvent[] {
@@ -499,6 +526,15 @@ export class Game {
     const snapshots = this.deaths.map((unit) => this.snapshot(unit))
     this.deaths = []
     return snapshots
+  }
+
+  private ownedAll(playerId: number, unitIds: readonly number[]): Unit[] {
+    const units: Unit[] = []
+    for (const id of new Set(unitIds)) {
+      const unit = this.owned(playerId, id)
+      if (unit) units.push(unit)
+    }
+    return units
   }
 
   private owned(playerId: number, unitId: number): Unit | undefined {
@@ -733,7 +769,11 @@ export class Game {
   }
 
   private live(city: CityRuntime): CityLayout {
-    return settledCity(city.layout, city.ruins)
+    const cached = settledCities.get(city)
+    if (cached && cached.layout === city.layout && cached.ruins === city.ruins.length) return cached.settled
+    const settled = settledCity(city.layout, city.ruins)
+    settledCities.set(city, { layout: city.layout, ruins: city.ruins.length, settled })
+    return settled
   }
 
   private buildingTargets() {

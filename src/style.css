@@ -283,6 +283,18 @@ body.match {
   color: #d64545;
 }
 
+.stat.ping span {
+  font-size: 16px;
+}
+
+#ping.slow {
+  color: #e0a040;
+}
+
+#ping.bad {
+  color: #d64545;
+}
+
 #help {
   opacity: 0.75;
   margin-top: 2px;
@@ -560,6 +572,7 @@ body.match #lobby {
 }
 
 .lobby-head,
+.lobby-you,
 .lobby-actions,
 .size-row,
 .slot-row,
@@ -1157,7 +1170,8 @@ body.match #lobby {
   letter-spacing: 0.02em;
 }
 
-#outcome {
+#outcome,
+#elsewhere {
   position: fixed;
   z-index: 9;
   inset: 0;
@@ -1166,7 +1180,13 @@ body.match #lobby {
   background: rgba(8, 10, 6, 0.45);
 }
 
-#outcome[hidden] {
+#elsewhere {
+  z-index: 30;
+  background: rgba(8, 10, 6, 0.75);
+}
+
+#outcome[hidden],
+#elsewhere[hidden] {
   display: none;
 }
 

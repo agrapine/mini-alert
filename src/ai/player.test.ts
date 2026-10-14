@@ -259,7 +259,7 @@ describe('ai', () => {
       },
       1,
     )
-    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitId: 2, tile: { x: 20, y: 20 } }])
+    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitIds: [2], tile: { x: 20, y: 20 } }])
   })
 
   it('keeps a tank on its target and sends the next one', () => {
@@ -298,7 +298,7 @@ describe('ai', () => {
       },
       1,
     )
-    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderAttack, unitId: 2, targetId: 9 }])
+    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderAttack, unitIds: [2], targetId: 9 }])
   })
 
   it('steps a scout onto unknown ground', () => {
@@ -340,7 +340,7 @@ describe('ai', () => {
       },
       1,
     )
-    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitId: 1, tile: { x: 1, y: 1 } }])
+    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitIds: [1], tile: { x: 1, y: 1 } }])
   })
 
   it('refuses a fight its group would lose', () => {
@@ -455,8 +455,8 @@ describe('ai', () => {
     }
     const fresh = consider({ ...brain, mood: { now: 4, pop: 0, popAt: 4, plan: 0, atX: -1, atY: -1, planAt: 4, salt: 1, banX: -1, banY: -1, near: 1e9 } }, 4)
     const stale = consider({ ...brain, mood: { now: 40, pop: 0, popAt: 0, plan: 0, atX: -1, atY: -1, planAt: 0, salt: 1, banX: -1, banY: -1, near: 1e9 } }, 4)
-    const moved = (thought: { orders: { kind: number; unitId?: number }[] }) =>
-      thought.orders.some((order) => order.kind === ClientMessageKind.OrderMove && order.unitId === 1)
+    const moved = (thought: { orders: { kind: number; unitIds?: number[] }[] }) =>
+      thought.orders.some((order) => order.kind === ClientMessageKind.OrderMove && order.unitIds?.includes(1))
     expect(moved(fresh)).toBe(false)
     expect(moved(stale)).toBe(true)
     expect(stale.candidates.some((candidate) => candidate.blocked === 'timeout')).toBe(true)
@@ -541,7 +541,7 @@ describe('ai', () => {
       },
       1,
     )
-    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitId: 1, tile: { x: 2, y: 0 } }])
+    expect(thought.orders).toEqual([{ kind: ClientMessageKind.OrderMove, unitIds: [1], tile: { x: 2, y: 0 } }])
   })
 
   it('marches on a known enemy city ahead of a closer neutral', () => {

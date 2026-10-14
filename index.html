@@ -58,6 +58,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10l5-3v13M9 20V7l6-3v16M15 20V9l5 2v9M3 20h18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
         <span id="cities"></span>
       </div>
+      <div class="stat ping" title="Round trip to the server">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h2v-3H4zM9 19h2v-6H9zM14 19h2V9h-2zM19 19h2V5h-2z" fill="currentColor"/></svg>
+        <span id="ping"></span>
+      </div>
     </div>
     <aside id="side">
       <div id="minimap">
@@ -83,6 +87,13 @@
       </div>
     </div>
     <div id="lobby"></div>
+    <div id="elsewhere" hidden>
+      <div class="outcome-card" role="dialog" aria-modal="true" aria-labelledby="elsewhere-title">
+        <h2 id="elsewhere-title">Open in another tab</h2>
+        <p>This game is open in another tab or window.</p>
+        <button type="button" id="elsewhere-play">Play here</button>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

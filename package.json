@@ -10,11 +10,12 @@
     "server-inspect": "tsx watch --inspect src/server/listen.ts",
     "start": "tsx src/server/listen.ts",
     "client": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && esbuild src/server/listen.ts --bundle --platform=node --format=esm --packages=external --outfile=build/server/listen.js",
     "preview": "vite preview",
     "test": "vitest run",
     "ai": "tsx src/ai/sim.ts",
-    "proto": "buf generate"
+    "proto": "buf generate",
+    "bench": "tsx src/bench/net.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.73.0",
@@ -23,14 +24,15 @@
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.2",
     "concurrently": "^10.0.6",
-    "tsx": "^4.23.15",
+    "esbuild": "^0.28.2",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
-    "vitest": "^5.0.3",
-    "ws": "^8.22.0"
+    "vitest": "^5.0.3"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "tsx": "^4.23.15",
+    "ws": "^8.22.0"
   }
 }

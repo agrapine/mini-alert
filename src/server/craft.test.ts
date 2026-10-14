@@ -43,7 +43,7 @@ describe('craft', () => {
     expect(jet.home).toEqual({ x: airport.tile.x, y: airport.tile.y })
     expect(jet.tile).toEqual(airport.tile)
     expect(jet.flight).toBe(Flight.Ground)
-    expect(game.orderMove(human.id, jet.id, { x: 22, y: 6 })).toBe(true)
+    expect(game.orderMove(human.id, [jet.id], { x: 22, y: 6 })).toBe(true)
     expect(jet.returning).toBe(false)
     expect(jet.flight).toBe(Flight.Taxi)
     expect(jet.bay).toBe(0)
@@ -55,11 +55,11 @@ describe('craft', () => {
     }
     expect(jet.flight).toBe(Flight.Orbit)
     expect(jet.returning).toBe(false)
-    expect(game.orderMove(human.id, jet.id, airport.tile)).toBe(true)
+    expect(game.orderMove(human.id, [jet.id], airport.tile)).toBe(true)
     expect(jet.returning).toBe(true)
   })
 
-  it('launches a cruiser onto water and refuses a land order', () => {
+  it('launches a cruiser onto water and stops a land order at the shore', () => {
     const width = 24
     const height = 16
     const tiles = new Uint8Array(width * height)
@@ -79,9 +79,10 @@ describe('craft', () => {
     expect(ship).toBeDefined()
     if (!ship) return
     expect(game.world.terrainAt(ship.tile.x, ship.tile.y)).toBe(Terrain.Water)
-    expect(game.orderMove(human.id, ship.id, { x: 18, y: 2 })).toBe(true)
+    expect(game.orderMove(human.id, [ship.id], { x: 18, y: 2 })).toBe(true)
     expect(ship.path.every((tile) => game.world.terrainAt(tile.x, tile.y) === Terrain.Water)).toBe(true)
-    expect(game.orderMove(human.id, ship.id, { x: 18, y: 8 })).toBe(false)
+    expect(game.orderMove(human.id, [ship.id], { x: 18, y: 8 })).toBe(true)
+    expect(ship.path.at(-1)).toEqual({ x: 18, y: 4 })
   })
 
   it('fires five rockets and reloads only after landing at its airport', () => {
@@ -164,8 +165,8 @@ describe('craft', () => {
     right.flight = Flight.Cruise
     right.altitude = 2.6
     right.facing = Math.PI
-    expect(game.orderMove(human.id, left.id, home)).toBe(true)
-    expect(game.orderMove(human.id, right.id, home)).toBe(true)
+    expect(game.orderMove(human.id, [left.id], home)).toBe(true)
+    expect(game.orderMove(human.id, [right.id], home)).toBe(true)
     let taxied = false
     let guard = 0
     const phase = (jet: { flight: Flight }) => jet.flight as Flight

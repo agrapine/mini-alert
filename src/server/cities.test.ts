@@ -27,6 +27,17 @@ function cityGame() {
 }
 
 describe('cities', () => {
+  it('frees the tile of a building as soon as it is ruined', () => {
+    const game = cityGame()
+    const runtime = game as unknown as { cities: { layout: CityLayout; ruins: { x: number; y: number }[] }[]; syncBlocks(): void }
+    const city = runtime.cities[0]
+    const building = city.layout.buildings[0]
+    expect(game.pathfinder.isWalkable(building.x, building.y, -1)).toBe(false)
+    city.ruins.push({ x: building.x, y: building.y })
+    runtime.syncBlocks()
+    expect(game.pathfinder.isWalkable(building.x, building.y, -1)).toBe(true)
+  })
+
   it('places buildings on walkable tiles and keeps the town tile open', () => {
     const game = cityGame()
     const layouts = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)

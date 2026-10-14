@@ -1,8 +1,12 @@
 node_modules
 dist
+build
 dist-ssr
 .git
 .cursor
 .DS_Store
 *.log
 coverage
+saves
+.tmp-saves-*
+ai-trace.jsonl
