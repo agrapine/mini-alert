@@ -19,7 +19,7 @@ import {
 import type { CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
-import { EXPLORE_MARGIN, friendsOf } from '../shared/vision.ts'
+import { EXPLORE_MARGIN, friendsOf, type CitySight } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
@@ -96,6 +96,11 @@ export class ServerHost {
   private readonly memory = new Map<Session, Memory>()
   private ais: AiPlayer[]
   private stopped = false
+  /** Game reads every session shares, computed on first use; `drop` clears them whenever the game may have changed. */
+  private routes: Map<number, number> | null = null
+  private sights: CitySight[] | null = null
+  private states: CityState[] | null = null
+  private layouts: CityLayout[] | null = null
 
   constructor(
     readonly game: Game,
@@ -180,6 +185,7 @@ export class ServerHost {
     const yields = this.game.takeYields()
     this.game.takeDeaths()
     this.tickNo += 1
+    this.drop()
     const living = this.game.unitSnapshots()
     for (const session of this.sessions) {
       if (!this.memory.has(session)) {
@@ -192,6 +198,7 @@ export class ServerHost {
 
   private onCommand(session: Session, message: ClientMessage, tick?: number) {
     this.apply(session, message, tick === undefined ? 0 : Math.max(0, Math.min(CATCH_UP_TICKS, this.tickNo - tick)))
+    this.drop()
     if (!session.echo) return
     this.pushTick(session, this.game.unitSnapshots(), [], [], [], session.playing ? orderedUnits(message) : NO_UNITS)
   }
@@ -230,7 +237,15 @@ export class ServerHost {
     }
   }
 
+  private drop() {
+    this.routes = null
+    this.sights = null
+    this.states = null
+    this.layouts = null
+  }
+
   private pushSync(session: Session) {
+    this.drop()
     const memory = this.blank(session.playerId)
     this.memory.set(session, memory)
     const { width } = this.game.world
@@ -471,7 +486,8 @@ export class ServerHost {
         fresh.push({ x: nx, y: ny })
       }
     }
-    for (const friend of friendsOf(units, memory.owner, this.game.citySights())) {
+    this.sights ??= this.game.citySights()
+    for (const friend of friendsOf(units, memory.owner, this.sights)) {
       const reach = Math.ceil(friend.sight)
       const originX = Math.floor(friend.x)
       const originY = Math.floor(friend.z)
@@ -532,8 +548,8 @@ export class ServerHost {
 
   private visibleCities(memory: Memory): VisibleCity[] {
     const records: VisibleCity[] = []
-    const states = this.game.cityStates()
-    const layouts = this.game.cityLayouts()
+    const states = (this.states ??= this.game.cityStates())
+    const layouts = (this.layouts ??= this.game.cityLayouts())
     for (let index = 0; index < states.length; index++) {
       const layout = clipLayout(layouts[index], memory.explored, this.game.world.width)
       if (!layout || layout.tiles.length === 0) continue
@@ -629,8 +645,8 @@ export class ServerHost {
   }
 
   private routeOf(unit: UnitSnapshot): number {
-    const live = this.game.units.find((candidate) => candidate.id === unit.id)
-    return live?.route ?? 0
+    this.routes ??= new Map(this.game.units.map((live) => [live.id, live.route]))
+    return this.routes.get(unit.id) ?? 0
   }
 }
 

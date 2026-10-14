@@ -31,6 +31,7 @@
 - Units always settle to the server's answer after a move or attack order.
 - Units no longer jump on jittery or lossy connections: your game holds each server update until its moment comes, so it runs slightly behind the server, up to a fifth of a second on unsteady connections.
 - The server runs precompiled, spending 1–20% less time per tick and leaving more headroom on small hosts.
+- The server works out city and sight data once per tick for all players instead of once for each, leaving more headroom on small hosts.
 
 ## 0.4
 

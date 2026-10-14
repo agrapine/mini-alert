@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Replica } from '../client/replica.ts'
+import { canPlaceCityBuilding } from '../shared/cities.ts'
 import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, type MotionState } from '../shared/motion.ts'
 import { ClientMessageKind, ServerEventKind, type ServerFrame } from '../shared/protocol.ts'
 import { Terrain } from '../shared/tiles.ts'
@@ -29,6 +30,31 @@ describe('host snapshots', () => {
     expect(updates.length).toBeGreaterThan(0)
     expect(updates.length).toBeLessThan(90)
     for (const update of updates) expect(update.city.layout).toBeNull()
+  })
+
+  it("answers a city building with that city's new layout in the command's echo", () => {
+    const tiles = new Uint8Array(20 * 20).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(20, 20, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 7 }
+    game.bindCities()
+    const player = game.addPlayer()
+    game.claimCity({ x: 8, y: 8 }, player.id)
+    game.spawn(player, UnitTypeId.Scout, { x: 2, y: 2 })
+    player.credits = 10_000
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    host.tick(SIM_STEP)
+    const layout = game.cityLayouts()[0]
+    const terrain = Array.from({ length: 20 * 20 }, () => Terrain.Land)
+    const plots = Array.from({ length: 20 * 20 }, (_, index) => ({ x: index % 20, y: Math.floor(index / 20) }))
+    const site = plots.find((tile) => canPlaceCityBuilding(layout, tile.x, tile.y, terrain, 20, 20))
+    if (!site) throw new Error('no building plot')
+    frames.length = 0
+    play.command({ kind: ClientMessageKind.PlaceCity, tile: site }, 1, host.tickNo)
+    const update = frames[0].events.find((event) => event.kind === ServerEventKind.CityUpdate)
+    expect(update?.city.layout?.buildings).toContainEqual(expect.objectContaining({ x: site.x, y: site.y }))
   })
 
   it('sends motion on an order and stays quiet when the path does not change', () => {
