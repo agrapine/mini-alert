@@ -36,6 +36,7 @@
 - The lobby is a command console: a MINI ALERT header with your name, Copy my link and a Live light, steel panels with stencil headings, faint scanlines and a light running along the panel edges; nothing moves when your system asks for reduced motion. Games are battles, listed as #N with Open, Staging or In combat, and Deploy starts one. On phones the panels stack in one column.
 - Dragging the AI pace slider in a game room no longer lets go after one step.
 - Feature requests on the main screen: post a short request in the Requests panel and vote for the ones you want with ▲; click again to take your vote back. The most voted are listed first and finished requests move to Done. Each player can have three open requests at a time.
+- The map preview is a radar: a glowing square frame with range rings, a crosshair and a turning sweep that goes amber while the map draws. In the waiting room a radar scope above Requests shows every battle as a blip in the colour of its state; phones leave it out.
 
 ## 0.4
 

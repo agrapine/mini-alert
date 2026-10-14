@@ -62,9 +62,11 @@ export class LobbyView {
   private readonly mainTitle: HTMLElement
   private readonly main: HTMLElement
   private readonly preview: HTMLElement
-  private readonly map: HTMLElement
   private readonly marks: SVGSVGElement
   private readonly canvas: HTMLCanvasElement
+  private readonly drawing: HTMLElement
+  private readonly scope: HTMLElement
+  private readonly blips: HTMLElement
   private readonly chatLog: HTMLElement
   private readonly chatInput: HTMLInputElement
   private readonly requests: HTMLElement
@@ -155,17 +157,27 @@ export class LobbyView {
     const previewTitle = document.createElement('h2')
     previewTitle.textContent = 'Radar'
     this.preview = panel('section', 'lobby-preview', '03', previewTitle)
-    this.map = document.createElement('div')
-    this.map.className = 'lobby-map'
     this.canvas = document.createElement('canvas')
     this.marks = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     this.marks.classList.add('lobby-marks')
-    const spinner = document.createElement('div')
-    spinner.className = 'lobby-spinner'
-    spinner.setAttribute('role', 'status')
-    spinner.setAttribute('aria-label', 'Drawing map')
-    this.map.append(this.canvas, this.marks)
-    this.preview.append(this.map, spinner)
+    this.drawing = document.createElement('p')
+    this.drawing.className = 'lobby-drawing'
+    this.drawing.setAttribute('role', 'status')
+    this.drawing.setAttribute('aria-label', 'Drawing map')
+    this.drawing.textContent = 'Drawing map'
+    this.drawing.hidden = true
+    const map = document.createElement('div')
+    map.className = 'lobby-map'
+    map.append(radar(this.canvas, sweep(), this.marks, this.drawing))
+    this.preview.append(map)
+
+    const scopeTitle = document.createElement('h2')
+    scopeTitle.textContent = 'Radar'
+    this.scope = panel('section', 'lobby-scope', '03', scopeTitle)
+    this.scope.setAttribute('aria-hidden', 'true')
+    this.blips = document.createElement('div')
+    this.blips.className = 'scope-blips'
+    this.scope.append(radar(sweep(), this.blips))
 
     const chatTitle = document.createElement('h2')
     chatTitle.textContent = 'Comms'
@@ -250,7 +262,7 @@ export class LobbyView {
 
     this.grid = document.createElement('div')
     this.grid.className = 'lobby-grid'
-    this.grid.append(peoplePanel, battlePanel, this.preview, this.requests, chat)
+    this.grid.append(peoplePanel, battlePanel, this.preview, this.scope, this.requests, chat)
     root.replaceChildren(head, this.grid, this.replaced)
     this.paceRow = document.createElement('label')
     this.paceRow.className = 'pace-row'
@@ -292,9 +304,11 @@ export class LobbyView {
     this.peopleTitle.textContent = 'Operators'
     this.mainTitle.textContent = 'Battles'
     this.preview.hidden = true
+    this.scope.hidden = false
     this.requests.hidden = false
     this.fillPeople(state.people)
     this.fillGames(state.games)
+    this.blips.replaceChildren(...state.games.map(blip))
     this.fillRequests(state.requests)
     this.paintChat(state.chat, 'hall')
   }
@@ -311,6 +325,7 @@ export class LobbyView {
     this.peopleTitle.textContent = 'Not seated'
     this.mainTitle.textContent = battle
     this.preview.hidden = false
+    this.scope.hidden = true
     this.requests.hidden = true
     this.slots = state.slots
     this.setBusy(state.generating)
@@ -337,6 +352,7 @@ export class LobbyView {
 
   setBusy(on: boolean) {
     this.preview.classList.toggle('busy', on)
+    this.drawing.hidden = !on
   }
 
   holdName(name: string) {
@@ -679,6 +695,36 @@ function panelHead(heading: HTMLElement, index?: string): HTMLElement {
   }
   head.append(heading)
   return head
+}
+
+function radar(...layers: Element[]): HTMLElement {
+  const frame = document.createElement('div')
+  frame.className = 'lobby-radar'
+  frame.append(...layers)
+  return frame
+}
+
+function sweep(): HTMLElement {
+  const layer = document.createElement('div')
+  layer.className = 'lobby-sweep'
+  return layer
+}
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+const GOLDEN_RATIO = (1 + Math.sqrt(5)) / 2
+
+function blip(game: GameCard): HTMLElement {
+  const angle = game.id * GOLDEN_ANGLE
+  // 0.2–0.8 of the scope's radius keeps a blip off the centre and its label inside the frame.
+  const radius = 0.2 + 0.6 * ((game.id * GOLDEN_RATIO) % 1)
+  const element = document.createElement('span')
+  element.className = `scope-blip ${gamePhase(game)}`
+  element.style.left = `${(50 + 50 * radius * Math.cos(angle)).toFixed(2)}%`
+  element.style.top = `${(50 + 50 * radius * Math.sin(angle)).toFixed(2)}%`
+  const label = document.createElement('span')
+  label.textContent = `#${game.id}`
+  element.append(label)
+  return element
 }
 
 function plate(label: string, onClick: () => void): HTMLButtonElement {
