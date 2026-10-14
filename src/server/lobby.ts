@@ -30,6 +30,7 @@ import { ServerHost } from './host.ts'
 import { seatIsland, spreadTowns } from './island-match.ts'
 import { generateIsland, type Island } from './mapgen/generate.ts'
 import { pack, unpack } from './persist.ts'
+import { RequestBoard, type RequestsSave } from './requests.ts'
 import './state.ts'
 import { Game } from './game.ts'
 
@@ -108,6 +109,7 @@ export class Lobby {
   private readonly tokens = new Map<string, number>()
   private readonly games = new Map<number, GameRoom>()
   private readonly hallChat: ChatLine[] = []
+  private readonly board = new RequestBoard()
   private clock = 0
 
   gameIds(): number[] {
@@ -127,6 +129,10 @@ export class Lobby {
         admin: member.admin,
       })),
     }
+  }
+
+  savedBoard(): RequestsSave {
+    return this.board.saved()
   }
 
   saveGame(id: number): unknown {
@@ -156,6 +162,10 @@ export class Lobby {
       this.tokens.set(member.token, member.id)
       this.nextId = Math.max(this.nextId, member.id + 1)
     }
+  }
+
+  loadBoard(data: unknown) {
+    this.board.load(data)
   }
 
   loadGame(data: unknown): boolean {
@@ -271,6 +281,10 @@ export class Lobby {
     else if (message.kind === LobbyClientKind.SetAiPace) this.setAiPace(client, message.pace)
     else if (message.kind === LobbyClientKind.ClaimAdmin) client.admin = true
     else if (message.kind === LobbyClientKind.DestroyGame) this.destroyGame(client, message.gameId)
+    else if (message.kind === LobbyClientKind.PostRequest) this.boardChanged(this.board.post(client.id, client.name, message.text))
+    else if (message.kind === LobbyClientKind.ToggleVote) this.boardChanged(this.board.toggle(client.id, message.requestId))
+    else if (message.kind === LobbyClientKind.MarkRequestDone) this.boardChanged(client.admin && this.board.markDone(message.requestId))
+    else if (message.kind === LobbyClientKind.DeleteRequest) this.boardChanged(client.admin && this.board.remove(message.requestId))
   }
 
   onGame(member: LobbyMember, message: ClientMessage, seq: number, tick: number) {
@@ -518,6 +532,10 @@ export class Lobby {
       const seat = owner === undefined ? undefined : match.seats.get(owner)
       seat?.setView(watch.playerId)
     }
+  }
+
+  private boardChanged(changed: boolean) {
+    if (changed) this.refreshWaiting()
   }
 
   private destroyGame(client: Member, gameId: unknown) {
@@ -850,6 +868,7 @@ export class Lobby {
       people,
       games,
       chat: this.hallChat.slice(),
+      requests: this.board.cards(member.id),
     }
   }
 
