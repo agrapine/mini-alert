@@ -433,6 +433,15 @@ describe('replica drawing', () => {
     expect(replica.unit(2)?.path).toEqual([{ x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 }])
   })
 
+  it('keeps units on the move on course on an attack order out of range, turning only turrets to the target', () => {
+    const tank = { ...scout(1.5, road), id: 2, typeId: UnitTypeId.MedTank }
+    const runner = onRow(scout(1.5, road), 4, 6)
+    const replica = joined(tank, runner, { ...scout(14.5, []), id: 3, ownerId: 2 })
+    replica.predictAttack([2, 4], { x: 14.5, z: 4.5 }, 3)
+    expect(replica.unit(2)).toMatchObject({ x: 1.5, z: 4.5, facing: Math.PI / 2, path: road, attackId: 3 })
+    expect(replica.unit(4)).toMatchObject({ path: runner.path, attackId: null })
+  })
+
   it('shows an expected unit in the queue until its command is acknowledged', () => {
     const replica = joined(scout(2.5, []))
     replica.expectTraining(5, UnitTypeId.MedTank)

@@ -572,7 +572,7 @@ export class Replica {
     this.guess({ kind: Logged.Move, unitIds, tile, plan: null })
   }
 
-  /** Points ordered units at the target and leads those out of range toward it. */
+  /** Points ordered units at the target and leads those at rest and out of range toward it; a surface unit on the move keeps its course, and without a turret its target, until the server answers. */
   predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     this.guess({ kind: Logged.Attack, unitIds, target: { x: target.x, z: target.z }, targetId })
   }
@@ -687,10 +687,12 @@ export class Replica {
 
   private aim(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     for (const unit of this.ordered(unitIds)) {
+      const type = UNIT_TYPES[unit.typeId]
+      const moving = domainOf(type) !== MoveDomain.Air && (unit.path.length > 0 || unit.speed !== 0)
+      if (moving && type.weapon.turretRate <= 0) continue
       unit.attackId = targetId
       unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null
-      const range = UNIT_TYPES[unit.typeId].weapon.range
-      if (Math.hypot(target.x - unit.x, target.z - unit.z) > range) this.lead(unit, { x: Math.floor(target.x), y: Math.floor(target.z) })
+      if (!moving && Math.hypot(target.x - unit.x, target.z - unit.z) > type.weapon.range) this.lead(unit, { x: Math.floor(target.x), y: Math.floor(target.z) })
     }
   }
 
@@ -707,7 +709,6 @@ export class Replica {
     const type = UNIT_TYPES[unit.typeId]
     const domain = domainOf(type)
     if (type.topSpeed <= 0 || domain === MoveDomain.Air) return
-    if (unit.goal && Math.max(Math.abs(unit.goal.x - tile.x), Math.abs(unit.goal.y - tile.y)) <= 2) return
     const lead = flightLine({ x: unit.tileX, y: unit.tileY }, tile).slice(0, LEAD_TILES)
     if (lead.length === 0 || !lead.every((step) => this.passable(step, domain))) return
     unit.path = lead
