@@ -2,8 +2,14 @@ import {
   AI_PACE_DEFAULT,
   AI_PACE_MAX,
   AI_PACE_MIN,
+  cleanRequestText,
   MAP_SIZES,
   type MapSize,
+  PostBlock,
+  postBlock,
+  REQUEST_SEAT_LIMIT,
+  REQUEST_TEXT_LIMIT,
+  RequestStatus,
   RoomStatus,
   SlotKind,
   slotsForSize,
@@ -12,6 +18,7 @@ import {
   type GameLobbyState,
   type MapPreview,
   type Person,
+  type RequestCard,
   type SlotView,
   type StartPoint,
   type WaitingRoom,
@@ -36,6 +43,10 @@ export type LobbyActions = {
   setAiPace(pace: number): void
   chat(text: string): void
   destroyGame(id: number): void
+  postRequest(text: string): void
+  toggleVote(id: number): void
+  markRequestDone(id: number): void
+  deleteRequest(id: number): void
   playHere(): void
 }
 
@@ -56,11 +67,17 @@ export class LobbyView {
   private readonly canvas: HTMLCanvasElement
   private readonly chatLog: HTMLElement
   private readonly chatInput: HTMLInputElement
+  private readonly requests: HTMLElement
+  private readonly requestInput: HTMLInputElement
+  private readonly post: HTMLButtonElement
+  private readonly postHint: HTMLElement
+  private readonly requestList: HTMLElement
   private readonly paceRow: HTMLLabelElement
   private readonly paceInput: HTMLInputElement
   private readonly paceValue: HTMLElement
   private readonly replaced: HTMLElement
   private chatKey = ''
+  private requestsKey = ''
   private previewKey = ''
   private slots: SlotView[] = []
   private starts: StartPoint[] = []
@@ -175,6 +192,35 @@ export class LobbyView {
       this.chatInput.value = ''
     })
 
+    const requestsTitle = document.createElement('h2')
+    requestsTitle.textContent = 'Requests'
+    this.requests = panel('section', 'lobby-requests', '05', requestsTitle)
+    const postForm = document.createElement('form')
+    postForm.className = 'request-post'
+    this.requestInput = document.createElement('input')
+    this.requestInput.type = 'text'
+    this.requestInput.maxLength = REQUEST_TEXT_LIMIT
+    this.requestInput.placeholder = 'Request a feature'
+    this.requestInput.setAttribute('aria-label', 'Request a feature')
+    this.post = document.createElement('button')
+    this.post.type = 'submit'
+    this.post.className = 'primary'
+    this.post.textContent = 'Post'
+    this.postHint = document.createElement('p')
+    this.postHint.className = 'request-hint'
+    this.postHint.hidden = true
+    postForm.append(this.requestInput, this.post, this.postHint)
+    postForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const text = cleanRequestText(this.requestInput.value)
+      if (text === null) return
+      this.actions.postRequest(text)
+      this.requestInput.value = ''
+    })
+    this.requestList = document.createElement('div')
+    this.requestList.className = 'request-list'
+    this.requests.append(postForm, this.requestList)
+
     this.replaced = document.createElement('div')
     this.replaced.id = 'elsewhere'
     this.replaced.hidden = true
@@ -204,7 +250,7 @@ export class LobbyView {
 
     this.grid = document.createElement('div')
     this.grid.className = 'lobby-grid'
-    this.grid.append(peoplePanel, battlePanel, this.preview, chat)
+    this.grid.append(peoplePanel, battlePanel, this.preview, this.requests, chat)
     root.replaceChildren(head, this.grid, this.replaced)
     this.paceRow = document.createElement('label')
     this.paceRow.className = 'pace-row'
@@ -246,8 +292,10 @@ export class LobbyView {
     this.peopleTitle.textContent = 'Operators'
     this.mainTitle.textContent = 'Battles'
     this.preview.hidden = true
+    this.requests.hidden = false
     this.fillPeople(state.people)
     this.fillGames(state.games)
+    this.fillRequests(state.requests)
     this.paintChat(state.chat, 'hall')
   }
 
@@ -263,6 +311,7 @@ export class LobbyView {
     this.peopleTitle.textContent = 'Not seated'
     this.mainTitle.textContent = battle
     this.preview.hidden = false
+    this.requests.hidden = true
     this.slots = state.slots
     this.setBusy(state.generating)
     this.fillPeople(state.waiting)
@@ -425,6 +474,91 @@ export class LobbyView {
     return row
   }
 
+  private fillRequests(cards: readonly RequestCard[]) {
+    const key = JSON.stringify(cards)
+    if (key === this.requestsKey) return
+    this.requestsKey = key
+    const open = cards.filter((card) => card.status === RequestStatus.Open)
+    const done = cards.filter((card) => card.status === RequestStatus.Done)
+    const block = postBlock(open.length, open.filter((card) => card.mine).length)
+    this.post.disabled = block !== null
+    this.postHint.hidden = block === null
+    this.postHint.textContent = block === null ? '' : postBlockHint(block)
+    const focused = document.activeElement
+    const refocus = focused instanceof HTMLElement && this.requestList.contains(focused) ? focused.dataset.key : undefined
+    this.requestList.replaceChildren()
+    if (cards.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'lobby-empty'
+      empty.textContent = 'No requests yet'
+      this.requestList.append(empty)
+    }
+    for (const card of open) this.requestList.append(this.requestCard(card))
+    if (done.length > 0) {
+      const group = document.createElement('section')
+      group.className = 'request-group'
+      const heading = document.createElement('h3')
+      heading.textContent = `Done · ${done.length}`
+      group.append(heading, ...done.map((card) => this.requestCard(card)))
+      this.requestList.append(group)
+    }
+    if (refocus) this.requestList.querySelector<HTMLElement>(`[data-key="${refocus}"]`)?.focus()
+  }
+
+  private requestCard(card: RequestCard): HTMLElement {
+    const open = card.status === RequestStatus.Open
+    const row = document.createElement('article')
+    row.className = 'request-card'
+    const vote = document.createElement('button')
+    vote.type = 'button'
+    vote.className = 'request-vote'
+    vote.dataset.key = `vote:${card.id}`
+    vote.disabled = !open
+    vote.setAttribute('aria-pressed', String(card.voted))
+    vote.setAttribute('aria-label', `Vote for ${card.text}`)
+    const arrow = document.createElement('span')
+    arrow.textContent = '▲'
+    const count = document.createElement('span')
+    count.textContent = String(card.votes)
+    vote.append(arrow, count)
+    vote.addEventListener('click', () => this.actions.toggleVote(card.id))
+    const text = document.createElement('p')
+    text.className = 'request-text'
+    text.textContent = card.text
+    const by = document.createElement('p')
+    by.className = 'request-by'
+    by.textContent = card.author
+    if (card.mine) {
+      const mine = document.createElement('span')
+      mine.className = 'request-mine'
+      mine.textContent = 'Yours'
+      by.append(mine)
+    }
+    const body = document.createElement('div')
+    body.append(text, by)
+    row.append(vote, body)
+    if (!this.admin) return row
+    const actions = document.createElement('div')
+    actions.className = 'request-actions'
+    if (open) {
+      const done = plate('✓ Done', () => this.actions.markRequestDone(card.id))
+      done.dataset.key = `done:${card.id}`
+      done.setAttribute('aria-label', `Mark ${card.text} done`)
+      actions.append(done)
+    }
+    const remove = plate('✕ Delete', () => {
+      const ok = window.confirm(`Delete the request "${card.text}" and its votes?`)
+      if (!ok) return
+      this.actions.deleteRequest(card.id)
+    })
+    remove.className = 'danger'
+    remove.dataset.key = `delete:${card.id}`
+    remove.setAttribute('aria-label', `Delete ${card.text}`)
+    actions.append(remove)
+    row.append(actions)
+    return row
+  }
+
   private fillSlots(state: GameLobbyState, host: boolean) {
     const parts: HTMLElement[] = []
     const sizes = document.createElement('div')
@@ -468,12 +602,12 @@ export class LobbyView {
       label.textContent = slot.kind === SlotKind.Open ? 'Open' : slot.name
       row.append(number, swatch, label)
       if (slot.kind === SlotKind.Open) {
-        row.append(slotButton('Sit', () => this.actions.takeSlot(index)))
-        row.append(slotButton('AI', () => this.actions.setSlotAi(index)))
+        row.append(plate('Sit', () => this.actions.takeSlot(index)))
+        row.append(plate('AI', () => this.actions.setSlotAi(index)))
       } else if (slot.kind === SlotKind.Human && slot.clientId === state.you.id) {
-        row.append(slotButton('Stand', () => this.actions.clearSlot(index)))
+        row.append(plate('Stand', () => this.actions.clearSlot(index)))
       } else if (slot.kind === SlotKind.Ai) {
-        row.append(slotButton('Clear', () => this.actions.clearSlot(index)))
+        row.append(plate('Clear', () => this.actions.clearSlot(index)))
       }
       parts.push(row)
     })
@@ -547,12 +681,17 @@ function panelHead(heading: HTMLElement, index?: string): HTMLElement {
   return head
 }
 
-function slotButton(label: string, onClick: () => void): HTMLButtonElement {
+function plate(label: string, onClick: () => void): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.textContent = label
   button.addEventListener('click', onClick)
   return button
+}
+
+function postBlockHint(block: PostBlock): string {
+  if (block === PostBlock.SeatLimit) return `${REQUEST_SEAT_LIMIT} open requests each — vote instead`
+  return 'Board full'
 }
 
 type GamePhase = 'unstarted' | 'pending' | 'live'

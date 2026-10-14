@@ -28,6 +28,10 @@ const actions: LobbyActions = {
   setAiPace: log('setAiPace'),
   chat: log('chat'),
   destroyGame: log('destroyGame'),
+  postRequest: log('postRequest'),
+  toggleVote: log('toggleVote'),
+  markRequestDone: log('markRequestDone'),
+  deleteRequest: log('deleteRequest'),
   playHere: log('playHere'),
 }
 

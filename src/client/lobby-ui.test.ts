@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RoomStatus, SlotKind } from '../shared/lobby.ts'
-import { drawingRoom, emptyHall, guestRoom, hall, hostRoom, ROOM_ID, roomPreview } from './lobby-fixtures.ts'
+import { REQUEST_OPEN_LIMIT, REQUEST_TEXT_LIMIT, RequestStatus, RoomStatus, SlotKind } from '../shared/lobby.ts'
+import { drawingRoom, emptyHall, guestRoom, hall, hostRoom, ROOM_ID, roomPreview, seatLimitHall } from './lobby-fixtures.ts'
 import { LobbyView, type LobbyActions } from './lobby-ui.ts'
 
 function spies() {
@@ -20,6 +20,10 @@ function spies() {
     setAiPace: vi.fn<LobbyActions['setAiPace']>(),
     chat: vi.fn<LobbyActions['chat']>(),
     destroyGame: vi.fn<LobbyActions['destroyGame']>(),
+    postRequest: vi.fn<LobbyActions['postRequest']>(),
+    toggleVote: vi.fn<LobbyActions['toggleVote']>(),
+    markRequestDone: vi.fn<LobbyActions['markRequestDone']>(),
+    deleteRequest: vi.fn<LobbyActions['deleteRequest']>(),
     playHere: vi.fn<LobbyActions['playHere']>(),
   } satisfies LobbyActions
 }
@@ -63,6 +67,12 @@ function field(scope: ParentNode, label: string): HTMLInputElement {
 function gameRow(scope: ParentNode, id: number): HTMLElement {
   const found = all(scope, '.game-row').find((row) => one(row, 'h3').textContent === `#${id}`)
   if (!found) throw new Error(`no row for game ${id}`)
+  return found
+}
+
+function requestCard(scope: ParentNode, text: string): HTMLElement {
+  const found = all(scope, '.request-card').find((card) => one(card, '.request-text').textContent === text)
+  if (!found) throw new Error(`no card for ${text}`)
   return found
 }
 
@@ -120,10 +130,10 @@ describe('lobby panels', () => {
   it('heads each panel of the hall and the room, beside an index tag hidden from assistive tech', () => {
     const { root, view } = mount()
     view.showWaiting(hall())
-    expect(headings(root)).toEqual(['Operators', 'Battles', 'Comms'])
+    expect(headings(root)).toEqual(['Operators', 'Battles', 'Requests', 'Comms'])
     view.showGame(hostRoom(), roomPreview())
     expect(headings(root)).toEqual(['Not seated', 'Battle #12', 'Radar', 'Comms'])
-    expect(all(root, '.lobby-panel-head .lobby-tag').map((tag) => tag.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true'])
+    expect(all(root, '.lobby-panel-head .lobby-tag').map((tag) => tag.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true', 'true'])
   })
 })
 
@@ -280,6 +290,123 @@ describe('lobby hall', () => {
     expect(one(root, '.lobby-preview').hidden).toBe(false)
     view.showWaiting(hall())
     expect(one(root, '.lobby-preview').hidden).toBe(true)
+  })
+})
+
+describe('lobby requests', () => {
+  it('lists the open cards in the order received and the done ones in a Done group', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    const panel = one(root, '.lobby-requests')
+    expect(all(panel, '.request-card').map((card) => [one(card, '.request-text').textContent, one(card, '.request-vote').textContent])).toEqual([
+      ['Naval units', '▲12'],
+      ['Bigger maps', '▲5'],
+      ['Allied victory when the last enemy falls', '▲2'],
+      ['Night mode', '▲3'],
+    ])
+    const vote = (text: string) => one<HTMLButtonElement>(requestCard(panel, text), '.request-vote')
+    expect(['Naval units', 'Bigger maps', 'Allied victory when the last enemy falls'].map((text) => vote(text).getAttribute('aria-pressed'))).toEqual([
+      'true',
+      'true',
+      'false',
+    ])
+    expect(vote('Naval units').getAttribute('aria-label')).toBe('Vote for Naval units')
+    const group = one(panel, '.request-group')
+    expect(one(group, 'h3').textContent).toBe('Done · 1')
+    expect(texts(group, '.request-text')).toEqual(['Night mode'])
+    expect(vote('Night mode').disabled).toBe(true)
+    expect(all<HTMLButtonElement>(panel, '.request-list > .request-card .request-vote').map((plate) => plate.disabled)).toEqual([false, false, false])
+    view.showWaiting(emptyHall())
+    expect(texts(panel, '.lobby-empty')).toEqual(['No requests yet'])
+  })
+
+  it('names each author and marks the requests that are mine', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    const authors = all(root, '.request-by').map((by) => [by.firstChild?.textContent, by.querySelector('.request-mine')?.textContent])
+    expect(authors).toEqual([
+      ['Bo', undefined],
+      ['Ada', 'Yours'],
+      ['Eve', undefined],
+      ['Cy', undefined],
+    ])
+  })
+
+  it('toggles a vote', () => {
+    const { root, view, actions } = mount()
+    view.showWaiting(hall())
+    one(requestCard(root, 'Allied victory when the last enemy falls'), '.request-vote').click()
+    expect(actions.toggleVote).toHaveBeenLastCalledWith(8)
+    one(requestCard(root, 'Naval units'), '.request-vote').click()
+    expect(actions.toggleVote).toHaveBeenLastCalledWith(4)
+  })
+
+  it('keeps a focused vote plate through a board update', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    one(requestCard(root, 'Bigger maps'), '.request-vote').focus()
+    const state = hall()
+    state.requests[1] = { ...state.requests[1], votes: 6 }
+    view.showWaiting(state)
+    expect(document.activeElement).toBe(one(requestCard(root, 'Bigger maps'), '.request-vote'))
+    expect(document.activeElement?.textContent).toBe('▲6')
+  })
+
+  it('gives only an admin view Done and Delete, and deletes once confirmed', () => {
+    const plain = mount()
+    plain.view.showWaiting(hall())
+    expect(labels(requestCard(plain.root, 'Naval units')).slice(1)).toEqual([])
+    const { root, view, actions } = mount(true)
+    view.showWaiting(hall())
+    expect(labels(requestCard(root, 'Naval units')).slice(1)).toEqual(['✓ Done', '✕ Delete'])
+    expect(labels(requestCard(root, 'Night mode')).slice(1)).toEqual(['✕ Delete'])
+    button(requestCard(root, 'Naval units'), '✓ Done').click()
+    expect(actions.markRequestDone).toHaveBeenCalledWith(4)
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    button(requestCard(root, 'Night mode'), '✕ Delete').click()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(actions.deleteRequest).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    button(requestCard(root, 'Night mode'), '✕ Delete').click()
+    expect(actions.deleteRequest).toHaveBeenCalledWith(2)
+  })
+
+  it('posts trimmed text and clears the field, and posts nothing blank', () => {
+    const { root, view, actions } = mount()
+    view.showWaiting(hall())
+    const input = field(root, 'Request a feature')
+    expect(input.maxLength).toBe(REQUEST_TEXT_LIMIT)
+    expect(input.placeholder).toBe('Request a feature')
+    input.value = '  Replay viewer  '
+    button(root, 'Post').click()
+    expect(actions.postRequest).toHaveBeenCalledWith('Replay viewer')
+    expect(input.value).toBe('')
+    input.value = '   '
+    button(root, 'Post').click()
+    expect(actions.postRequest).toHaveBeenCalledOnce()
+  })
+
+  it('holds the Post plate with a hint at the seat limit and on a full board', () => {
+    const { root, view } = mount()
+    const post = () => button(root, 'Post')
+    const hint = one(root, '.request-hint')
+    view.showWaiting(hall())
+    expect([post().disabled, hint.hidden]).toEqual([false, true])
+    view.showWaiting(seatLimitHall())
+    expect([post().disabled, hint.hidden, hint.textContent]).toEqual([true, false, '3 open requests each — vote instead'])
+    const full = emptyHall()
+    full.requests = Array.from({ length: REQUEST_OPEN_LIMIT }, (_, index) => ({
+      id: index + 1,
+      text: `Request ${index + 1}`,
+      author: 'Bo',
+      votes: 1,
+      voted: false,
+      mine: false,
+      status: RequestStatus.Open,
+    }))
+    view.showWaiting(full)
+    expect([post().disabled, hint.hidden, hint.textContent]).toEqual([true, false, 'Board full'])
   })
 })
 

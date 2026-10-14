@@ -35,6 +35,7 @@
 - Idle armies no longer cost the server sight work every tick: units standing still keep their view without the server retracing it for each player, cutting the server's network time on a quiet large map by more than half.
 - The lobby is a command console: a MINI ALERT header with your name, Copy my link and a Live light, steel panels with stencil headings, faint scanlines and a light running along the panel edges; nothing moves when your system asks for reduced motion. Games are battles, listed as #N with Open, Staging or In combat, and Deploy starts one. On phones the panels stack in one column.
 - Dragging the AI pace slider in a game room no longer lets go after one step.
+- Feature requests on the main screen: post a short request in the Requests panel and vote for the ones you want with ▲; click again to take your vote back. The most voted are listed first and finished requests move to Done. Each player can have three open requests at a time.
 
 ## 0.4
 
