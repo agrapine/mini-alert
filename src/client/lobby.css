@@ -553,7 +553,7 @@ body.match #lobby {
 
 .request-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 4px 10px;
   padding: 6px 8px;
@@ -562,6 +562,10 @@ body.match #lobby {
 
 .request-card button {
   background: var(--con-void);
+}
+
+.request-actions {
+  grid-column: 2;
 }
 
 .lobby-screen button.request-vote {
@@ -838,13 +842,5 @@ body.match #lobby {
   .game-actions {
     grid-column: 1;
     grid-row: auto;
-  }
-
-  .request-card {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .request-actions {
-    grid-column: 2;
   }
 }

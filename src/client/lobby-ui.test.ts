@@ -353,7 +353,9 @@ describe('lobby requests', () => {
   })
 
   it('gives only an admin view Done and Delete, and deletes once confirmed', () => {
-    expect(texts(mount().root, '.request-actions button')).toEqual([])
+    const plain = mount()
+    plain.view.showWaiting(hall())
+    expect(labels(requestCard(plain.root, 'Naval units')).slice(1)).toEqual([])
     const { root, view, actions } = mount(true)
     view.showWaiting(hall())
     expect(labels(requestCard(root, 'Naval units')).slice(1)).toEqual(['✓ Done', '✕ Delete'])
