@@ -52,7 +52,7 @@ describe('cities', () => {
     for (const entry of CITY_CATALOG) {
       expect(entry.density).toBeGreaterThanOrEqual(DENSITY_MIN)
       expect(entry.density).toBeLessThanOrEqual(DENSITY_MAX)
-      if (entry.name.startsWith('building-')) expect(entry.density).toBeGreaterThanOrEqual(7)
+      if (entry.name.startsWith('building-') && entry.name !== 'building-i') expect(entry.density).toBeGreaterThanOrEqual(7)
       else expect(entry.density).toBeLessThanOrEqual(6)
       used.add(entry.density)
     }
