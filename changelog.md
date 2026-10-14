@@ -43,6 +43,7 @@
 - A late network packet no longer leaves units drifting on screen: your game replays every unit from the packet's moment, not only the units it corrects.
 - Units no longer slowly slide away from where the server has them: the server checks your view against exactly the positions your game receives.
 - Redirecting units already on the move no longer makes them jump back: they keep their course until the server answers, then take the new route from where they are.
+- Enemy units in a crowd no longer twitch on your screen: when two units reach the same spot at once, your game lets the same one through as the server.
 
 ## 0.4
 

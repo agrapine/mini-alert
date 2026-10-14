@@ -416,6 +416,16 @@ describe('replica drawing', () => {
     expect(replica.units[0].tileX).toBe(5)
   })
 
+  it('lets the lower id take a tile two units enter in one tick, though it came into view after the higher id, as the server does', () => {
+    const left = { ...scout(5.5, [{ x: 6, y: 4 }]), id: 2, ownerId: 2 }
+    const below = { ...scout(6.5, [{ x: 6, y: 4 }]), id: 5, ownerId: 2, z: 5.5, tileY: 5, facing: Math.PI }
+    const replica = joined(below)
+    replica.apply({ tick: 10, ack: 0, events: [motion(left)] })
+    replica.simulateTo(20)
+    expect(replica.unit(2)).toMatchObject({ tileX: 6, tileY: 4 })
+    expect(replica.unit(5)).toMatchObject({ tileX: 6, tileY: 5 })
+  })
+
   it('turns a turret toward its attack target between server updates', () => {
     const tank = { ...scout(4.5, []), id: 2, typeId: UnitTypeId.MedTank, facing: 0, turretYaw: 0 }
     const foe = { ...scout(8.5, []), id: 3, ownerId: 2 }
