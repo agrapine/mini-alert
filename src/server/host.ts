@@ -19,7 +19,7 @@ import {
 import type { CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
-import { EXPLORE_MARGIN, friendsOf } from '../shared/vision.ts'
+import { EXPLORE_MARGIN, friendsOf, type CitySight } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
@@ -96,8 +96,11 @@ export class ServerHost {
   private readonly memory = new Map<Session, Memory>()
   private ais: AiPlayer[]
   private stopped = false
-  /** Unit routes by id, shared by every session; `drop` clears them whenever the game may have changed. */
+  /** Game reads every session shares, computed on first use; `drop` clears them whenever the game may have changed. */
   private routes: Map<number, number> | null = null
+  private sights: CitySight[] | null = null
+  private states: CityState[] | null = null
+  private layouts: CityLayout[] | null = null
 
   constructor(
     readonly game: Game,
@@ -236,6 +239,9 @@ export class ServerHost {
 
   private drop() {
     this.routes = null
+    this.sights = null
+    this.states = null
+    this.layouts = null
   }
 
   private pushSync(session: Session) {
@@ -480,7 +486,8 @@ export class ServerHost {
         fresh.push({ x: nx, y: ny })
       }
     }
-    for (const friend of friendsOf(units, memory.owner, this.game.citySights())) {
+    this.sights ??= this.game.citySights()
+    for (const friend of friendsOf(units, memory.owner, this.sights)) {
       const reach = Math.ceil(friend.sight)
       const originX = Math.floor(friend.x)
       const originY = Math.floor(friend.z)
@@ -541,8 +548,8 @@ export class ServerHost {
 
   private visibleCities(memory: Memory): VisibleCity[] {
     const records: VisibleCity[] = []
-    const states = this.game.cityStates()
-    const layouts = this.game.cityLayouts()
+    const states = (this.states ??= this.game.cityStates())
+    const layouts = (this.layouts ??= this.game.cityLayouts())
     for (let index = 0; index < states.length; index++) {
       const layout = clipLayout(layouts[index], memory.explored, this.game.world.width)
       if (!layout || layout.tiles.length === 0) continue
