@@ -96,6 +96,8 @@ export class ServerHost {
   private readonly memory = new Map<Session, Memory>()
   private ais: AiPlayer[]
   private stopped = false
+  /** Unit routes by id, shared by every session; `drop` clears them whenever the game may have changed. */
+  private routes: Map<number, number> | null = null
 
   constructor(
     readonly game: Game,
@@ -180,6 +182,7 @@ export class ServerHost {
     const yields = this.game.takeYields()
     this.game.takeDeaths()
     this.tickNo += 1
+    this.drop()
     const living = this.game.unitSnapshots()
     for (const session of this.sessions) {
       if (!this.memory.has(session)) {
@@ -192,6 +195,7 @@ export class ServerHost {
 
   private onCommand(session: Session, message: ClientMessage, tick?: number) {
     this.apply(session, message, tick === undefined ? 0 : Math.max(0, Math.min(CATCH_UP_TICKS, this.tickNo - tick)))
+    this.drop()
     if (!session.echo) return
     this.pushTick(session, this.game.unitSnapshots(), [], [], [], session.playing ? orderedUnits(message) : NO_UNITS)
   }
@@ -230,7 +234,12 @@ export class ServerHost {
     }
   }
 
+  private drop() {
+    this.routes = null
+  }
+
   private pushSync(session: Session) {
+    this.drop()
     const memory = this.blank(session.playerId)
     this.memory.set(session, memory)
     const { width } = this.game.world
@@ -629,8 +638,8 @@ export class ServerHost {
   }
 
   private routeOf(unit: UnitSnapshot): number {
-    const live = this.game.units.find((candidate) => candidate.id === unit.id)
-    return live?.route ?? 0
+    this.routes ??= new Map(this.game.units.map((live) => [live.id, live.route]))
+    return this.routes.get(unit.id) ?? 0
   }
 }
 
