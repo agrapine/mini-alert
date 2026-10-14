@@ -260,6 +260,15 @@ describe('replica drawing', () => {
     expect(replica.knownTiles).toBe(256)
   })
 
+  it('keeps a unit steered onto a city building out of the building tile, as the server does', () => {
+    const replica = joined(scout(2.5, road))
+    const layout = { x: 6, y: 4, span: 1, seed: 1, tiles: [{ x: 6, y: 4 }], buildings: [{ x: 6, y: 4, model: 0, yaw: 0, keep: false }], streets: [] }
+    const state = { ownerId: 0, color: 0, progress: 0, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
+    replica.apply({ tick: 10, ack: 0, events: [{ kind: ServerEventKind.CityUpdate, city: { index: 0, state, layout } }] })
+    replica.simulateTo(100)
+    expect(replica.units[0].tileX).toBe(5)
+  })
+
   it('turns a turret toward its attack target between server updates', () => {
     const tank = { ...scout(4.5, []), id: 2, typeId: UnitTypeId.MedTank, facing: 0, turretYaw: 0 }
     const foe = { ...scout(8.5, []), id: 3, ownerId: 2 }

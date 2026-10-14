@@ -805,7 +805,8 @@ export class Replica {
     y: number,
   ): boolean {
     if (locomotion === Locomotion.Plane || locomotion === Locomotion.Rotor) return false
-    const holder = occupied.get(`${x},${y}`)
+    const tile = `${x},${y}`
+    const holder = occupied.get(tile)
     if (holder !== undefined && holder !== self) return true
     const world = this.world
     if (!world) return false
@@ -814,7 +815,7 @@ export class Replica {
     if (world.known[index] === 0) return false
     const terrain = world.terrain[index]
     if (locomotion === Locomotion.Hull) return terrain !== Terrain.Water && terrain !== Terrain.Lake
-    return !isWalkableTerrain(terrain)
+    return !isWalkableTerrain(terrain) || this.buildingBlocks().has(tile)
   }
 
   private installMap(map: MapData, replace: boolean) {
