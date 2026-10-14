@@ -3,15 +3,6 @@ import { Terrain } from '../../shared/tiles.ts'
 import { mulberry32, valueNoise } from './noise.ts'
 import { fitShifts, type Site } from './shifts.ts'
 
-function rnd<T>(...arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
-}
-
-const size = rnd(64, 128, 256);
-//const size = 24;
-// const size = rnd(64, 96);
-export const ISLAND_WIDTH = size;
-export const ISLAND_HEIGHT = size;
 export const MAX_HOPS = 4
 
 const BASE_SPAN = 64
@@ -44,7 +35,7 @@ export type Island = {
   droppedSites: Site[]
 }
 
-export function generateIsland(seed: number, width = ISLAND_WIDTH, height = ISLAND_HEIGHT): Island {
+export function generateIsland(seed: number, width: number, height: number): Island {
   const rng = mulberry32(seed)
   const region = new Int16Array(width * height)
   const sites = Array.from({ length: siteCount(width, height) }, () => ({
