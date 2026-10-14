@@ -34,6 +34,7 @@ export type LobbyActions = {
   setAiPace(pace: number): void
   chat(text: string): void
   destroyGame(id: number): void
+  playHere(): void
 }
 
 export class LobbyView {
@@ -52,6 +53,7 @@ export class LobbyView {
   private readonly paceRow: HTMLLabelElement
   private readonly paceInput: HTMLInputElement
   private readonly paceValue: HTMLElement
+  private readonly replaced: HTMLElement
   private chatKey = ''
   private previewKey = ''
   private slots: SlotView[] = []
@@ -87,7 +89,7 @@ export class LobbyView {
     this.nameInput.type = 'text'
     this.nameInput.maxLength = 16
     this.nameInput.spellcheck = false
-    this.nameInput.ariaLabel = 'Name'
+    this.nameInput.setAttribute('aria-label', 'Name')
     this.nameInput.addEventListener('change', () => this.actions.setName(this.nameInput.value))
     const you = document.createElement('div')
     you.className = 'lobby-you'
@@ -148,7 +150,7 @@ export class LobbyView {
     this.chatInput.type = 'text'
     this.chatInput.maxLength = 200
     this.chatInput.placeholder = 'Chat'
-    this.chatInput.ariaLabel = 'Chat'
+    this.chatInput.setAttribute('aria-label', 'Chat')
     const send = document.createElement('button')
     send.type = 'submit'
     send.textContent = 'Send'
@@ -162,8 +164,31 @@ export class LobbyView {
       this.chatInput.value = ''
     })
 
+    this.replaced = document.createElement('div')
+    this.replaced.id = 'elsewhere'
+    this.replaced.hidden = true
+    const replacedCard = document.createElement('div')
+    replacedCard.className = 'outcome-card'
+    replacedCard.setAttribute('role', 'dialog')
+    replacedCard.setAttribute('aria-modal', 'true')
+    replacedCard.setAttribute('aria-labelledby', 'elsewhere-title')
+    const replacedTitle = document.createElement('h2')
+    replacedTitle.id = 'elsewhere-title'
+    replacedTitle.textContent = 'Open in another tab'
+    const replacedText = document.createElement('p')
+    replacedText.textContent = 'This game is open in another tab or window.'
+    const playHere = document.createElement('button')
+    playHere.type = 'button'
+    playHere.textContent = 'Play here'
+    playHere.addEventListener('click', () => {
+      this.replaced.hidden = true
+      this.actions.playHere()
+    })
+    replacedCard.append(replacedTitle, replacedText, playHere)
+    this.replaced.append(replacedCard)
+
     card.append(head, columns, chat)
-    root.replaceChildren(this.status, card)
+    root.replaceChildren(this.status, card, this.replaced)
     this.paceRow = document.createElement('label')
     this.paceRow.className = 'pace-row'
     this.paceRow.append(document.createTextNode('AI pace'))
@@ -245,6 +270,10 @@ export class LobbyView {
 
   holdName(name: string) {
     this.setName(name)
+  }
+
+  showReplaced() {
+    this.replaced.hidden = false
   }
 
   private paintMarks() {

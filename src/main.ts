@@ -25,9 +25,7 @@ const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-const elsewhere = document.querySelector<HTMLElement>('#elsewhere')
-const playHere = document.querySelector<HTMLButtonElement>('#elsewhere-play')
-if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose || !elsewhere || !playHere) {
+if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
@@ -137,6 +135,9 @@ const lobby = new LobbyView(lobbyRoot, {
   destroyGame(id) {
     net.sendLobby({ kind: LobbyClientKind.DestroyGame, gameId: id })
   },
+  playHere() {
+    net.connect()
+  },
 }, admin)
 
 net.onOpen = () => {
@@ -147,16 +148,12 @@ net.onClose = () => {
   claimedName = null
   lobby.setConnected(false)
 }
-playHere.addEventListener('click', () => {
-  elsewhere.hidden = true
-  net.connect()
-})
 net.onLobby = (message) => {
   if (message.kind === LobbyServerKind.Replaced) {
     net.pause()
     leaveMatch()
     music.silent()
-    elsewhere.hidden = false
+    lobby.showReplaced()
     return
   }
   if (message.kind === LobbyServerKind.Preview) {
