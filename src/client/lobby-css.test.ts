@@ -2,7 +2,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emptyHall, guestRoom, hall, hostRoom, roomPreview, seatLimitHall } from './lobby-fixtures.ts'
+import type { GameLobbyState } from '../shared/lobby.ts'
+import { drawingRoom, emptyHall, guestRoom, hall, hostRoom, roomPreview, seatLimitHall } from './lobby-fixtures.ts'
 import { LobbyView, type LobbyActions } from './lobby-ui.ts'
 
 const css = readFileSync(join(import.meta.dirname, 'lobby.css'), 'utf8')
@@ -60,6 +61,10 @@ function hasColourLiteral({ value }: Declaration): boolean {
 
 const all = declarations(css)
 
+const sheet = document.createElement('style')
+sheet.textContent = css
+document.head.append(sheet)
+
 const actions = new Proxy({} as LobbyActions, { get: () => () => undefined })
 
 const SCENES: ((view: LobbyView) => void)[] = [
@@ -71,6 +76,7 @@ const SCENES: ((view: LobbyView) => void)[] = [
   (view) => view.showWaiting(seatLimitHall()),
   (view) => view.showGame(hostRoom(), roomPreview()),
   (view) => view.showGame(guestRoom(), roomPreview()),
+  (view) => view.showGame(drawingRoom(), null),
   (view) => view.showReplaced(),
 ]
 
@@ -101,12 +107,16 @@ function ownText(element: Element): boolean {
   return [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
 }
 
-function inks(scene: (view: LobbyView) => void) {
+function render(scene: (view: LobbyView) => void): HTMLElement {
   const root = document.createElement('div')
   root.id = 'lobby'
   document.body.replaceChildren(root)
   scene(new LobbyView(root, actions, true))
-  return [...root.querySelectorAll('*')]
+  return root
+}
+
+function inks(scene: (view: LobbyView) => void) {
+  return [...render(scene).querySelectorAll('*')]
     // SVG text paints with its fill attribute, not with color.
     .filter((element) => element instanceof HTMLElement && !element.closest('[hidden]'))
     .filter((element) => ownText(element) || element.matches('input[type="text"]'))
@@ -138,12 +148,18 @@ describe('lobby.css', () => {
   })
 
   it('draws every text at 4.5:1 or more against the surface behind it', () => {
-    const sheet = document.createElement('style')
-    sheet.textContent = css
-    document.head.append(sheet)
     const drawn = SCENES.flatMap(inks)
     expect(drawn.length).toBeGreaterThan(0)
     expect(drawn.filter(({ ratio }) => ratio < AA)).toEqual([])
+  })
+
+  it('sweeps the radar in green, and in amber while the map draws', () => {
+    const sweep = (room: GameLobbyState) => {
+      const layer = render((view) => view.showGame(room, roomPreview())).querySelector('.lobby-sweep')
+      if (!layer) throw new Error('no radar sweep')
+      return getComputedStyle(layer).color
+    }
+    expect([sweep(hostRoom()), sweep(drawingRoom())]).toEqual(['#3cde73', '#f0a830'])
   })
 
   it('stays within 20 000 bytes', () => {

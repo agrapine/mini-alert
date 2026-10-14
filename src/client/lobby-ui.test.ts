@@ -130,10 +130,10 @@ describe('lobby panels', () => {
   it('heads each panel of the hall and the room, beside an index tag hidden from assistive tech', () => {
     const { root, view } = mount()
     view.showWaiting(hall())
-    expect(headings(root)).toEqual(['Operators', 'Battles', 'Requests', 'Comms'])
+    expect(headings(root)).toEqual(['Operators', 'Battles', 'Radar', 'Requests', 'Comms'])
     view.showGame(hostRoom(), roomPreview())
     expect(headings(root)).toEqual(['Not seated', 'Battle #12', 'Radar', 'Comms'])
-    expect(all(root, '.lobby-panel-head .lobby-tag').map((tag) => tag.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true', 'true'])
+    expect(all(root, '.lobby-panel-head .lobby-tag').map((tag) => tag.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true', 'true', 'true'])
   })
 })
 
@@ -544,11 +544,63 @@ describe('lobby map preview', () => {
     expect(all(root, '.lobby-marks circle')).toHaveLength(4)
   })
 
+  it('layers the terrain, the sweep, the markers and the drawing label inside the radar frame', () => {
+    const { root, view } = mount()
+    view.showGame(hostRoom(), roomPreview())
+    const frame = one(root, '.lobby-preview .lobby-radar')
+    expect([...frame.children].map((layer) => layer.getAttribute('class') ?? layer.localName)).toEqual([
+      'canvas',
+      'lobby-sweep',
+      'lobby-marks',
+      'lobby-drawing',
+    ])
+    const label = one(frame, '.lobby-drawing')
+    expect([busy(root), label.hidden]).toEqual([false, true])
+    view.showGame(drawingRoom(), roomPreview())
+    expect([busy(root), label.hidden, label.textContent]).toEqual([true, false, 'Drawing map'])
+    view.showPreview(roomPreview())
+    expect([busy(root), label.hidden]).toEqual([false, true])
+  })
+
   it('ignores a preview of another game', () => {
     const { root, view } = mount()
     view.showGame(hostRoom(), { ...roomPreview(), gameId: ROOM_ID + 1 })
     expect(all(root, '.lobby-marks circle')).toHaveLength(0)
     expect(one<HTMLCanvasElement>(root, '.lobby-map canvas').width).not.toBe(128)
+  })
+})
+
+describe('lobby radar scope', () => {
+  function blips(root: ParentNode): Record<string, { phase: string; at: string[] }> {
+    return Object.fromEntries(
+      all(root, '.lobby-scope .scope-blip').map((blip) => [
+        blip.textContent,
+        { phase: blip.className.replace('scope-blip ', ''), at: [blip.style.left, blip.style.top] },
+      ]),
+    )
+  }
+
+  it('plots each battle as a blip labelled #N in its phase, hidden from assistive tech', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    expect(one(root, '.lobby-scope').getAttribute('aria-hidden')).toBe('true')
+    const plotted = blips(root)
+    expect(Object.entries(plotted).map(([label, { phase }]) => [label, phase])).toEqual([
+      ['#9', 'live'],
+      ['#3', 'unstarted'],
+      ['#7', 'pending'],
+    ])
+    expect(new Set(Object.values(plotted).map(({ at }) => at.join())).size).toBe(3)
+  })
+
+  it('keeps a battle on its spot as the other battles come and go', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    const before = blips(root)
+    const state = hall()
+    state.games = state.games.filter((game) => game.id !== 9)
+    view.showWaiting(state)
+    expect(blips(root)).toStrictEqual({ '#3': before['#3'], '#7': before['#7'] })
   })
 })
 
