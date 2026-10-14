@@ -12,7 +12,7 @@
 - Steady unit speed on jittery connections: late network packets no longer slow the game down and speed it back up.
 - Orders get their answer from the server straight away instead of on the next server tick.
 - No more stutter while scouting or capturing cities: the island is rebuilt at most twice a second, and never for city changes.
-- Turrets turn toward their target between server updates, and attack orders start turning and moving at once.
+- Turrets turn toward their target between server updates. Attack orders turn turrets at once and start units at rest moving at once; units already on the move turn when the server answers instead of jumping back.
 - The server does about a sixth of the fog-of-war work per player, leaving more headroom on small hosts.
 - The HUD shows your ping to the server.
 - Queued units, rally flags, the primary factory star and new building sites show the moment you click, then settle to the server's answer.

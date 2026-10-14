@@ -259,7 +259,7 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === scout.id)).toBe(true)
   })
 
-  it('answers an attack order with the server state of a unit whose client led it elsewhere', () => {
+  it('answers an attack order with the server state of a unit its client kept on course', () => {
     const game = new Game(new World(32, 16))
     const player = game.addPlayer()
     const enemy = game.addPlayer()
