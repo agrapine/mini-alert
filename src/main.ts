@@ -41,7 +41,7 @@ outcomeLayer.addEventListener('click', (event) => {
   if (event.target === outcomeLayer) outcomeLayer.hidden = true
 })
 
-const replica = new Replica()
+const replica = new Replica({ rollback: true })
 const net = new Net()
 const port: ClientPort = {
   send(message) {

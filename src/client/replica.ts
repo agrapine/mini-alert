@@ -47,6 +47,21 @@ type Shown = {
   seen: number
 }
 
+const enum Logged {
+  Frame = 0,
+  Move = 1,
+  Attack = 2,
+}
+
+type Guess =
+  | { kind: Logged.Move; unitIds: readonly number[]; tile: TileCoord }
+  | { kind: Logged.Attack; unitIds: readonly number[]; target: { x: number; z: number }; targetId: number | null }
+
+type Entry = { kind: Logged.Frame; frame: ServerFrame } | Guess
+
+/** A tick's units after its step and after each frame applied at it, and its frames and guesses in the order they apply. */
+type Moment = { tick: number; units: UnitSnapshot[]; log: Entry[] }
+
 export class Replica {
   playerId: number | null = null
   world: WorldSnapshot | null = null
@@ -95,6 +110,14 @@ export class Replica {
   private trainingRate = 0
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
+  private readonly history: Moment[] | null
+  private unrecorded = false
+  private rewinding = false
+
+  /** With `rollback`, a frame up to REPLAY_LIMIT ticks late re-runs every unit from its tick, not only the units it carries. */
+  constructor(options: { rollback?: boolean } = {}) {
+    this.history = options.rollback ? [] : null
+  }
 
   reset() {
     this.playerId = null
@@ -132,6 +155,8 @@ export class Replica {
     this.accumulator = 0
     this.askedTick = -SNAPSHOT_GAP
     this.shown.clear()
+    this.history?.splice(0)
+    this.unrecorded = false
     this.settle(Infinity)
   }
 
@@ -146,13 +171,96 @@ export class Replica {
       if (frame.tick - this.localTick > SNAPSHOT_GAP) this.closeTo(frame.tick)
       return
     } else if (this.world && !this.closeTo(frame.tick)) return
-    this.applyFrame(frame)
+    if (snapshot) {
+      this.applyFrame(frame)
+      this.restart()
+    } else if (frame.tick >= this.localTick || !this.rewind(frame)) {
+      this.applyFrame(frame)
+      this.logFrame(frame)
+    }
   }
 
   private applyFrame(frame: ServerFrame) {
     this.frameOccupancy = null
     for (const event of frame.events) this.applyEvent(event, frame.tick)
     this.settle(frame.ack)
+  }
+
+  private momentAt(tick: number): Moment | undefined {
+    const history = this.history
+    return history && history.length > 0 ? history[tick - history[0].tick] : undefined
+  }
+
+  private restart() {
+    this.history?.splice(0, Infinity, { tick: this.localTick, units: [], log: [] })
+    this.unrecorded = true
+  }
+
+  private logFrame(frame: ServerFrame) {
+    this.momentAt(this.localTick)?.log.push({ kind: Logged.Frame, frame })
+    this.unrecorded = true
+  }
+
+  /** Copies the units into the current tick's moment if a step or a frame changed them since the last copy. */
+  private keep() {
+    if (!this.unrecorded) return
+    this.unrecorded = false
+    const moment = this.momentAt(this.localTick)
+    if (moment) moment.units = this.units.map(keptUnit)
+  }
+
+  /**
+   * Re-runs every unit from the tick of a frame stamped behind `localTick`: the frame applies on that tick's units and
+   * joins its log after the tick's frames, ahead of the guesses that followed them, then each later tick steps and
+   * re-applies its log. Drawn poses blend in each unit's net offset.
+   */
+  private rewind(frame: ServerFrame): boolean {
+    const history = this.history
+    const index = history && history.length > 0 ? frame.tick - history[0].tick : -1
+    if (!history || index < 0) return false
+    const moment = history[index]
+    const was = new Map<number, Pose>()
+    for (const unit of this.units) was.set(unit.id, poseOf(unit))
+    this.rewinding = true
+    this.units = moment.units.map(keptUnit)
+    this.localTick = moment.tick
+    this.applyFrame(frame)
+    this.unrecorded = true
+    let at = moment.log.length
+    while (at > 0 && moment.log[at - 1].kind !== Logged.Frame) at -= 1
+    moment.log.splice(at, 0, { kind: Logged.Frame, frame })
+    this.replay(moment.log.slice(at + 1))
+    for (const later of history.slice(index + 1)) {
+      this.keep()
+      this.localTick = later.tick
+      this.stepUnits(SIM_STEP)
+      this.unrecorded = true
+      this.replay(later.log)
+    }
+    this.rewinding = false
+    const jumps = new Map<number, number>()
+    for (const unit of this.units) {
+      const pose = was.get(unit.id)
+      if (pose) jumps.set(unit.id, this.blend(unit, pose))
+    }
+    for (const event of frame.events) {
+      const jump = event.kind === ServerEventKind.UnitMotion ? jumps.get(event.unit.id) : undefined
+      if (jump !== undefined) this.onCorrection?.(jump)
+    }
+    return true
+  }
+
+  private replay(log: readonly Entry[]) {
+    for (const entry of log) {
+      if (entry.kind !== Logged.Frame) {
+        this.keep()
+        this.applyGuess(entry)
+        continue
+      }
+      this.frameOccupancy = null
+      for (const event of entry.frame.events) if (changesUnits(event)) this.applyEvent(event, entry.frame.tick)
+      this.unrecorded = true
+    }
   }
 
   expectTraining(seq: number, typeId: UnitTypeId) {
@@ -227,11 +335,25 @@ export class Replica {
   }
 
   private step() {
+    this.keep()
     this.localTick += 1
+    for (const unit of this.units) {
+      const shown = this.shown.get(unit.id)
+      if (shown) shown.before = poseOf(unit)
+    }
     this.stepUnits(SIM_STEP)
+    const history = this.history
+    if (history) {
+      history.push({ tick: this.localTick, units: [], log: [] })
+      if (history.length > REPLAY_LIMIT + 1) history.shift()
+    }
+    this.unrecorded = true
     let due = 0
     while (due < this.held.length && this.held[due].tick <= this.localTick) due += 1
-    for (const frame of this.held.splice(0, due)) this.applyFrame(frame)
+    for (const frame of this.held.splice(0, due)) {
+      this.applyFrame(frame)
+      this.logFrame(frame)
+    }
   }
 
   /** Where `drawn` poses units between the step before `localTick` (0) and `localTick` (1). */
@@ -443,6 +565,26 @@ export class Replica {
 
   /** Plans the move the server will plan for the same order, from what this player knows of the map. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
+    this.guess({ kind: Logged.Move, unitIds, tile })
+  }
+
+  /** Points ordered units at the target and leads those out of range toward it. */
+  predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
+    this.guess({ kind: Logged.Attack, unitIds, target: { x: target.x, z: target.z }, targetId })
+  }
+
+  private guess(guess: Guess) {
+    this.keep()
+    this.momentAt(this.localTick)?.log.push(guess)
+    this.applyGuess(guess)
+  }
+
+  private applyGuess(guess: Guess) {
+    if (guess.kind === Logged.Move) this.planMove(guess.unitIds, guess.tile)
+    else this.aim(guess.unitIds, guess.target, guess.targetId)
+  }
+
+  private planMove(unitIds: readonly number[], tile: TileCoord) {
     const surface: UnitSnapshot[] = []
     for (const unit of this.ordered(unitIds)) {
       unit.attackId = null
@@ -508,8 +650,7 @@ export class Replica {
     }
   }
 
-  /** Points ordered units at the target and leads those out of range toward it. */
-  predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
+  private aim(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     for (const unit of this.ordered(unitIds)) {
       unit.attackId = targetId
       unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null
@@ -693,25 +834,26 @@ export class Replica {
       const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
       for (let i = 0; i < behind; i++) this.stepUnit(unit, occupied, SIM_STEP)
     }
+    if (!this.rewinding) this.onCorrection?.(this.blend(unit, was))
+  }
+
+  /** Shifts a unit's drawn interpolation by its move from `was`, so only that offset fades in; returns the distance moved. */
+  private blend(unit: UnitSnapshot, was: Pose): number {
     const offset = offsetOf(was, poseOf(unit))
     const jump = Math.hypot(offset.x, offset.z)
-    this.onCorrection?.(jump)
     const shown = this.shown.get(unit.id)
-    if (!shown) return
+    if (!shown) return jump
     if (jump > TELEPORT_DISTANCE) {
       shown.before = poseOf(unit)
       shown.drift = still()
-      return
+    } else {
+      shiftPose(shown.before, offset, 1)
+      shiftPose(shown.drift, offset, -1)
     }
-    shiftPose(shown.before, offset, 1)
-    shiftPose(shown.drift, offset, -1)
+    return jump
   }
 
   private stepUnits(dt: number) {
-    for (const unit of this.units) {
-      const shown = this.shown.get(unit.id)
-      if (shown) shown.before = poseOf(unit)
-    }
     const occupied = this.occupancy()
     for (const unit of this.units) this.stepUnit(unit, occupied, dt)
     this.aimTurrets(dt)
@@ -952,6 +1094,21 @@ function scalePose(pose: Pose, factor: number) {
   pose.facing *= factor
   pose.turretYaw *= factor
   pose.altitude *= factor
+}
+
+function changesUnits(event: ServerFrame['events'][number]): boolean {
+  const kind = event.kind
+  return (
+    kind === ServerEventKind.UnitMotion ||
+    kind === ServerEventKind.UnitHealth ||
+    kind === ServerEventKind.UnitProgress ||
+    kind === ServerEventKind.UnitHidden
+  )
+}
+
+/** A unit's own copy of its path, the one field stepping changes in place. */
+function keptUnit(unit: UnitSnapshot): UnitSnapshot {
+  return { ...unit, path: unit.path.slice() }
 }
 
 function copyUnit(unit: UnitSnapshot): UnitSnapshot {
