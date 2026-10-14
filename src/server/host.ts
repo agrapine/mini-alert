@@ -47,6 +47,16 @@ type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
 /** What an owner's cities and structures light: `discs` holds x, z, sight per source and `rects` tileX, tileY, spanX, spanY per structure. */
 type StaticLayer = { discs: number[]; rects: number[]; lit: Uint8Array }
 
+/** A mobile unit's sight disc and footprint; `pass` is the last parking pass that saw the unit. */
+type Pose = { x: number; z: number; sight: number; tileX: number; tileY: number; spanX: number; spanY: number; parked: boolean; pass: number }
+
+/**
+ * What an owner's parked mobile units light, shared by every session of that owner: `lit` counts the parked discs
+ * and footprints over each tile. A unit parks only at a pose every session scanned on the tick before, so its tiles'
+ * margins are explored and reveal skips it until it leaves that pose.
+ */
+type Parking = { owner: number; poses: Map<number, Pose>; lit: Uint16Array; pass: number }
+
 /** A change that may wait for the next frame going out anyway, or for the ledger cadence. */
 type Deferred = { event: ServerEvent; commit(): void }
 
@@ -69,6 +79,7 @@ type Memory = {
   sight: number
   /** The static layer `visible` was last stamped against; its tiles count as in view whether or not `visible` holds them. */
   layer: StaticLayer | null
+  parking: Parking
   felledSeen: number
   /** Tiles explored or changed since the last map patch went out. */
   unsentTiles: Set<number>
@@ -119,6 +130,8 @@ export class ServerHost {
   private cityBounds: Bounds[] | null = null
   private layers = new Map<number, StaticLayer>()
   private checkedLayers: Map<number, StaticLayer> | null = null
+  private parkings = new Map<number, Parking>()
+  private checkedParkings: Set<Parking> | null = null
 
   constructor(
     readonly game: Game,
@@ -205,6 +218,7 @@ export class ServerHost {
     this.tickNo += 1
     this.drop()
     const living = this.game.unitSnapshots()
+    this.park(living)
     for (const session of this.sessions) {
       if (!this.memory.has(session)) {
         this.pushSync(session)
@@ -263,6 +277,7 @@ export class ServerHost {
     this.stateKeys = null
     this.cityBounds = null
     this.checkedLayers = null
+    this.checkedParkings = null
   }
 
   private pushSync(session: Session) {
@@ -468,6 +483,7 @@ export class ServerHost {
       visible: new Uint32Array(tiles),
       sight: 1,
       layer: null,
+      parking: this.parkingOf(playerId),
       felledSeen: 0,
       unsentTiles: new Set(),
       seen: new Set(),
@@ -498,6 +514,8 @@ export class ServerHost {
     const fresh: TileCoord[] = []
     const sight = ++memory.sight
     const layer = this.staticLayer(memory.owner, units)
+    const parking = memory.parking
+    this.unparkMoved(parking, units)
     // A changed layer rescans every source, so the tiles it newly lights explore their margins in source order.
     const whole = memory.layer !== layer
     memory.layer = layer
@@ -505,7 +523,7 @@ export class ServerHost {
       const index = y * width + x
       const before = memory.visible[index]
       memory.visible[index] = sight
-      if (before === sight || before === sight - 1 || (!whole && layer.lit[index] === 1)) return
+      if (before === sight || before === sight - 1 || (!whole && (layer.lit[index] === 1 || parking.lit[index] > 0))) return
       for (const offset of MARGIN_OFFSETS) {
         const nx = x + offset.x
         const ny = y + offset.y
@@ -519,7 +537,7 @@ export class ServerHost {
     const friends: SightSource[] = []
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0 || unit.progress < 1) continue
-      if (!whole && isStructure(unit)) continue
+      if (!whole && (isStructure(unit) || parking.poses.get(unit.id)?.parked)) continue
       const sight = UNIT_TYPES[unit.typeId].weapon.sight
       if (sight > 0) friends.push({ x: unit.x, z: unit.z, sight })
     }
@@ -543,7 +561,7 @@ export class ServerHost {
     }
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0) continue
-      if (!whole && isStructure(unit)) continue
+      if (!whole && (isStructure(unit) || parking.poses.get(unit.id)?.parked)) continue
       const span = spanOf(UNIT_TYPES[unit.typeId])
       for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
         for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) see(x, y)
@@ -581,31 +599,82 @@ export class ServerHost {
   private stampStatic(discs: readonly number[], rects: readonly number[]): Uint8Array {
     const { width, height } = this.game.world
     const lit = new Uint8Array(width * height)
-    for (let i = 0; i < discs.length; i += 3) {
-      const reach = Math.ceil(discs[i + 2])
-      const originX = Math.floor(discs[i])
-      const originY = Math.floor(discs[i + 1])
-      const reachSq = discs[i + 2] * discs[i + 2]
-      for (let y = Math.max(0, originY - reach); y <= Math.min(height - 1, originY + reach); y++) {
-        for (let x = Math.max(0, originX - reach); x <= Math.min(width - 1, originX + reach); x++) {
-          const cx = x + 0.5 - discs[i]
-          const cz = y + 0.5 - discs[i + 1]
-          if (cx * cx + cz * cz <= reachSq) lit[y * width + x] = 1
-        }
-      }
-    }
-    for (let i = 0; i < rects.length; i += 4) {
-      for (let y = Math.max(0, rects[i + 1]); y < Math.min(height, rects[i + 1] + rects[i + 3]); y++) {
-        for (let x = Math.max(0, rects[i]); x < Math.min(width, rects[i] + rects[i + 2]); x++) lit[y * width + x] = 1
-      }
-    }
+    const cover = (index: number) => (lit[index] = 1)
+    for (let i = 0; i < discs.length; i += 3) coverDisc(discs[i], discs[i + 1], discs[i + 2], width, height, cover)
+    for (let i = 0; i < rects.length; i += 4) coverRect(rects[i], rects[i + 1], rects[i + 2], rects[i + 3], width, height, cover)
     return lit
+  }
+
+  private parkingOf(owner: number): Parking {
+    let parking = this.parkings.get(owner)
+    if (!parking) {
+      const { width, height } = this.game.world
+      parking = { owner, poses: new Map(), lit: new Uint16Array(width * height), pass: 0 }
+      this.parkings.set(owner, parking)
+    }
+    return parking
+  }
+
+  /** The per-tick pass: parks every mobile unit whose pose equals the one recorded at the previous tick, unparks the rest and records each pose. */
+  private park(units: readonly UnitSnapshot[]) {
+    this.checkedParkings = new Set(this.parkings.values())
+    for (const parking of this.parkings.values()) {
+      const pass = ++parking.pass
+      for (const unit of units) {
+        if (unit.ownerId !== parking.owner || unit.health <= 0 || isStructure(unit)) continue
+        const pose = poseOf(unit, pass)
+        const recorded = parking.poses.get(unit.id)
+        if (recorded && samePose(recorded, pose)) {
+          recorded.pass = pass
+          if (!recorded.parked) this.stampPose(parking, recorded, 1)
+          continue
+        }
+        if (recorded?.parked) this.stampPose(parking, recorded, -1)
+        parking.poses.set(unit.id, pose)
+      }
+      for (const [id, recorded] of parking.poses) {
+        if (recorded.pass === pass) continue
+        if (recorded.parked) this.stampPose(parking, recorded, -1)
+        parking.poses.delete(id)
+      }
+    }
+  }
+
+  /** Unparks every parked unit that has left its pose or the game; the recorded poses stay as the per-tick pass left them. */
+  private unparkMoved(parking: Parking, units: readonly UnitSnapshot[]) {
+    this.checkedParkings ??= new Set()
+    if (this.checkedParkings.has(parking)) return
+    this.checkedParkings.add(parking)
+    const pass = ++parking.pass
+    for (const unit of units) {
+      if (unit.ownerId !== parking.owner || unit.health <= 0) continue
+      const recorded = parking.poses.get(unit.id)
+      if (!recorded?.parked) continue
+      recorded.pass = pass
+      if (!samePose(recorded, poseOf(unit, pass))) this.stampPose(parking, recorded, -1)
+    }
+    for (const recorded of parking.poses.values()) {
+      if (recorded.parked && recorded.pass !== pass) this.stampPose(parking, recorded, -1)
+    }
+  }
+
+  private stampPose(parking: Parking, pose: Pose, delta: 1 | -1) {
+    const { width, height } = this.game.world
+    const lit = parking.lit
+    const cover = (index: number) => (lit[index] += delta)
+    pose.parked = delta === 1
+    if (pose.sight > 0) coverDisc(pose.x, pose.z, pose.sight, width, height, cover)
+    coverRect(pose.tileX, pose.tileY, pose.spanX, pose.spanY, width, height, cover)
   }
 
   private knows(memory: Memory, unit: UnitSnapshot, width: number): boolean {
     if (unit.ownerId === memory.owner) return true
     const index = unit.tileY * width + unit.tileX
-    return index >= 0 && index < memory.visible.length && (memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1)
+    return index >= 0 && index < memory.visible.length && this.inView(memory, index)
+  }
+
+  private inView(memory: Memory, index: number): boolean {
+    return memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1 || memory.parking.lit[index] > 0
   }
 
   private pointVisible(memory: Memory, x: number, z: number, width: number, height: number): boolean {
@@ -635,8 +704,7 @@ export class ServerHost {
     const tx = Math.floor(x)
     const ty = Math.floor(z)
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return false
-    const index = ty * width + tx
-    return memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1
+    return this.inView(memory, ty * width + tx)
   }
 
   private visibleCities(memory: Memory): VisibleCity[] {
@@ -829,6 +897,38 @@ function shapeKey(layout: CityLayout): string {
 
 function isStructure(unit: UnitSnapshot): boolean {
   return UNIT_TYPES[unit.typeId].topSpeed === 0
+}
+
+function poseOf(unit: UnitSnapshot, pass: number): Pose {
+  const type = UNIT_TYPES[unit.typeId]
+  const span = spanOf(type)
+  const sight = unit.progress >= 1 ? type.weapon.sight : 0
+  return { x: unit.x, z: unit.z, sight, tileX: unit.tileX, tileY: unit.tileY, spanX: span.x, spanY: span.y, parked: false, pass }
+}
+
+function samePose(a: Pose, b: Pose): boolean {
+  return a.x === b.x && a.z === b.z && a.sight === b.sight && a.tileX === b.tileX && a.tileY === b.tileY && a.spanX === b.spanX && a.spanY === b.spanY
+}
+
+/** Covers every tile whose center lies within `sight` of (x, z), as reveal scans a sight disc. */
+function coverDisc(x: number, z: number, sight: number, width: number, height: number, cover: (index: number) => void) {
+  const reach = Math.ceil(sight)
+  const originX = Math.floor(x)
+  const originY = Math.floor(z)
+  const reachSq = sight * sight
+  for (let ty = Math.max(0, originY - reach); ty <= Math.min(height - 1, originY + reach); ty++) {
+    for (let tx = Math.max(0, originX - reach); tx <= Math.min(width - 1, originX + reach); tx++) {
+      const cx = tx + 0.5 - x
+      const cz = ty + 0.5 - z
+      if (cx * cx + cz * cz <= reachSq) cover(ty * width + tx)
+    }
+  }
+}
+
+function coverRect(tileX: number, tileY: number, spanX: number, spanY: number, width: number, height: number, cover: (index: number) => void) {
+  for (let y = Math.max(0, tileY); y < Math.min(height, tileY + spanY); y++) {
+    for (let x = Math.max(0, tileX); x < Math.min(width, tileX + spanX); x++) cover(y * width + x)
+  }
 }
 
 function sameValues(a: readonly number[], b: readonly number[]): boolean {
