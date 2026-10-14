@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CAPTURE_DRAIN, captureDuration, captureFade, cityContains, cityHolds, CITY_GROW_SECONDS, layoutCities, lostStreets, populationOf, projectCity, settledCity, STREET_REACH, StreetKind, type CityLayout } from '../shared/cities.ts'
+import { CAPTURE_DRAIN, captureDuration, captureFade, CITY_CATALOG, CITY_MODELS, cityContains, cityHolds, cityRadius, CITY_GROW_SECONDS, DENSITY_MAX, DENSITY_MIN, densityOf, growCity, HALL_MODEL, layoutCities, lostStreets, populationOf, projectCity, settledCity, STREET_REACH, StreetKind, UPGRADE_REST, type CityLayout } from '../shared/cities.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { HEAVY_TANK, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
@@ -37,13 +37,25 @@ describe('cities', () => {
       { x: 8, y: 8 },
       { x: 16, y: 16 },
     ]
+    const used = new Set<number>()
+    for (const entry of CITY_CATALOG) {
+      expect(entry.density).toBeGreaterThanOrEqual(DENSITY_MIN)
+      expect(entry.density).toBeLessThanOrEqual(DENSITY_MAX)
+      if (entry.name.startsWith('building-')) expect(entry.density).toBeGreaterThanOrEqual(7)
+      else expect(entry.density).toBeLessThanOrEqual(6)
+      used.add(entry.density)
+    }
+    for (let density = DENSITY_MIN; density <= DENSITY_MAX; density++) expect(used.has(density)).toBe(true)
     for (let index = 0; index < layouts.length; index++) {
       const city = layouts[index]
       const anchor = towns[index]
       expect(city.span === 2 || city.span === 3 || city.span === 4).toBe(true)
-      expect(city.tiles.length).toBe(city.span * city.span)
+      expect(city.tiles.length).toBeGreaterThanOrEqual(city.span * city.span)
+      expect(city.tiles.length).toBeLessThan(city.span * city.span + 4)
       expect(city.buildings.length).toBeGreaterThan(0)
       expect(city.buildings.filter((building) => building.keep)).toHaveLength(1)
+      expect(city.buildings.find((building) => building.keep)?.model).toBe(HALL_MODEL)
+      expect(populationOf(city)).toBe(city.buildings.reduce((sum, building) => sum + densityOf(building.model), 0))
       const roads = roadsOf(city)
       expect(roads.length).toBeGreaterThan(0)
       expect(connected(roads)).toBe(true)
@@ -53,7 +65,8 @@ describe('cities', () => {
         expect(building.x === 9 && building.y === 8).toBe(false)
         expect(cityContains(city, building.x, building.y)).toBe(true)
         expect(building.model).toBeGreaterThanOrEqual(0)
-        expect(building.model).toBeLessThan(8)
+        expect(building.model).toBeLessThan(CITY_MODELS)
+        if (!building.keep) expect(densityOf(building.model)).toBe(1)
         expect(nextToStreet(building, roads)).toBe(true)
         expect(facesStreet(building, roads)).toBe(false)
       }
@@ -61,17 +74,154 @@ describe('cities', () => {
         expect(nearestBuilding(road, city.buildings)).toBeLessThanOrEqual(STREET_REACH)
         expect(pieceMatches(road, roads)).toBe(true)
       }
-      expect(streetNeighbors(roads)).toBeLessThanOrEqual(3)
+      expect(streetNeighbors(roads)).toBeLessThanOrEqual(4)
       expect(packedStreets(roads)).toBe(false)
+      expect(closeParallel(roads)).toBe(false)
     }
+  })
+
+  it('densifies a central plot and extends streets in short runs', () => {
+    const game = cityGame()
+    const terrain = terrainOf(game)
+    let city = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)[0]
+    const ruined = city.buildings.find((building) => !building.keep)
+    expect(ruined).toBeDefined()
+    if (ruined) expect(populationOf(city, [ruined])).toBe(populationOf(city) - densityOf(ruined.model))
+    let upgraded = false
+    let ran = false
+    let packed = 0
+    let outward = 0
+    for (let step = 0; step < 400 && (step < 24 || !upgraded || !ran); step++) {
+      const next = growCity(city, terrain, game.world.width, game.world.height)
+      expect(next).not.toBeNull()
+      if (!next) break
+      const addedRoads = roadsOf(next).length - roadsOf(city).length
+      const samePlots = next.buildings.length === city.buildings.length && next.buildings.every((building, index) => building.x === city.buildings[index].x && building.y === city.buildings[index].y)
+      const raised = samePlots && addedRoads === 0 && next.buildings.some((building, index) => densityOf(building.model) > densityOf(city.buildings[index].model))
+      if (raised) upgraded = true
+      if (samePlots && addedRoads >= 1 && addedRoads <= 4) ran = true
+      if (step < 24) {
+        if (raised) packed += 1
+        else outward += 1
+      }
+      expect(closeParallel(roadsOf(next))).toBe(false)
+      expect(addedRoads).toBeLessThanOrEqual(4)
+      city = next
+    }
+    expect(upgraded).toBe(true)
+    expect(ran).toBe(true)
+    expect(outward).toBeGreaterThan(packed)
+    const anchor = roadsOf(city)[0]
+    let core = 0
+    let coreCount = 0
+    let fringe = 0
+    let fringeCount = 0
+    for (const building of city.buildings) {
+      if (building.keep) continue
+      const away = Math.hypot(building.x - anchor.x, building.y - anchor.y)
+      if (away <= 2) {
+        core += densityOf(building.model)
+        coreCount += 1
+      } else if (away >= 3) {
+        fringe += densityOf(building.model)
+        fringeCount += 1
+      }
+    }
+    if (coreCount > 0 && fringeCount > 0) expect(core / coreCount).toBeGreaterThan(fringe / fringeCount)
+    let reach = 0
+    for (const building of city.buildings) reach = Math.max(reach, Math.hypot(building.x - anchor.x, building.y - anchor.y))
+    expect(reach).toBeLessThanOrEqual(cityRadius(populationOf(city)) + 1)
+    expect(CITY_CATALOG[HALL_MODEL].name).toBe('water-tower')
+  })
+
+  it('spreads for a few steps after a building is upgraded', () => {
+    const game = cityGame()
+    const terrain = terrainOf(game)
+    let city = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)[0]
+    let raised = false
+    for (let step = 0; step < 40 && !raised; step++) {
+      const next = growCity(city, terrain, game.world.width, game.world.height)
+      expect(next).not.toBeNull()
+      if (!next) return
+      const upgraded = next.buildings.some((building) => {
+        const prior = city.buildings.find((other) => other.x === building.x && other.y === building.y)
+        return prior !== undefined && densityOf(building.model) > densityOf(prior.model)
+      })
+      if (upgraded) {
+        let held = next
+        for (let wait = 0; wait < UPGRADE_REST; wait++) {
+          const later = growCity(held, terrain, game.world.width, game.world.height)
+          expect(later).not.toBeNull()
+          if (!later) return
+          expect(later.tiles.length).toBeGreaterThan(held.tiles.length)
+          for (const building of later.buildings) {
+            const prior = held.buildings.find((other) => other.x === building.x && other.y === building.y)
+            if (prior) expect(densityOf(building.model)).toBe(densityOf(prior.model))
+          }
+          held = later
+        }
+        raised = true
+      }
+      city = next
+    }
+    expect(raised).toBe(true)
+  })
+
+  it('replaces trees as it spreads and leaves water standing', () => {
+    const width = 20
+    const height = 20
+    const tiles = new Uint8Array(width * height).fill(Terrain.Land)
+    tiles[8 * width + 9] = Terrain.Water
+    for (let y = 6; y <= 12; y++) {
+      for (let x = 6; x <= 12; x++) {
+        if ((x === 8 && y === 8) || (x === 9 && y === 8)) continue
+        tiles[y * width + x] = Terrain.Tree
+      }
+    }
+    const game = new Game(World.fromTiles(width, height, tiles))
+    game.scenery = { coast: [], holes: [], roads: [], towns: [{ x: 8, y: 8 }], seed: 7 }
+    game.bindCities()
+    const layout = game.cityLayouts()[0]
+    const claimed = layout.tiles.filter((tile) => tiles[tile.y * width + tile.x] === Terrain.Tree)
+    expect(claimed.length).toBeGreaterThan(0)
+    for (const tile of claimed) {
+      expect(game.world.terrainAt(tile.x, tile.y)).toBe(Terrain.Land)
+      expect(game.clearedTiles()).toContainEqual(tile)
+    }
+    expect(game.world.terrainAt(9, 8)).toBe(Terrain.Water)
+    expect(layout.tiles.some((tile) => tile.x === 9 && tile.y === 8)).toBe(false)
+    const waiting = layout.tiles
+    const pending = []
+    for (let y = 6; y <= 12; y++) {
+      for (let x = 6; x <= 12; x++) {
+        if (waiting.some((tile) => tile.x === x && tile.y === y)) continue
+        if (tiles[y * width + x] !== Terrain.Tree) continue
+        pending.push({ x, y })
+      }
+    }
+    expect(pending.length).toBeGreaterThan(0)
+    for (const tile of pending) expect(game.world.terrainAt(tile.x, tile.y)).toBe(Terrain.Tree)
+    const human = game.addPlayer()
+    game.claimCity({ x: 8, y: 8 }, human.id)
+    const stand = roadsOf(layout).find((road) => game.world.terrainAt(road.x, road.y) !== Terrain.Water)
+    expect(stand).toBeDefined()
+    if (!stand) return
+    game.spawn(human, UnitTypeId.Scout, { x: stand.x, y: stand.y }, 0)
+    const felled = game.clearedTiles().length
+    let guard = 0
+    while (game.clearedTiles().length === felled && guard < 160) {
+      game.tick(CITY_GROW_SECONDS)
+      guard += 1
+    }
+    expect(game.clearedTiles().length).toBeGreaterThan(felled)
+    expect(game.world.terrainAt(9, 8)).toBe(Terrain.Water)
   })
 
   it('pulls up streets left farther than reach from a standing building', () => {
     const game = cityGame()
     const terrain = terrainOf(game)
     const base = layoutCities(game.scenery.towns, game.scenery.seed, terrain, game.world.width, game.world.height)[0]
-    const layout = projectCity(base, 14, terrain, game.world.width, game.world.height)
-    let dropped = 0
+    const layout = projectCity(base, 300, terrain, game.world.width, game.world.height)
     for (const building of layout.buildings) {
       const ruins = [{ x: building.x, y: building.y }]
       const settled = settledCity(layout, ruins)
@@ -80,13 +230,19 @@ describe('cities', () => {
         expect(nearestBuilding(street, living)).toBeLessThanOrEqual(STREET_REACH)
       }
       const lost = lostStreets(layout, ruins)
-      for (const street of lost) {
-        dropped += 1
-        expect(nearestBuilding(street, living)).toBeGreaterThan(STREET_REACH)
-      }
+      for (const street of lost) expect(nearestBuilding(street, living)).toBeGreaterThan(STREET_REACH)
       expect(lostStreets(layout, ruins.concat(lost))).toEqual([])
     }
-    expect(dropped).toBeGreaterThan(0)
+    const hall = layout.buildings.find((building) => building.keep)
+    expect(hall).toBeDefined()
+    if (!hall) return
+    const bare = layout.buildings.filter((building) => !building.keep)
+    const lifted = lostStreets(layout, bare)
+    expect(lifted.length).toBeGreaterThan(0)
+    for (const street of lifted) expect(nearestBuilding(street, [hall])).toBeGreaterThan(STREET_REACH)
+    for (const street of roadsOf(settledCity(layout, bare))) {
+      expect(nearestBuilding(street, [hall])).toBeLessThanOrEqual(STREET_REACH)
+    }
   })
 
   it('captures a city in five seconds per building for one scout', () => {
@@ -303,7 +459,7 @@ function connected(roads: readonly { x: number; y: number }[]): boolean {
 }
 
 function nextToStreet(building: { x: number; y: number }, roads: readonly { x: number; y: number }[]): boolean {
-  return roads.some((road) => Math.abs(road.x - building.x) + Math.abs(road.y - building.y) === 1)
+  return roads.some((road) => Math.max(Math.abs(road.x - building.x), Math.abs(road.y - building.y)) <= 2)
 }
 
 function nearestBuilding(road: { x: number; y: number }, buildings: readonly { x: number; y: number }[]): number {
@@ -376,6 +532,19 @@ function streetNeighbors(roads: readonly { x: number; y: number }[]): number {
     if (count > widest) widest = count
   }
   return widest
+}
+
+function closeParallel(roads: readonly { x: number; y: number }[]): boolean {
+  const present = new Set(roads.map((road) => `${road.x},${road.y}`))
+  const horizontal = (road: { x: number; y: number }) => present.has(`${road.x + 1},${road.y}`) || present.has(`${road.x - 1},${road.y}`)
+  const vertical = (road: { x: number; y: number }) => present.has(`${road.x},${road.y + 1}`) || present.has(`${road.x},${road.y - 1}`)
+  for (const road of roads) {
+    for (const other of roads) {
+      if (horizontal(road) && horizontal(other) && Math.abs(road.y - other.y) === 1 && Math.abs(road.x - other.x) <= 2) return true
+      if (vertical(road) && vertical(other) && Math.abs(road.x - other.x) === 1 && Math.abs(road.y - other.y) <= 2) return true
+    }
+  }
+  return false
 }
 
 function packedStreets(roads: readonly { x: number; y: number }[]): boolean {

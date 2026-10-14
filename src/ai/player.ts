@@ -1,5 +1,6 @@
-import { consider, type Brain, type Thought } from './scenarios.ts'
+import { consider, type Brain, type Mood, type Thought } from './scenarios.ts'
 import { clampAiPace, AI_PACE_DEFAULT } from '../shared/lobby.ts'
+import { SIM_STEP } from '../shared/motion.ts'
 import { ClientMessageKind, type ClientPort } from '../shared/protocol.ts'
 import { Replica } from '../client/replica.ts'
 
@@ -11,6 +12,7 @@ export class AiPlayer {
   private elapsed = 0
   lastThought: Thought | null = null
   thinks = 0
+  private mood: Mood = { now: 0, pop: -1, popAt: 0, plan: 0, atX: -1, atY: -1, planAt: 0, salt: 0, banX: -1, banY: -1, near: 1e9 }
 
   get playerId(): number {
     return this.replica.playerId ?? 0
@@ -49,9 +51,11 @@ export class AiPlayer {
       terrain: world.terrain,
       known: world.known,
       layouts: this.replica.settledLayouts(),
+      mood: { ...this.mood, now: this.replica.localTick * SIM_STEP },
     }
-    const budget = Math.max(1, Math.round(this.pace * 2))
+    const budget = Math.max(8, Math.round(this.pace * 8))
     const thought = consider(brain, budget)
+    this.mood = thought.mood
     this.lastThought = thought
     this.thinks += 1
     for (const order of thought.orders) this.port.send(order)

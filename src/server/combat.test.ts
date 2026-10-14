@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { cityContains, layoutCities, lostStreets, projectCity, settledCity, StreetKind } from '../shared/cities.ts'
+import { captureDuration, cityContains, layoutCities, lostStreets, populationOf, projectCity, settledCity, StreetKind, type CityLayout } from '../shared/cities.ts'
 import { Terrain } from '../shared/tiles.ts'
-import { WeaponKind, UnitTypeId } from '../shared/unit-types.ts'
+import { MED_TANK, WeaponKind, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
+import { CREDIT_PER_POPULATION } from './player.ts'
 import { World } from './world.ts'
+
+function standOff(layout: CityLayout, target: { x: number; y: number }, width: number): { x: number; y: number } | null {
+  for (let dist = 1; dist <= 6; dist++) {
+    for (let dy = -dist; dy <= dist; dy++) {
+      for (let dx = -dist; dx <= dist; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) !== dist) continue
+        const x = target.x + dx
+        const y = target.y + dy
+        if (x < 0 || y < 0 || x >= width || y >= width) continue
+        if (!cityContains(layout, x, y)) return { x, y }
+      }
+    }
+  }
+  return null
+}
 
 function battle() {
   const game = new Game(new World(24, 24))
@@ -255,7 +271,6 @@ describe('combat', () => {
     )
     expect(street).toBeDefined()
     if (!street) return
-    const before = game.creditIncome(human.id)
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: street.x, y: street.y }, 0)
     expect(game.orderAttackGround(human.id, tank.id, { x: building.x, y: building.y })).toBe(true)
     let guard = 0
@@ -269,7 +284,9 @@ describe('combat', () => {
     const fallen = state.ruins.filter((ruin) => full.buildings.some((block) => block.x === ruin.x && block.y === ruin.y))
     for (const street of lostStreets(full, fallen)) expect(state.ruins).toContainEqual(street)
     expect(game.pathfinder.isWalkable(building.x, building.y, tank.id)).toBe(true)
-    expect(game.creditIncome(human.id)).toBeLessThan(before)
+    const people = populationOf(full, state.ruins)
+    expect(people).toBeLessThan(populationOf(full))
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * people)
     if (hall) expect(state.ruins).not.toContainEqual({ x: hall.x, y: hall.y })
   })
 
@@ -289,9 +306,9 @@ describe('combat', () => {
     expect(hall).toBeDefined()
     expect(block).toBeDefined()
     if (!hall || !block) return
-    const stand = { x: block.x + 2, y: block.y }
-    expect(stand.x).toBeLessThan(width)
-    expect(cityContains(layout, stand.x, stand.y)).toBe(false)
+    const stand = standOff(layout, block, width)
+    expect(stand).not.toBeNull()
+    if (!stand) return
     const tank = game.spawn(human, UnitTypeId.MedTank, stand, 0)
     let guard = 0
     while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === block.x && ruin.y === block.y) && guard < 40) {
@@ -329,9 +346,9 @@ describe('combat', () => {
     const block = layout.buildings.find((building) => !building.keep)
     expect(block).toBeDefined()
     if (!block) return
-    const stand = { x: block.x + 2, y: block.y }
-    expect(stand.x).toBeLessThan(width)
-    expect(cityContains(layout, stand.x, stand.y)).toBe(false)
+    const stand = standOff(layout, block, width)
+    expect(stand).not.toBeNull()
+    if (!stand) return
     const tank = game.spawn(human, UnitTypeId.MedTank, stand, 0)
     for (let i = 0; i < 16; i++) game.tick(0.5)
     expect(game.cityStates()[0].ruins).not.toContainEqual({ x: block.x, y: block.y })
@@ -355,8 +372,9 @@ describe('combat', () => {
     const stand = roads.find((road) => road.x !== street.x || road.y !== street.y) ?? street
     const tank = game.spawn(human, UnitTypeId.MedTank, { x: stand.x, y: stand.y }, 0)
     expect(game.orderAttackGround(human.id, tank.id, { x: street.x, y: street.y })).toBe(true)
+    const captureTicks = Math.ceil(captureDuration(populationOf(layout)) / MED_TANK.supply / 0.5)
     let guard = 0
-    while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === street.x && ruin.y === street.y) && guard < 40) {
+    while (!game.cityStates()[0].ruins.some((ruin) => ruin.x === street.x && ruin.y === street.y) && guard < captureTicks + 40) {
       game.tick(0.5)
       guard += 1
     }

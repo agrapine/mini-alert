@@ -32,6 +32,7 @@ export const enum ServerEventKind {
   Rally = 13,
   Primary = 14,
   Yields = 15,
+  Trace = 16,
 }
 
 export type OrderMove = {
@@ -282,6 +283,17 @@ export type YieldsEvent = {
   yields: MapPoint[]
 }
 
+export type TraceSample = {
+  slot: number
+  ms: number
+}
+
+export type TraceEvent = {
+  kind: ServerEventKind.Trace
+  budget: number
+  samples: TraceSample[]
+}
+
 export type SnapshotEvent = {
   kind: ServerEventKind.Snapshot
   map: MapData
@@ -309,6 +321,7 @@ export type ServerEvent =
   | RallyEvent
   | PrimaryEvent
   | YieldsEvent
+  | TraceEvent
 
 export type ServerFrame = {
   tick: number

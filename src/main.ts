@@ -10,6 +10,7 @@ import { Net } from './client/net.ts'
 import { bindInput, commandAt } from './client/input/pointer.ts'
 import { Replica } from './client/replica.ts'
 import { GameView } from './client/render/view.ts'
+import { bindTrace } from './client/trace-pie.ts'
 import { populationOf } from './shared/cities.ts'
 import { baysFree } from './shared/flight.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
@@ -19,16 +20,18 @@ import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
 const lobbyRoot = document.querySelector<HTMLElement>('#lobby')
+const traceRoot = document.querySelector<HTMLElement>('#trace')
 const vision = document.querySelector<HTMLElement>('#vision')
 const legend = document.querySelector<HTMLElement>('#legend')
 const outcome = document.querySelector<HTMLElement>('#outcome')
 const outcomeTitle = document.querySelector<HTMLElement>('#outcome-title')
 const outcomeText = document.querySelector<HTMLElement>('#outcome-text')
 const outcomeClose = document.querySelector<HTMLButtonElement>('#outcome-close')
-if (!canvas || !lobbyRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
+if (!canvas || !lobbyRoot || !traceRoot || !vision || !legend || !outcome || !outcomeTitle || !outcomeText || !outcomeClose) {
   throw new Error('missing game canvas')
 }
 const viewCanvas = canvas
+const tracePie = bindTrace(traceRoot)
 const visionBar = vision
 const legendBar = legend
 const outcomeLayer = outcome
@@ -187,6 +190,10 @@ function claimName(serverName: string) {
   net.sendLobby({ kind: LobbyClientKind.SetName, name: saved })
 }
 net.onGame = (frame) => {
+  for (const event of frame.events) {
+    if (event.kind === ServerEventKind.Trace) tracePie.paint(event)
+  }
+  if (frame.events.length > 0 && frame.events.every((event) => event.kind === ServerEventKind.Trace)) return
   const previous = replica.playerId
   const hadWorld = replica.world
   replica.apply(frame)
@@ -233,6 +240,7 @@ function leaveMatch() {
   legendBar.hidden = true
   legendBar.replaceChildren()
   outcomeLayer.hidden = true
+  tracePie.hide()
 }
 
 function mountWorld() {

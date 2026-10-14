@@ -22,6 +22,8 @@ import { friendsOf, growExplored, stampSight } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
+import { __TRACE__, traceBegin, traceEnd } from './trace.ts'
+import { TraceSlot } from '../shared/trace.ts'
 
 const UNSET = 255
 
@@ -136,12 +138,15 @@ export class ServerHost {
 
   tick(dt: number) {
     if (this.stopped) return
+    __TRACE__ && traceBegin(TraceSlot.Ai)
     for (const ai of this.ais) ai.update(dt)
+    __TRACE__ && traceEnd()
     const shots = this.game.tick(dt)
     const hits = this.game.takeHits()
     const yields = this.game.takeYields()
     this.game.takeDeaths()
     this.tickNo += 1
+    __TRACE__ && traceBegin(TraceSlot.Net)
     const living = this.game.unitSnapshots()
     for (const session of this.sessions) {
       if (!this.memory.has(session)) {
@@ -150,6 +155,7 @@ export class ServerHost {
       }
       this.pushTick(session, living, shots, hits, yields)
     }
+    __TRACE__ && traceEnd()
   }
 
   private onCommand(session: Session, message: ClientMessage) {
@@ -192,7 +198,9 @@ export class ServerHost {
     this.reveal(memory, living)
     const units = living.filter((unit) => this.knows(memory, unit, width))
     const cities = this.visibleCities(memory)
+    __TRACE__ && traceBegin(TraceSlot.Map)
     const map = this.mapOf(memory)
+    __TRACE__ && traceEnd()
     const training = this.game.trainingFor(session.playerId)
     const rally = this.game.rally(session.playerId)
     const primary = this.game.primaryFactory(session.playerId)
@@ -229,9 +237,12 @@ export class ServerHost {
     const { width, height } = this.game.world
     const fresh = this.reveal(memory, living)
     const events: ServerEvent[] = []
+    __TRACE__ && traceBegin(TraceSlot.Map)
     const patch = this.changedMap(memory, fresh)
+    __TRACE__ && traceEnd()
     if (patch) events.push({ kind: ServerEventKind.MapPatch, map: patch })
-    for (const city of this.changedCities(memory)) events.push({ kind: ServerEventKind.CityUpdate, city })
+    const cities = this.changedCities(memory)
+    for (const city of cities) events.push({ kind: ServerEventKind.CityUpdate, city })
 
     const known = new Set<number>()
     for (const unit of living) {
@@ -355,11 +366,18 @@ export class ServerHost {
 
   private reveal(memory: Memory, units: readonly UnitSnapshot[]): TileCoord[] {
     const { width, height } = this.game.world
+    __TRACE__ && traceBegin(TraceSlot.VisionCopy)
     const before = memory.explored.slice()
+    const revealed = new Uint8Array(memory.explored.length)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionFriends)
     const playerId = this.ownerOf(memory)
     const friends = friendsOf(units, playerId, this.game.citySights())
-    const revealed = new Uint8Array(memory.explored.length)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionStamp)
     stampSight(width, height, friends, revealed, memory.visible)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionFoot)
     for (const unit of units) {
       if (unit.ownerId !== playerId || unit.health <= 0) continue
       const span = spanOf(UNIT_TYPES[unit.typeId])
@@ -374,12 +392,17 @@ export class ServerHost {
         }
       }
     }
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionGrow)
     growExplored(revealed, width, height)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionCommit)
     for (let i = 0; i < revealed.length; i++) if (revealed[i] === 1) memory.explored[i] = 1
     const fresh: TileCoord[] = []
     for (let i = 0; i < memory.explored.length; i++) {
       if (memory.explored[i] === 1 && before[i] === 0) fresh.push({ x: i % width, y: Math.floor(i / width) })
     }
+    __TRACE__ && traceEnd()
     return fresh
   }
 
@@ -427,15 +450,19 @@ export class ServerHost {
   }
 
   private visibleCities(memory: Memory): CityRecord[] {
-    const records: CityRecord[] = []
+    __TRACE__ && traceBegin(TraceSlot.CityStates)
     const states = this.game.cityStates()
     const layouts = this.game.cityLayouts()
+    __TRACE__ && traceEnd()
+    const records: CityRecord[] = []
+    __TRACE__ && traceBegin(TraceSlot.CityClip)
     for (let index = 0; index < states.length; index++) {
       const layout = clipLayout(layouts[index], memory.explored, this.game.world.width)
       if (!layout || layout.tiles.length === 0) continue
       const state = clipState(states[index], memory.explored, this.game.world.width)
       records.push({ index, state, layout })
     }
+    __TRACE__ && traceEnd()
     return records
   }
 
@@ -443,6 +470,7 @@ export class ServerHost {
     const next = this.visibleCities(memory)
     const changed: CityRecord[] = []
     const live = new Set<number>()
+    __TRACE__ && traceBegin(TraceSlot.CityKey)
     for (const city of next) {
       live.add(city.index)
       const key = cityKey(city)
@@ -454,6 +482,7 @@ export class ServerHost {
       if (live.has(index)) continue
       memory.citySig.delete(index)
     }
+    __TRACE__ && traceEnd()
     return changed
   }
 

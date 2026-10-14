@@ -41,6 +41,7 @@ const SERVER_KIND: Record<number, string> = {
   [ServerEventKind.Rally]: 'Rally',
   [ServerEventKind.Primary]: 'Primary',
   [ServerEventKind.Yields]: 'Yields',
+  [ServerEventKind.Trace]: 'Trace',
 }
 
 const LOBBY_CLIENT_KIND: Record<number, string> = {

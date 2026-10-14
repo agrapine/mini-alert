@@ -351,7 +351,7 @@ export const CRUISER: UnitType = {
   label: 'Cruiser',
   topSpeed: 3.4,
   acceleration: 0.35,
-  turnRate: 0.55,
+  turnRate: 0.825,
   wheelbase: 0,
   maxSteer: 0,
   footprint: 1,
@@ -364,7 +364,7 @@ export const CRUISER: UnitType = {
   weapon: {
     kind: WeaponKind.Shell,
     sight: 13,
-    range: 15,
+    range: 30,
     damage: 48,
     reload: 2.8,
     fireInterval: 0,

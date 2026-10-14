@@ -4,6 +4,8 @@ import { flightLine } from '../../shared/motion.ts'
 import type { Unit } from '../units/unit.ts'
 import type { World } from '../world.ts'
 import { findPath } from './astar.ts'
+import { __TRACE__, traceBegin, traceEnd } from '../trace.ts'
+import { TraceSlot } from '../../shared/trace.ts'
 
 const EMPTY = 0
 
@@ -69,6 +71,13 @@ export class PathFinder {
   }
 
   findPath(start: TileCoord, goal: TileCoord, ignoreUnitId: number, domain = MoveDomain.Ground): TileCoord[] | null {
+    __TRACE__ && traceBegin(TraceSlot.Path)
+    const path = this.search(start, goal, ignoreUnitId, domain)
+    __TRACE__ && traceEnd()
+    return path
+  }
+
+  private search(start: TileCoord, goal: TileCoord, ignoreUnitId: number, domain: MoveDomain): TileCoord[] | null {
     if (domain === MoveDomain.Air) {
       if (!this.inBounds(start.x, start.y) || !this.inBounds(goal.x, goal.y)) return null
       return flightLine(start, goal)

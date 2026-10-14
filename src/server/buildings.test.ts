@@ -224,7 +224,13 @@ describe('buildings', () => {
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
     game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(room >= MED_TANK.supply * 2)
+    const second = room >= MED_TANK.supply * 2
+    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(second)
+    let left = room - MED_TANK.supply - (second ? MED_TANK.supply : 0)
+    while (left >= TURRET.supply) {
+      expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+      left -= SCOUT.supply
+    }
     expect(game.trySpawn(human.id, UnitTypeId.Artillery)).toBe(false)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 14, y: 14 })).toBe(false)
     expect(SCOUT.supply).toBe(1)
@@ -276,7 +282,7 @@ describe('buildings', () => {
     seat(game, human.id, 10, 8)
     growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 12, y: 6 })).toBe(true)
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 13, y: 8 })).toBe(true)
     game.finishBuild(human.id)
     game.finishBuild(human.id)
     expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
@@ -290,7 +296,7 @@ describe('buildings', () => {
     seat(game, human.id, 10, 8)
     growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 12, y: 6 })).toBe(true)
+    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 13, y: 8 })).toBe(true)
     game.finishBuild(human.id)
     game.finishBuild(human.id)
     const first = game.units[0]

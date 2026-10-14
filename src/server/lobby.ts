@@ -23,7 +23,7 @@ import {
   type WaitingRoom,
 } from '../shared/lobby.ts'
 import { PLAYER_COLORS } from '../shared/players.ts'
-import type { ClientMessage, MapPoint, ServerFrame } from '../shared/protocol.ts'
+import { ServerEventKind, type ClientMessage, type MapPoint, type ServerFrame, type TraceSample } from '../shared/protocol.ts'
 import { AiPlayer } from '../ai/player.ts'
 import type { RemotePlay } from './host.ts'
 import { ServerHost } from './host.ts'
@@ -278,6 +278,19 @@ export class Lobby {
       if (!this.games.has(game.id) || !game.match) continue
       if (this.liveHumans(game) === 0) continue
       game.match.host.tick(dt)
+    }
+  }
+
+  pushTrace(samples: TraceSample[], budget: number) {
+    const frame: ServerFrame = {
+      tick: 0,
+      events: [{ kind: ServerEventKind.Trace, samples, budget }],
+    }
+    for (const member of this.members.values()) {
+      if (!member.socket || member.gameId === null) continue
+      const game = this.games.get(member.gameId)
+      if (!game || game.status !== RoomStatus.Playing) continue
+      member.socket.sendGame(frame)
     }
   }
 

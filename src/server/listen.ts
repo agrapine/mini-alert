@@ -10,6 +10,7 @@ import type { ClientMessage, ServerFrame } from '../shared/protocol.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
 import { serveClient } from './static.ts'
+import { __TRACE__, traceCommit, traceReset } from './trace.ts'
 
 const PORT = Number(process.env.PORT) || 8787
 const STEP = SIM_STEP
@@ -53,7 +54,14 @@ sockets.on('connection', (socket, request) => {
   socket.on('close', () => lobby.disconnect(member, link))
 })
 
-setInterval(() => lobby.tick(STEP), STEP * 1000)
+setInterval(() => {
+  __TRACE__ && traceReset()
+  const started = __TRACE__ ? performance.now() : 0
+  lobby.tick(STEP)
+  if (!__TRACE__) return
+  const report = traceCommit(performance.now() - started, STEP * 1000)
+  if (report) lobby.pushTrace(report.samples, report.budget)
+}, STEP * 1000)
 setInterval(() => lobby.onSave(), saveIntervalMs())
 
 let closed = false

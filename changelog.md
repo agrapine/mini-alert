@@ -1,7 +1,13 @@
 # Changelog
 
-## 0.4
+## 0.5
 
+- New city growth mechanics, buildings have density and can grow over landscape.
+- Better AI
+- Improved cruiser turn speed, attack range
+- Server timing tracing
+
+¢ 0.4
 - New structures: Airports, helipads, shipyards, 
 - New units: jets, gunship, cruisers
 - Fight on water, air, land.

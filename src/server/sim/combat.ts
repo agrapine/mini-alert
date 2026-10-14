@@ -6,6 +6,9 @@ import { Locomotion, WeaponKind } from '../../shared/unit-types.ts'
 import { seesPoint, type CitySight, type SightSource } from '../../shared/vision.ts'
 import { clamp, wrapAngle } from '../sim/drive.ts'
 import type { Unit } from '../units/unit.ts'
+import { __TRACE__, traceBegin, traceEnd } from '../trace.ts'
+import { TraceSlot } from '../../shared/trace.ts'
+import { Quad } from '../../shared/quad.ts'
 
 export type Impact = {
   time: number
@@ -38,9 +41,31 @@ export function engage(
   cities: readonly CitySight[] = [],
   blasts: Blast[] = [],
   structures: readonly StructureTarget[] = [],
+  width = 0,
+  height = 0,
 ): ShotEvent[] {
+  __TRACE__ && traceBegin(TraceSlot.CombatTeam)
   const vision = teamVision(units, cities)
+  __TRACE__ && traceEnd()
+  __TRACE__ && traceBegin(TraceSlot.CombatTargets)
+  const byId = new Map<number, Unit>()
+  unitQuad.clear(width, height)
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i]
+    byId.set(unit.id, unit)
+    if (unit.health <= 0) continue
+    unitQuad.insert(i, unit.pos.x, unit.pos.z)
+  }
+  __TRACE__ && traceEnd()
+  __TRACE__ && traceBegin(TraceSlot.CombatStructures)
+  structureQuad.clear(width, height)
+  for (let i = 0; i < structures.length; i++) {
+    const building = structures[i]
+    structureQuad.insert(i, building.x, building.z)
+  }
+  __TRACE__ && traceEnd()
   const shots: ShotEvent[] = []
+  __TRACE__ && traceBegin(TraceSlot.CombatFire)
   for (const unit of units) {
     if (unit.health <= 0 || unit.progress < 1 || unit.type.weapon.damage <= 0) continue
     const weapon = unit.type.weapon
@@ -52,8 +77,12 @@ export function engage(
 
     const ordered = unit.attackPoint
     const friends = vision.get(unit.ownerId) ?? []
-    const target = ordered ? null : pickTarget(unit, units, friends)
+    __TRACE__ && traceBegin(TraceSlot.CombatTargets)
+    const target = ordered ? null : pickTarget(unit, units, friends, byId)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.CombatStructures)
     const structure = ordered || target ? null : pickStructure(unit, structures, friends)
+    __TRACE__ && traceEnd()
     const aim = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
     if (!ordered && !target && !structure) continue
     const predicted = target && explosive(weapon.kind) ? lead(unit, target) : null
@@ -101,6 +130,7 @@ export function engage(
       flight,
     })
   }
+  __TRACE__ && traceEnd()
   return shots
 }
 
@@ -193,6 +223,9 @@ function bodyReach(unit: Unit): number {
 }
 
 const ATTACK_COMMIT = 1.5
+const unitQuad = new Quad()
+const structureQuad = new Quad()
+const quadHits: number[] = []
 
 function teamVision(units: readonly Unit[], cities: readonly CitySight[]): Map<number, SightSource[]> {
   const vision = new Map<number, SightSource[]>()
@@ -213,31 +246,39 @@ function teamVision(units: readonly Unit[], cities: readonly CitySight[]): Map<n
   return vision
 }
 
-function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightSource[]): Unit | null {
+function pickTarget(unit: Unit, units: readonly Unit[], friends: readonly SightSource[], byId: Map<number, Unit>): Unit | null {
   const weapon = unit.type.weapon
   const reach = Math.max(weapon.sight, weapon.range)
-  const ordered = orderedTarget(unit, units)
+  const ordered = orderedTarget(unit, byId)
   const orderedVisible = ordered !== null && seesPoint(friends, ordered.pos.x, ordered.pos.z)
   if (ordered && orderedVisible && distance(unit, ordered) <= weapon.range * ATTACK_COMMIT) return ordered
   const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
   let closest: Unit | null = null
   let closestDist = Infinity
+  let closestIndex = -1
   let locked: Unit | null = null
   let lockedDist = Infinity
-  for (const other of units) {
+  let lockedIndex = -1
+  quadHits.length = 0
+  unitQuad.seek(unit.pos.x - reach, unit.pos.z - reach, unit.pos.x + reach, unit.pos.z + reach, quadHits)
+  for (let n = 0; n < quadHits.length; n++) {
+    const index = quadHits[n]
+    const other = units[index]
     if (other.id === unit.id || other.ownerId === unit.ownerId || other.health <= 0) continue
     if (!seesPoint(friends, other.pos.x, other.pos.z)) continue
     const dist = distance(unit, other)
     if (dist > reach) continue
-    if (dist < closestDist) {
+    if (dist < closestDist || (dist === closestDist && index < closestIndex)) {
       closest = other
       closestDist = dist
+      closestIndex = index
     }
     if (weapon.turretRate <= 0) continue
     const err = Math.abs(wrapAngle(bearing(unit, other) - gun))
-    if (err <= weapon.lockAngle && dist < lockedDist) {
+    if (err <= weapon.lockAngle && (dist < lockedDist || (dist === lockedDist && index < lockedIndex))) {
       locked = other
       lockedDist = dist
+      lockedIndex = index
     }
   }
   return locked ?? closest
@@ -250,30 +291,38 @@ function pickStructure(unit: Unit, structures: readonly StructureTarget[], frien
   const gun = weapon.turretRate > 0 ? unit.turretYaw : unit.facing
   let closest: StructureTarget | null = null
   let closestDist = Infinity
+  let closestIndex = -1
   let locked: StructureTarget | null = null
   let lockedDist = Infinity
-  for (const building of structures) {
+  let lockedIndex = -1
+  quadHits.length = 0
+  structureQuad.seek(unit.pos.x - reach, unit.pos.z - reach, unit.pos.x + reach, unit.pos.z + reach, quadHits)
+  for (let n = 0; n < quadHits.length; n++) {
+    const index = quadHits[n]
+    const building = structures[index]
     if (building.ownerId === 0 || building.ownerId === unit.ownerId) continue
     if (!seesPoint(friends, building.x, building.z)) continue
     const dist = Math.hypot(building.x - unit.pos.x, building.z - unit.pos.z)
     if (dist > reach) continue
-    if (dist < closestDist) {
+    if (dist < closestDist || (dist === closestDist && index < closestIndex)) {
       closest = building
       closestDist = dist
+      closestIndex = index
     }
     if (weapon.turretRate <= 0) continue
     const err = Math.abs(wrapAngle(Math.atan2(building.x - unit.pos.x, building.z - unit.pos.z) - gun))
-    if (err <= weapon.lockAngle && dist < lockedDist) {
+    if (err <= weapon.lockAngle && (dist < lockedDist || (dist === lockedDist && index < lockedIndex))) {
       locked = building
       lockedDist = dist
+      lockedIndex = index
     }
   }
   return locked ?? closest
 }
 
-function orderedTarget(unit: Unit, units: readonly Unit[]): Unit | null {
+function orderedTarget(unit: Unit, byId: Map<number, Unit>): Unit | null {
   if (unit.attackId === null) return null
-  const target = units.find((other) => other.id === unit.attackId)
+  const target = byId.get(unit.attackId)
   if (!target || target.health <= 0 || target.ownerId === unit.ownerId) return null
   return target
 }

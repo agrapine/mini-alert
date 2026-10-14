@@ -191,6 +191,16 @@ message YieldsMsg {
   repeated Point points = 1;
 }
 
+message TraceSample {
+  uint32 slot = 1;
+  float ms = 2;
+}
+
+message TraceMsg {
+  float budget = 1;
+  repeated TraceSample samples = 2;
+}
+
 message ServerEvent {
   oneof body {
     WelcomeMsg welcome = 1;
@@ -208,6 +218,7 @@ message ServerEvent {
     RallyMsg rally = 13;
     PrimaryMsg primary = 14;
     YieldsMsg yields = 15;
+    TraceMsg trace = 16;
   }
 }
 

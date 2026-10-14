@@ -1,15 +1,18 @@
-import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, CITY_MODELS, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
+import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, DENSITY_MIN, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, modelAtRank, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
 import type { CitySite, CityState, MapPoint, ShotEvent, ShotHit, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
 import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
 import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import { PathFinder } from './path/pathfinder.ts'
+import { __TRACE__, traceBegin, traceEnd } from './trace.ts'
+import { TraceSlot } from '../shared/trace.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
 import { createUnit } from './units/create.ts'
 import { Unit } from './units/unit.ts'
 import { applyImpacts, engage, type Blast, type Impact } from './sim/combat.ts'
 import { World } from './world.ts'
+import { Quad } from '../shared/quad.ts'
 
 export type Scenery = {
   coast: MapPoint[]
@@ -67,6 +70,8 @@ export class Game {
   readonly world: World
   readonly pathfinder: PathFinder
   readonly units: Unit[] = []
+  private readonly captureSeek = new Quad()
+  private readonly captureHits: number[] = []
   private readonly players = new Map<number, Player>()
   private nextUnitId = 1
   private nextPlayerId = 1
@@ -103,7 +108,7 @@ export class Game {
   private install(fields: Record<string, unknown>) {
     const target = this as unknown as Record<string, unknown>
     for (const [key, value] of Object.entries(fields)) {
-      if (key === 'world' || key === 'pathfinder') continue
+      if (key === 'world' || key === 'pathfinder' || key === 'captureSeek' || key === 'captureHits') continue
       target[key] = value
     }
     this.reseat()
@@ -136,6 +141,7 @@ export class Game {
     this.cities.length = 0
     for (const layout of layoutCities(this.scenery.towns, this.scenery.seed, terrain, this.world.width, this.world.height)) {
       this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, ruins: [], sites: [], integrity: new Map() })
+      this.clearCityTrees(layout)
     }
     this.syncBlocks()
   }
@@ -266,7 +272,7 @@ export class Game {
     if (owner.credits < quote) return false
     const next = insertBuilding(
       city.layout,
-      { x: tile.x, y: tile.y, model: Math.floor(Math.random() * CITY_MODELS), yaw: Math.floor(Math.random() * 4) },
+      { x: tile.x, y: tile.y, model: modelAtRank(DENSITY_MIN, Math.floor(Math.random() * 0x7fffffff)), yaw: Math.floor(Math.random() * 4) },
       terrain,
       this.world.width,
       this.world.height,
@@ -276,6 +282,7 @@ export class Game {
     if (!placed) return false
     owner.credits -= quote
     city.layout = next
+    this.clearCityTrees(next)
     city.sites.push({
       x: placed.x,
       y: placed.y,
@@ -442,24 +449,44 @@ export class Game {
 
   tick(dt: number): ShotEvent[] {
     this.advanceIncome(dt)
+    __TRACE__ && traceBegin(TraceSlot.Build)
     this.advanceBuilds(dt)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.Units)
     for (const unit of this.units) {
       if (unit.health <= 0) continue
       unit.step(dt, this.pathfinder, this.units)
     }
+    __TRACE__ && traceEnd()
     this.time += dt
     const blasts: Blast[] = []
-    const shots = engage(this.units, dt, this.time, this.impacts, this.citySights(), blasts, this.buildingTargets())
+    __TRACE__ && traceBegin(TraceSlot.CombatSights)
+    const sights = this.citySights()
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.CombatBuildings)
+    const structures = this.buildingTargets()
+    __TRACE__ && traceEnd()
+    const shots = engage(this.units, dt, this.time, this.impacts, sights, blasts, structures, this.world.width, this.world.height)
+    __TRACE__ && traceBegin(TraceSlot.CombatImpacts)
     const hits = applyImpacts(this.units, this.impacts, this.time, blasts)
     for (const shot of shots) {
       if (shot.flight === 0) hits.push({ kind: shot.kind, aimX: shot.aimX, aimZ: shot.aimZ })
     }
     this.landed = hits
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.Map)
     this.blast(blasts)
+    __TRACE__ && traceEnd()
     this.removeDead()
+    __TRACE__ && traceBegin(TraceSlot.CityCapture)
     this.advanceCaptures(dt)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.CityGrowth)
     this.advanceGrowth(dt)
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.Build)
     this.advanceTraining(dt)
+    __TRACE__ && traceEnd()
     this.capAllCredits()
     return shots
   }
@@ -611,6 +638,7 @@ export class Game {
         if (added && this.pathfinder.occupant(added.x, added.y) !== null) continue
         city.layout = next
         city.grown += 1
+        this.clearCityTrees(next)
         changed = true
       }
     }
@@ -732,6 +760,16 @@ export class Game {
     return false
   }
 
+  private clearCityTrees(layout: CityLayout) {
+    const table = this.growthTerrain
+    for (const tile of layout.tiles) {
+      if (this.world.terrainAt(tile.x, tile.y) !== Terrain.Tree) continue
+      this.world.setTerrain(tile.x, tile.y, Terrain.Land)
+      this.fallen.push({ x: tile.x, y: tile.y })
+      if (table) table[tile.y * this.world.width + tile.x] = Terrain.Land
+    }
+  }
+
   private syncBlocks() {
     this.pathfinder.clearBlocked()
     for (const city of this.cities) {
@@ -742,14 +780,28 @@ export class Game {
   }
 
   private advanceCaptures(dt: number) {
+    const units = this.units
+    this.captureSeek.clear(this.world.width, this.world.height)
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i]
+      if (unit.health <= 0 || unit.progress < 1 || unit.type.supply <= 0) continue
+      this.captureSeek.insert(i, unit.pos.x, unit.pos.z)
+    }
+    const found = this.captureHits
     for (const city of this.cities) {
+      const layout = this.live(city)
       const weight = new Map<number, number>()
-      for (const unit of this.units) {
-        if (unit.health <= 0 || unit.progress < 1 || unit.type.supply <= 0) continue
-        if (!cityHolds(this.live(city), unit.pos.x, unit.pos.z)) continue
-        weight.set(unit.ownerId, (weight.get(unit.ownerId) ?? 0) + unit.type.supply)
+      const span = citySpan(layout)
+      if (span) {
+        found.length = 0
+        this.captureSeek.seek(span.minX, span.minZ, span.maxX, span.maxZ, found)
+        for (let n = 0; n < found.length; n++) {
+          const unit = units[found[n]]
+          if (!cityHolds(layout, unit.pos.x, unit.pos.z)) continue
+          weight.set(unit.ownerId, (weight.get(unit.ownerId) ?? 0) + unit.type.supply)
+        }
       }
-      const people = this.peopleOf(city)
+      const people = populationOf(layout, city.ruins)
       const challengerPresent = city.challengerId > 0 && (weight.get(city.challengerId) ?? 0) > 0
       if (challengerPresent) {
         if (weight.size > 1) continue
@@ -1049,4 +1101,19 @@ export class Game {
       else this.jobs.set(playerId, next)
     }
   }
+}
+
+function citySpan(city: CityLayout): { minX: number; minZ: number; maxX: number; maxZ: number } | null {
+  let minX = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxZ = -Infinity
+  for (const tile of city.tiles) {
+    if (tile.x < minX) minX = tile.x
+    if (tile.y < minZ) minZ = tile.y
+    if (tile.x + 1 > maxX) maxX = tile.x + 1
+    if (tile.y + 1 > maxZ) maxZ = tile.y + 1
+  }
+  if (minX === Infinity) return null
+  return { minX, minZ, maxX, maxZ }
 }

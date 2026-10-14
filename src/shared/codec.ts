@@ -99,6 +99,11 @@ function encodeEvent(event: ServerEvent): WireFrame['events'][number] {
       return packed('primary', { id: event.primaryFactoryId })
     case ServerEventKind.Yields:
       return packed('yields', { points: event.yields.map(encodePoint) })
+    case ServerEventKind.Trace:
+      return packed('trace', {
+        budget: event.budget,
+        samples: event.samples.map((sample) => ({ slot: sample.slot, ms: sample.ms })),
+      })
   }
 }
 
@@ -153,6 +158,12 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
       return [{ kind: ServerEventKind.Primary, primaryFactoryId: body.value.id }]
     case 'yields':
       return [{ kind: ServerEventKind.Yields, yields: body.value.points.map(decodePoint) }]
+    case 'trace':
+      return [{
+        kind: ServerEventKind.Trace,
+        budget: body.value.budget,
+        samples: body.value.samples.map((sample) => ({ slot: sample.slot, ms: sample.ms })),
+      }]
     default:
       return []
   }

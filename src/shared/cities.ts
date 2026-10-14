@@ -1,18 +1,77 @@
 import type { CitySite, MapPoint } from './protocol.ts'
-import { isWalkableTerrain, type TileCoord } from './tiles.ts'
+import { isWalkableTerrain, Terrain, type TileCoord } from './tiles.ts'
 
 export const NEUTRAL_CITY = 0xffffff
 export const CAPTURE_DRAIN = 60
 export const CAPTURE_PER_POP = 5
 export const CITY_GROW_SECONDS = 4
-export const STREET_REACH = 4
+export const UPGRADE_REST = 2
+export const STREET_REACH = 8
 export const STRUCTURE_RANGE = 8
 export const CITY_SIGHT = 10
 export const SIEGE_RANGE = 6
 export const BUILDING_HP = 120
 export const STREET_HP = 60
-export const CITY_MODELS = 8
 export const BUILDING_COST = 100
+
+export const DENSITY_MIN = 1
+export const DENSITY_MAX = 20
+
+export const CITY_CATALOG: readonly { name: string; density: number }[] = [
+  { name: 'building-h', density: 7 },
+  { name: 'building-i', density: 1 },
+  { name: 'building-j', density: 8 },
+  { name: 'building-k', density: 9 },
+  { name: 'building-o', density: 10 },
+  { name: 'chimney-basic', density: 3 },
+  { name: 'chimney-medium', density: 2 },
+  { name: 'chimney-small', density: 3 },
+  { name: 'detail-tank', density: 3 },
+  { name: 'shipping-container-a', density: 1 },
+  { name: 'shipping-container-b', density: 1 },
+  // { name: 'shipping-container-c', density: 1 },
+  // { name: 'solar-panel-flat', density: 1 },
+  // { name: 'solar-panel-landscape', density: 1 },
+  { name: 'solar-panel-portrait', density: 2 },
+  { name: 'building-d', density: 11 },
+  { name: 'building-g', density: 12 },
+  { name: 'building-n', density: 13 },
+  { name: 'building-p', density: 14 },
+  { name: 'building-s', density: 15 },
+  { name: 'chimney-large', density: 3 },
+  { name: 'detail-tank-large', density: 4 },
+  { name: 'solar-panel-landscape-group', density: 4 },
+  { name: 'solar-panel-portrait-group', density: 3 },
+  { name: 'windmill-low', density: 5 },
+  { name: 'building-e', density: 16 },
+  { name: 'building-m', density: 17 },
+  { name: 'building-q', density: 18 },
+  { name: 'building-t', density: 18 },
+  { name: 'water-tower', density: 6 },
+  { name: 'windmill', density: 6 },
+  { name: 'building-a', density: 19 },
+  { name: 'building-b', density: 19 },
+  { name: 'building-c', density: 19 },
+  { name: 'building-f', density: 20 },
+  { name: 'building-l', density: 20 },
+  { name: 'building-r', density: 20 },
+]
+
+const RANK_MODELS: number[][] = Array.from({ length: DENSITY_MAX + 1 }, () => [])
+for (let index = 0; index < CITY_CATALOG.length; index++) RANK_MODELS[CITY_CATALOG[index].density].push(index)
+
+export const CITY_MODELS = CITY_CATALOG.length
+export const HALL_MODEL = CITY_CATALOG.findIndex((entry) => entry.name === 'water-tower')
+
+export function densityOf(model: number): number {
+  return CITY_CATALOG[model]?.density ?? DENSITY_MIN
+}
+
+export function modelAtRank(rank: number, salt: number): number {
+  const pool = RANK_MODELS[rank]
+  const models = pool && pool.length > 0 ? pool : RANK_MODELS[DENSITY_MIN]
+  return models[(salt >>> 0) % models.length]
+}
 
 export function buildingCost(population: number): number {
   return BUILDING_COST * Math.max(1, population - 5)
@@ -56,6 +115,7 @@ export type CityLayout = {
   tiles: TileCoord[]
   buildings: CityBuilding[]
   streets: CityStreet[]
+  upgradeRest?: number
 }
 
 export function captureDuration(population: number): number {
@@ -102,7 +162,7 @@ export function settledCity(layout: CityLayout, ruins: readonly TileCoord[] = []
     if (gone.has(key(road.x, road.y))) return false
     return distanceToBuilding(road, living) <= STREET_REACH
   })
-  return compose(roads, buildings, layout.span, layout.seed)
+  return compose(roads, buildings, layout.span, layout.seed, layout.upgradeRest ?? 0)
 }
 
 export function lostStreets(layout: CityLayout, ruins: readonly TileCoord[]): TileCoord[] {
@@ -134,7 +194,7 @@ export function populationOf(city: CityLayout, ruins: readonly TileCoord[] = [])
         break
       }
     }
-    if (!ruined) count += 1
+    if (!ruined) count += densityOf(building.model)
   }
   return count
 }
@@ -212,7 +272,7 @@ export function growCity(
   height: number,
 ): CityLayout | null {
   const roads = roadTiles(city)
-  const buildings = city.buildings.map((building) => ({
+  const buildings: { x: number; y: number; keep?: boolean; model?: number; yaw?: number }[] = city.buildings.map((building) => ({
     x: building.x,
     y: building.y,
     keep: building.keep,
@@ -223,15 +283,101 @@ export function growCity(
   const buildingSet = new Set<number>()
   for (const road of roads) roadSet.add(key(road.x, road.y))
   for (const building of buildings) buildingSet.add(key(building.x, building.y))
-  const salt = hash(city.tiles.length, city.span, city.seed)
-  const far = farthestStreet(roads, buildings)
-  if (far > STREET_REACH || (salt % 5 === 0 && buildings.length > 0) || buildings.length === 0) {
-    const built = addBuilding(city, roads, buildings, roadSet, buildingSet, terrain, width, height, salt)
-    if (built) return built
+  const center = roads[0] ?? { x: city.x, y: city.y }
+  const salt = growthSalt(city)
+  const seeding = city.tiles.length < city.span * city.span
+  const needPlot =
+    buildings.length === 0 ||
+    farthestStreet(roads, buildings) > STREET_REACH ||
+    (seeding && !buildings.some((building) => !building.keep))
+  let bestScore = -Infinity
+  let bestPlot: TileCoord | null = null
+  let bestUpgrade: { x: number; y: number; model: number } | null = null
+  let bestRun: TileCoord[] | null = null
+
+  const resting = (city.upgradeRest ?? 0) > 0
+  const nextRest = resting ? (city.upgradeRest ?? 0) - 1 : 0
+  const people = buildings.reduce((sum, building) => sum + densityOf(building.model ?? 0), 0)
+  const radius = seeding ? Infinity : cityRadius(people)
+  const sprawl = seeding ? 1 : sprawlOf(buildings.length)
+  for (const plot of plotsOf(city, roads, roadSet, buildingSet, terrain, width, height)) {
+    if (spanDist(plot.x, plot.y, center) > radius) continue
+    const score = spreadScore(plot.x, plot.y, center, salt) * sprawl
+    if (score <= bestScore) continue
+    bestScore = score
+    bestPlot = plot
+    bestUpgrade = null
+    bestRun = null
   }
-  const street = addStreet(city, roads, buildings, roadSet, buildingSet, terrain, width, height, salt)
-  if (street) return street
-  return addBuilding(city, roads, buildings, roadSet, buildingSet, terrain, width, height, salt + 1)
+  if (needPlot) {
+    if (!bestPlot) return null
+    const hall = buildings.length === 0
+    return compose(
+      roads,
+      buildings.concat({
+        x: bestPlot.x,
+        y: bestPlot.y,
+        keep: hall,
+        model: hall ? HALL_MODEL : modelAtRank(DENSITY_MIN, hash(bestPlot.x, bestPlot.y, salt)),
+      }),
+      city.span,
+      city.seed,
+      nextRest,
+    )
+  }
+
+  if (!seeding && !resting) {
+    const pressure = 1 + Math.log(1 + people)
+    for (const building of buildings) {
+      if (building.keep) continue
+      const away = spanDist(building.x, building.y, center)
+      const current = densityOf(building.model ?? 0)
+      const next = current + 1
+      if (next > targetDensity(away, people)) continue
+      const score = spreadScore(building.x, building.y, center, salt + 3) * crowdAt(building.x, building.y, buildings) * pressure
+      if (score <= bestScore) continue
+      bestScore = score
+      bestPlot = null
+      bestRun = null
+      bestUpgrade = { x: building.x, y: building.y, model: modelAtRank(next, hash(building.x, building.y, salt + next)) }
+    }
+  }
+
+  for (let i = 0; i < roads.length; i++) {
+    const road = roads[i]
+    for (let dir = 0; dir < 4; dir++) {
+      const run = traceRun(road, dir, roads, roadSet, buildingSet, buildings, terrain, width, height, city.seed, center, radius, salt + dir + 1)
+      if (run.length === 0) continue
+      const score = spreadScore(run[0].x, run[0].y, center, salt + 11) * sprawl
+      if (score <= bestScore) continue
+      bestScore = score
+      bestPlot = null
+      bestUpgrade = null
+      bestRun = run
+    }
+  }
+
+  if (bestUpgrade) {
+    const chosen = bestUpgrade
+    const next = buildings.map((building) =>
+      building.x === chosen.x && building.y === chosen.y ? { ...building, model: chosen.model } : building,
+    )
+    return compose(roads, next, city.span, city.seed, UPGRADE_REST)
+  }
+  if (bestRun) return compose(roads.concat(bestRun), buildings, city.span, city.seed, nextRest)
+  if (!bestPlot) return null
+  return compose(
+    roads,
+    buildings.concat({
+      x: bestPlot.x,
+      y: bestPlot.y,
+      keep: false,
+      model: modelAtRank(DENSITY_MIN, hash(bestPlot.x, bestPlot.y, salt)),
+    }),
+    city.span,
+    city.seed,
+    nextRest,
+  )
 }
 
 const projection = new Map<number, { grown: number; city: CityLayout; width: number; height: number }>()
@@ -269,43 +415,160 @@ const MASK_STRAIGHT = 0b0101
 const MASK_CORNER = 0b0011
 const MASK_SPLIT = 0b0111
 
-function addStreet(
+const AXIS_H = 1
+const AXIS_V = 2
+
+function growthSalt(city: CityLayout): number {
+  let stamp = hash(city.tiles.length, city.buildings.length, city.seed)
+  for (const building of city.buildings) stamp = hash(stamp, building.model, key(building.x, building.y))
+  return stamp
+}
+
+const LOT_REACH = 2
+const RADIUS_BASE = 1.6
+const RADIUS_LOG = 1.7
+const DENSITY_FALLOFF = 2.4
+
+export function cityRadius(population: number): number {
+  return RADIUS_BASE + Math.log(1 + Math.max(0, population)) * RADIUS_LOG
+}
+
+function spanDist(x: number, y: number, center: TileCoord): number {
+  return Math.hypot(x - center.x, y - center.y)
+}
+
+function targetDensity(dist: number, population: number): number {
+  const grown = Math.log(1 + Math.max(0, population))
+  const aim = Math.min(DENSITY_MAX, 1 + grown * 2.8)
+  const falloff = DENSITY_FALLOFF + grown * 0.45
+  const core = Math.max(0, dist - 1)
+  const level = Math.round(aim * Math.exp(-core / falloff))
+  if (level < DENSITY_MIN) return DENSITY_MIN
+  if (level > DENSITY_MAX) return DENSITY_MAX
+  return level
+}
+
+function spreadScore(x: number, y: number, center: TileCoord, salt: number): number {
+  const away = spanDist(x, y, center)
+  const noise = ((hash(x, y, salt) % 1000) / 1000) * 0.02
+  return Math.exp(-away) + noise
+}
+
+function sprawlOf(buildings: number): number {
+  return 1 / (1 + buildings * buildings * 0.08)
+}
+
+function crowdAt(
+  x: number,
+  y: number,
+  buildings: readonly { x: number; y: number; model?: number }[],
+): number {
+  let sum = 0
+  for (const building of buildings) {
+    if (Math.max(Math.abs(building.x - x), Math.abs(building.y - y)) > 2) continue
+    sum += densityOf(building.model ?? 0)
+  }
+  return Math.max(1, sum)
+}
+
+function plotsOf(
   city: CityLayout,
-  roads: TileCoord[],
-  buildings: TileCoord[],
+  roads: readonly TileCoord[],
   roadSet: Set<number>,
   buildingSet: Set<number>,
   terrain: ArrayLike<number>,
   width: number,
   height: number,
-  salt: number,
-): CityLayout | null {
-  const reach = farthestStreet(roads, buildings)
-  let best: TileCoord | null = null
-  let bestScore = -Infinity
+): TileCoord[] {
+  const frame = plotFrame(city, roads, roadSet)
+  const found: TileCoord[] = []
+  const seen = new Set<number>()
   for (const road of roads) {
-    const openings = roadPieceFor(neighborMask(road.x, road.y, roadSet), hash(road.x, road.y, city.seed)).openings
-    for (let dir = 0; dir < 4; dir++) {
-      const x = road.x + DIR_X[dir]
-      const y = road.y + DIR_Y[dir]
-      if (!openLand(x, y, roadSet, buildingSet, terrain, width, height)) continue
-      if (!canPlaceStreet(x, y, roadSet)) continue
-      const id = key(x, y)
-      roadSet.add(id)
-      const hits = opensOntoBuilding(x, y, roadSet, buildingSet, city.seed)
-      roadSet.delete(id)
-      if (hits) continue
-      if (Math.max(reach, distanceToBuilding({ x, y }, buildings)) > STREET_REACH) continue
-      const extend = (openings & (1 << dir)) !== 0
-      const noise = (hash(x, y, salt) % 1000) / 1000
-      const score = noise + (extend ? 2 : 0)
-      if (score <= bestScore) continue
-      bestScore = score
-      best = { x, y }
+    for (let dy = -LOT_REACH; dy <= LOT_REACH; dy++) {
+      for (let dx = -LOT_REACH; dx <= LOT_REACH; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) > LOT_REACH || (dx === 0 && dy === 0)) continue
+        const x = road.x + dx
+        const y = road.y + dy
+        const id = key(x, y)
+        if (seen.has(id) || frame.forbidden.has(id)) continue
+        if (!openLand(x, y, roadSet, buildingSet, terrain, width, height)) continue
+        seen.add(id)
+        found.push({ x, y })
+      }
     }
   }
-  if (!best) return null
-  return compose(roads.concat(best), buildings, city.span, city.seed)
+  return found
+}
+
+function traceRun(
+  origin: TileCoord,
+  dir: number,
+  roads: readonly TileCoord[],
+  roadSet: Set<number>,
+  buildingSet: Set<number>,
+  buildings: readonly TileCoord[],
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  seed: number,
+  center: TileCoord,
+  radius: number,
+  salt: number,
+): TileCoord[] {
+  const horizontal = DIR_X[dir] !== 0
+  const length = 1 + (hash(origin.x + DIR_X[dir], origin.y + DIR_Y[dir], salt) % 4)
+  const run: TileCoord[] = []
+  const localRoads = roads.slice()
+  const localSet = new Set(roadSet)
+  let prev = origin
+  for (let step = 0; step < length; step++) {
+    const x = prev.x + DIR_X[dir]
+    const y = prev.y + DIR_Y[dir]
+    const away = spanDist(x, y, center)
+    if (away > radius) break
+    if (step > 0 && hash(x, y, salt + step) % 1000 >= 1000 * Math.exp(-away / 2)) break
+    if (!openLand(x, y, localSet, buildingSet, terrain, width, height)) break
+    const touch = orthogonalStreets(x, y, localSet)
+    if (touch.length !== 1 || touch[0].x !== prev.x || touch[0].y !== prev.y) break
+    if (parallelClose(x, y, horizontal, localRoads, localSet)) break
+    const id = key(x, y)
+    localSet.add(id)
+    if (opensOntoBuilding(x, y, localSet, buildingSet, seed) || distanceToBuilding({ x, y }, buildings) > STREET_REACH) {
+      localSet.delete(id)
+      break
+    }
+    const tile = { x, y }
+    run.push(tile)
+    localRoads.push(tile)
+    prev = tile
+  }
+  return run
+}
+
+function parallelClose(
+  x: number,
+  y: number,
+  horizontal: boolean,
+  roads: readonly TileCoord[],
+  roadSet: Set<number>,
+): boolean {
+  for (const road of roads) {
+    const axis = roadAxis(road.x, road.y, roadSet)
+    if (horizontal) {
+      if ((axis & AXIS_H) === 0) continue
+      if (Math.abs(road.y - y) === 1 && Math.abs(road.x - x) <= 2) return true
+    } else if ((axis & AXIS_V) !== 0 && Math.abs(road.x - x) === 1 && Math.abs(road.y - y) <= 2) {
+      return true
+    }
+  }
+  return false
+}
+
+function roadAxis(x: number, y: number, roadSet: Set<number>): number {
+  let axis = 0
+  if (roadSet.has(key(x + 1, y)) || roadSet.has(key(x - 1, y))) axis |= AXIS_H
+  if (roadSet.has(key(x, y + 1)) || roadSet.has(key(x, y - 1))) axis |= AXIS_V
+  return axis
 }
 
 export function canPlaceCityBuilding(
@@ -323,13 +586,8 @@ export function canPlaceCityBuilding(
   for (const building of city.buildings) buildingSet.add(key(building.x, building.y))
   const frame = plotFrame(city, roads, roadSet)
   if (frame.forbidden.has(key(x, y)) || !openLand(x, y, roadSet, buildingSet, terrain, width, height)) return false
-  for (let i = 0; i < roads.length; i++) {
-    const road = roads[i]
-    const openings = frame.openings[i]
-    for (let dir = 0; dir < 4; dir++) {
-      if (openings & (1 << dir)) continue
-      if (road.x + DIR_X[dir] === x && road.y + DIR_Y[dir] === y) return true
-    }
+  for (const road of roads) {
+    if (Math.max(Math.abs(road.x - x), Math.abs(road.y - y)) <= LOT_REACH) return true
   }
   return false
 }
@@ -350,7 +608,7 @@ export function insertBuilding(
     model: building.model,
     yaw: building.yaw,
   }))
-  return compose(roads, buildings.concat({ ...plot, keep: false }), city.span, city.seed)
+  return compose(roads, buildings.concat({ ...plot, keep: false }), city.span, city.seed, city.upgradeRest ?? 0)
 }
 
 function replayCity(
@@ -395,46 +653,10 @@ function plotFrame(
     for (let dir = 0; dir < 4; dir++) {
       if ((mask & (1 << dir)) === 0) continue
       forbidden.add(key(road.x + DIR_X[dir], road.y + DIR_Y[dir]))
+      forbidden.add(key(road.x + DIR_X[dir] * LOT_REACH, road.y + DIR_Y[dir] * LOT_REACH))
     }
   }
   return { forbidden, openings }
-}
-
-function addBuilding(
-  city: CityLayout,
-  roads: TileCoord[],
-  buildings: TileCoord[],
-  roadSet: Set<number>,
-  buildingSet: Set<number>,
-  terrain: ArrayLike<number>,
-  width: number,
-  height: number,
-  salt: number,
-): CityLayout | null {
-  const frame = plotFrame(city, roads, roadSet)
-  const forbidden = frame.forbidden
-  const openingsByRoad = frame.openings
-  let best: TileCoord | null = null
-  let bestScore = -Infinity
-  for (let i = 0; i < roads.length; i++) {
-    const road = roads[i]
-    const openings = openingsByRoad[i]
-    const need = distanceToBuilding(road, buildings)
-    for (let dir = 0; dir < 4; dir++) {
-      if (openings & (1 << dir)) continue
-      const x = road.x + DIR_X[dir]
-      const y = road.y + DIR_Y[dir]
-      if (!openLand(x, y, roadSet, buildingSet, terrain, width, height)) continue
-      if (forbidden.has(key(x, y))) continue
-      const noise = (hash(x, y, salt + 19) % 1000) / 1000
-      const score = noise + Math.min(need, 8) * 0.15
-      if (score <= bestScore) continue
-      bestScore = score
-      best = { x, y }
-    }
-  }
-  if (!best) return null
-  return compose(roads, buildings.concat(best), city.span, city.seed)
 }
 
 function compose(
@@ -442,6 +664,7 @@ function compose(
   buildings: readonly { x: number; y: number; keep?: boolean; model?: number; yaw?: number }[],
   span: number,
   seed: number,
+  upgradeRest = 0,
 ): CityLayout {
   const roadSet = new Set<number>()
   for (const road of roads) roadSet.add(key(road.x, road.y))
@@ -479,7 +702,7 @@ function compose(
     return {
       x: tile.x,
       y: tile.y,
-      model: tile.model ?? hash(tile.x, tile.y, seed + 3) % CITY_MODELS,
+      model: tile.model ?? modelAtRank(DENSITY_MIN, hash(tile.x, tile.y, seed + 3)),
       yaw: tile.yaw ?? hash(tile.x, tile.y, seed + 9) % 4,
       keep,
     }
@@ -499,6 +722,7 @@ function compose(
     tiles: roads.concat(buildings).map((tile) => ({ x: tile.x, y: tile.y })),
     buildings: built,
     streets,
+    upgradeRest,
   }
 }
 
@@ -583,24 +807,6 @@ function distanceToBuilding(road: TileCoord, buildings: readonly TileCoord[]): n
   return best
 }
 
-function canPlaceStreet(x: number, y: number, roadSet: Set<number>): boolean {
-  const touch = orthogonalStreets(x, y, roadSet)
-  if (touch.length !== 1) return false
-  const parent = touch[0]
-  if (orthogonalStreets(parent.x, parent.y, roadSet).length >= 3) return false
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue
-      const nx = x + dx
-      const ny = y + dy
-      if (!roadSet.has(key(nx, ny))) continue
-      if (nx === parent.x && ny === parent.y) continue
-      if (Math.abs(nx - parent.x) + Math.abs(ny - parent.y) !== 1) return false
-    }
-  }
-  return true
-}
-
 function orthogonalStreets(x: number, y: number, roadSet: Set<number>): TileCoord[] {
   const found: TileCoord[] = []
   for (let dir = 0; dir < 4; dir++) {
@@ -669,7 +875,8 @@ function key(x: number, y: number): number {
 
 function walkable(terrain: ArrayLike<number>, width: number, height: number, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= width || y >= height) return false
-  return isWalkableTerrain(terrain[y * width + x])
+  const tile = terrain[y * width + x]
+  return tile === Terrain.Tree || isWalkableTerrain(tile)
 }
 
 function hash(x: number, y: number, seed: number): number {
