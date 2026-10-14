@@ -400,7 +400,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
   }
 
   function attachRemote(tag: number, player: Player, enemyTown: TileCoord, index: number): Remote {
-    const replica = new Replica()
+    const replica = new Replica({ rollback: true })
     const port: ClientPort = {
       send: (message) => send(remote, message),
       onServer() {},

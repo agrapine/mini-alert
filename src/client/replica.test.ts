@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SIM_STEP } from '../shared/motion.ts'
 import { ServerEventKind, type MapCell, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
+import { planMoves } from '../shared/route.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { UnitTypeId } from '../shared/unit-types.ts'
 import { Replica } from './replica.ts'
+
+vi.mock('../shared/route.ts', { spy: true })
 
 function scout(x: number, path: { x: number; y: number }[]): UnitSnapshot {
   return {
@@ -28,9 +31,16 @@ function scout(x: number, path: { x: number; y: number }[]): UnitSnapshot {
 }
 
 function joined(...units: UnitSnapshot[]): Replica {
+  return welcomed(new Replica(), units)
+}
+
+function rolling(...units: UnitSnapshot[]): Replica {
+  return welcomed(new Replica({ rollback: true }), units)
+}
+
+function welcomed(replica: Replica, units: UnitSnapshot[]): Replica {
   const cells: MapCell[] = []
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) cells.push({ x, y, terrain: Terrain.Land, shift: 0 })
-  const replica = new Replica()
   replica.apply({
     tick: 10,
     ack: 0,
@@ -52,6 +62,14 @@ function joined(...units: UnitSnapshot[]): Replica {
 }
 
 const road = [{ x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 4 }, { x: 6, y: 4 }, { x: 7, y: 4 }, { x: 8, y: 4 }, { x: 9, y: 4 }]
+
+function onRow(unit: UnitSnapshot, id: number, row: number): UnitSnapshot {
+  return { ...unit, id, z: row + 0.5, tileY: row, path: unit.path.map((tile) => ({ x: tile.x, y: row })), goal: unit.goal && { x: unit.goal.x, y: row } }
+}
+
+function motion(unit: UnitSnapshot): ServerFrame['events'][number] {
+  return { kind: ServerEventKind.UnitMotion, unit }
+}
 
 function convoy(): UnitSnapshot[] {
   return [3, 4, 5].map((row, index) => {
@@ -269,6 +287,112 @@ describe('replica drawing', () => {
       render: (replica) => expect({ tick: replica.localTick, units: replica.units }).toEqual(seen[render++]),
     })
     expect(second.units).toEqual(first.units)
+  })
+
+  it('leaves a leader stopped by a frame three ticks late, and its follower, where the frame on time leaves them', () => {
+    const units = () => [scout(4.5, road.slice(2)), { ...scout(3.5, road.slice(1)), id: 2 }]
+    const server = joined(...units())
+    server.simulateTo(18)
+    server.units[0].path = []
+    const stop: ServerFrame = { tick: 18, ack: 0, events: [motion(structuredClone(server.units[0]))] }
+    const onTime = rolling(...units())
+    onTime.simulateTo(18)
+    onTime.apply(stop)
+    onTime.simulateTo(60)
+    const late = rolling(...units())
+    late.simulateTo(21)
+    late.apply(stop)
+    late.simulateTo(60)
+    expect(late.units).toEqual(onTime.units)
+  })
+
+  it('leaves units where on-time frames leave them when an echo of a tick already applied arrives two ticks late', () => {
+    const units = () => [scout(2.5, []), onRow(scout(2.5, []), 2, 8)]
+    const tick: ServerFrame = { tick: 13, ack: 0, events: [motion(scout(2.5, road))] }
+    const echo: ServerFrame = { tick: 13, ack: 1, events: [motion(onRow(scout(2.5, road), 2, 8))] }
+    const onTime = rolling(...units())
+    onTime.simulateTo(13)
+    onTime.apply(tick)
+    onTime.apply(echo)
+    onTime.simulateTo(40)
+    const late = rolling(...units())
+    late.simulateTo(13)
+    late.apply(tick)
+    late.simulateTo(15)
+    late.apply(echo)
+    late.simulateTo(40)
+    expect(late.units).toEqual(onTime.units)
+  })
+
+  it("keeps a guess made after its tick's frames on top of late frames stamped that tick", () => {
+    const tank = (id: number, x: number, row: number) => onRow({ ...scout(x, []), typeId: UnitTypeId.MedTank }, id, row)
+    const units = () => [tank(1, 2.5, 4), tank(2, 2.5, 8)]
+    const first: ServerFrame = { tick: 13, ack: 0, events: [] }
+    const late: ServerFrame[] = [
+      { tick: 13, ack: 0, events: [motion(tank(1, 2.6, 4))] },
+      { tick: 13, ack: 1, events: [motion(tank(2, 3.5, 8))] },
+    ]
+    const onTime = rolling(...units())
+    onTime.simulateTo(13)
+    for (const frame of [first, ...late]) onTime.apply(frame)
+    onTime.predictMove([1], { x: 12, y: 4 })
+    onTime.simulateTo(15)
+    onTime.predictMove([2], { x: 12, y: 8 })
+    onTime.simulateTo(30)
+    const replica = rolling(...units())
+    replica.simulateTo(13)
+    replica.apply(first)
+    replica.predictMove([1], { x: 12, y: 4 })
+    replica.simulateTo(15)
+    replica.predictMove([2], { x: 12, y: 8 })
+    replica.simulateTo(16)
+    for (const frame of late) replica.apply(frame)
+    replica.simulateTo(30)
+    expect(onTime.units[0].x).toBeGreaterThan(2.6)
+    expect(replica.units).toEqual(onTime.units)
+  })
+
+  it('re-applies a move guess without planning it again when late frames ahead of it leave the map as it was', () => {
+    const land: ServerFrame['events'][number] = {
+      kind: ServerEventKind.MapPatch,
+      map: { width: 16, height: 16, cells: [{ x: 15, y: 15, terrain: Terrain.Land, shift: 0 }], coast: [], holes: [], roads: [], towns: [], cleared: [] },
+    }
+    const frames: ServerFrame[] = [10, 11].map((tick) => ({ tick, ack: 0, events: [land] }))
+    // Off its tile's centre line, the unit's course depends on the route's first tile.
+    const unit = () => ({ ...scout(2.5, []), z: 4.2 })
+    const onTime = rolling(unit())
+    onTime.apply(frames[0])
+    onTime.simulateTo(11)
+    onTime.apply(frames[1])
+    onTime.predictMove([1], { x: 12, y: 4 })
+    onTime.simulateTo(30)
+    const late = rolling(unit())
+    late.simulateTo(11)
+    late.predictMove([1], { x: 12, y: 4 })
+    late.simulateTo(24)
+    vi.mocked(planMoves).mockClear()
+    for (const frame of frames) late.apply(frame)
+    expect(planMoves).not.toHaveBeenCalled()
+    late.simulateTo(30)
+    expect(late.units).toEqual(onTime.units)
+  })
+
+  it('re-plans a move guess when a late frame ahead of it moves a unit onto its goal', () => {
+    const units = () => [scout(2.5, []), onRow(scout(2.5, []), 2, 8)]
+    const moved: ServerFrame = { tick: 13, ack: 0, events: [motion(onRow(scout(12.5, []), 2, 4))] }
+    const onTime = rolling(...units())
+    onTime.simulateTo(13)
+    onTime.apply(moved)
+    onTime.predictMove([1], { x: 12, y: 4 })
+    onTime.simulateTo(30)
+    const late = rolling(...units())
+    late.simulateTo(13)
+    late.predictMove([1], { x: 12, y: 4 })
+    late.simulateTo(16)
+    late.apply(moved)
+    late.simulateTo(30)
+    expect(onTime.units[0].goal).not.toEqual({ x: 12, y: 4 })
+    expect(late.units).toEqual(onTime.units)
   })
 
   it('counts a city update apart from terrain changes', () => {
