@@ -44,6 +44,7 @@
 - Units no longer slowly slide away from where the server has them: the server checks your view against exactly the positions your game receives.
 - Redirecting units already on the move no longer makes them jump back: they keep their course until the server answers, then take the new route from where they are.
 - Enemy units in a crowd no longer twitch on your screen: when two units reach the same spot at once, your game lets the same one through as the server.
+- About a third less traffic in battles: scouts and jets, which aim with their whole body, turn toward their target on your screen as on the server, so they are no longer resent every time they turn.
 
 ## 0.4
 

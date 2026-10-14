@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { SIM_STEP } from '../shared/motion.ts'
+import { SIM_STEP, stepMotion, turnToward, type MotionState } from '../shared/motion.ts'
 import { ServerEventKind, type MapCell, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
 import { planMoves } from '../shared/route.ts'
 import { Terrain } from '../shared/tiles.ts'
-import { UnitTypeId } from '../shared/unit-types.ts'
+import { SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Replica } from './replica.ts'
 
 vi.mock('../shared/route.ts', { spy: true })
@@ -433,6 +433,20 @@ describe('replica drawing', () => {
     replica.predictAttack([2], foe, 3)
     for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
     expect(replica.unit(2)?.turretYaw).toBeGreaterThan(1)
+  })
+
+  it('stops a turretless unit in range of its attack target and turns its hull toward it at 2.5 rad/s, tick for tick as the server does', () => {
+    const foe = { ...scout(4.5, []), id: 3, ownerId: 2, z: 10.5, tileY: 10 }
+    const replica = joined({ ...scout(4.5, road.slice(2)), attackId: 3 }, foe)
+    const server: MotionState = { x: 4.5, z: 4.5, facing: Math.PI / 2, speed: 3, tileX: 4, tileY: 4, path: [] }
+    for (let tick = 11; tick <= 40; tick++) {
+      server.facing = turnToward(server.facing, Math.atan2(foe.x - server.x, foe.z - server.z), 2.5, SIM_STEP)
+      stepMotion(server, SCOUT, SIM_STEP)
+      replica.simulateTo(tick)
+      expect(replica.unit(1)).toMatchObject({ x: server.x, z: server.z, facing: server.facing, speed: server.speed, path: [] })
+    }
+    expect(server.speed).toBe(0)
+    expect(server.facing).toBeCloseTo(Math.atan2(foe.x - server.x, foe.z - server.z), 9)
   })
 
   it('leads a unit out of range toward its attack target', () => {

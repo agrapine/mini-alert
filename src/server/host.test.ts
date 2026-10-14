@@ -84,6 +84,23 @@ describe('host snapshots', () => {
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
   })
 
+  it('sends no motion for a scout turning a corner, which its client turns alike', () => {
+    const wall = []
+    for (let y = 5; y < 14; y++) for (let x = 2; x < 12; x++) wall.push({ x, y })
+    const game = new Game(new World(32, 32, wall))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 }, Math.PI / 2)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 12 } }, 1, host.tickNo)
+    frames.length = 0
+    for (let i = 0; i < 200; i++) host.tick(SIM_STEP)
+    expect(scout.tile).toEqual({ x: 12, y: 12 })
+    expect(events(frames).filter((event) => event.kind === ServerEventKind.UnitMotion)).toEqual([])
+  })
+
   it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
     const game = new Game(new World(32, 20))
     const player = game.addPlayer()

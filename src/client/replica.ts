@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { atRest, flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { atRest, flightLine, holdInRange, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -929,6 +929,13 @@ export class Replica {
     return nearest
   }
 
+  /** The ground point a unit attacks, else its attack target while alive and hostile. */
+  private attackAim(unit: UnitSnapshot): { x: number; z: number } | null {
+    if (unit.attackPoint) return unit.attackPoint
+    const target = unit.attackId === null ? undefined : this.unit(unit.attackId)
+    return target && target.health > 0 && target.ownerId !== unit.ownerId ? target : null
+  }
+
   private occupancy(): Map<string, number> {
     const occupied = new Map<string, number>()
     for (const unit of this.units) {
@@ -961,6 +968,8 @@ export class Replica {
       orbitY: unit.orbit?.y,
       bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
+    const aim = type.weapon.turretRate > 0 ? null : this.attackAim(unit)
+    if (aim && holdInRange(state, type, aim, dt)) state.loiter = false
     stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
     const span = spanOf(type)
     if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
@@ -970,6 +979,7 @@ export class Replica {
     unit.x = state.x
     unit.z = state.z
     unit.facing = state.facing
+    if (type.weapon.turretRate <= 0) unit.turretYaw = state.facing
     unit.speed = state.speed
     unit.tileX = state.tileX
     unit.tileY = state.tileY
