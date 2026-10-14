@@ -11,6 +11,7 @@ import type { Game } from '../server/game.ts'
 import type { Player } from '../server/player.ts'
 import { decodeClientMessage, decodeServerFrame, encodeClientMessage, encodeServerFrame } from '../shared/codec.ts'
 import { SIM_STEP, SNAPSHOT_GAP } from '../shared/motion.ts'
+import { canPlaceCityBuilding, cityCenter, type CityLayout } from '../shared/cities.ts'
 import { playerColor } from '../shared/players.ts'
 import {
   ClientMessageKind,
@@ -29,6 +30,7 @@ export const enum Scenario {
   Assault = 2,
   Economy = 3,
   Cities = 4,
+  Churn = 5,
 }
 
 export const enum Link {
@@ -38,7 +40,7 @@ export const enum Link {
   Spike = 3,
 }
 
-export const SCENARIO_NAMES = ['idle', 'battle', 'assault', 'economy', 'cities'] as const
+export const SCENARIO_NAMES = ['idle', 'battle', 'assault', 'economy', 'cities', 'churn'] as const
 export const LINK_NAMES = ['lan', 'wan', 'bad', 'spike'] as const
 export const SIZES = [128, 256] as const
 
@@ -70,6 +72,12 @@ const ASSAULT_ARMY = 30
 const IDLE_ARMY = 20
 const CITIES_ARMY = 6
 const ECONOMY_CITIES = 3
+const CHURN_ARMY = 12
+const CHURN_TYPES = [UnitTypeId.MedTank, UnitTypeId.MedTank, UnitTypeId.MedTank, UnitTypeId.Scout]
+const CHURN_EVERY_MS = 1000
+const CHURN_CREDITS = 1_000_000
+const CHURN_PLACE_TRIES = 4
+const VIEW_EVERY_MS = 10_000
 const MIXED = [UnitTypeId.MedTank, UnitTypeId.Scout, UnitTypeId.Artillery]
 
 const EVENT_NAMES: Record<number, string> = {
@@ -119,6 +127,18 @@ export type ClientRow = {
   ticksPerSec: number | null
 }
 
+/** Changes the churn scenario drives, counted over the whole run. */
+export type Triggers = {
+  ownerFlips: number
+  ruinsAdded: number
+  placeCity: number
+  placeBuilding: number
+  structuresCompleted: number
+  structuresDestroyed: number
+  cityTilesExplored: number
+  viewSwitches: number
+}
+
 export type ServerRow = { hostMs: number; gameMs: number; aiMs: number; networkMs: number; worstMs: number }
 
 export type Row = {
@@ -131,6 +151,7 @@ export type Row = {
   clients: ClientRow[]
   /** Real-clock ms per server tick; the only figures that vary between runs of one case. */
   server: ServerRow
+  triggers: Triggers | null
   hash: string
 }
 
@@ -211,6 +232,9 @@ type Remote = {
   lag: number
   lagSamples: number
   firstTick: number | null
+  acts: number
+  placeTries: number
+  strikeTarget: number | null
 }
 
 type Tally = { host: number; game: number; ai: number; worst: number; ticks: number; tee: number }
@@ -236,12 +260,13 @@ type Run = { remotes: Remote[]; row(): Row }
 
 function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number): Run {
   const cities = spec.scenario === Scenario.Cities
+  const churn = spec.scenario === Scenario.Churn
   const measureMs = spec.seconds !== undefined ? spec.seconds * 1000 : cities ? CITIES_MEASURE_MS : MEASURE_MS
   const endMs = WARMUP_MS + measureMs
   const profile = PROFILES[spec.link]
   const actions = mulberry32(spec.seed ^ 0x5eed)
   const island = generateIsland(spec.seed, spec.size, spec.size)
-  const seats = cities ? [false, false, true, true] : [false, false]
+  const seats = cities || churn ? [false, false, true, true] : [false, false]
   const towns = spreadTowns(island, seats.length)
   const { game, players } = seatIsland(island, seats.map((ai, index) => ({ ai, color: playerColor(index + 1) })), towns)
   const host = new ServerHost(game)
@@ -249,7 +274,8 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
   const hash = createHash('sha256')
   let measuring = false
 
-  stage(spec.scenario, game, players, towns, island.towns)
+  const outposts = stage(spec.scenario, game, players, towns, island.towns)
+  const watch = churn ? new Watch(game) : null
 
   const gameTick = game.tick.bind(game)
   game.tick = (dt) => {
@@ -280,13 +306,15 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
     remotes.push(attachRemote(tag, player, tileOf(enemy), index))
   }
   host.setAiPace(1)
-  if (cities) {
-    for (let index = 0; index < SPECTATORS; index++) {
-      const tag = session++
-      const view = players[index * 2].id
-      host.attach(view, false, (frame) => tee(tag, frame, encodeServerFrame(frame))).sync()
-    }
+  const spectators: RemotePlay[] = []
+  for (let index = 0; index < (cities ? SPECTATORS : churn ? 1 : 0); index++) {
+    const tag = session++
+    const view = players[index * 2].id
+    spectators.push(host.attach(view, false, (frame) => tee(tag, frame, encodeServerFrame(frame))))
+    spectators[index].sync()
   }
+  let viewAt = VIEW_EVERY_MS
+  let view = 0
 
   const history = new Map<number, Map<number, Pose>>()
   history.set(host.tickNo, poses(game))
@@ -295,6 +323,12 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
     clock.now = now
     measuring = now >= WARMUP_MS
     for (const remote of remotes) remote.up.deliver(now, (bytes) => command(remote, bytes))
+    if (churn && now >= viewAt) {
+      viewAt += VIEW_EVERY_MS
+      view = (view + 1) % players.length
+      spectators[0].setView(players[view].id)
+      watch!.triggers.viewSwitches += 1
+    }
     while (tickAt(tickIndex + 1) <= now) {
       tickIndex += 1
       tally.tee = 0
@@ -308,6 +342,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
       }
       history.set(host.tickNo, poses(game))
       history.delete(host.tickNo - HISTORY_TICKS)
+      watch?.observe()
     }
     for (const remote of remotes) remote.down.deliver(now, (bytes) => receive(remote, bytes, now))
     for (const remote of remotes) {
@@ -339,6 +374,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
         networkMs: round(hostMs - gameMs - aiMs),
         worstMs: round(tally.worst),
       },
+      triggers: watch ? { ...watch.triggers } : null,
       hash: hash.digest('hex'),
     }),
   }
@@ -379,6 +415,9 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
       lag: 0,
       lagSamples: 0,
       firstTick: null,
+      acts: 0,
+      placeTries: 0,
+      strikeTarget: null,
       play: host.attach(player.id, true, (frame) => {
         const bytes = encodeServerFrame(frame)
         tee(tag, frame, bytes)
@@ -403,6 +442,7 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
   function tee(tag: number, frame: ServerFrame, sent: Uint8Array | null) {
     const started = realNow()
     hashFrame(hash, tag, frame, sent)
+    watch?.explored(frame)
     tally.tee += realNow() - started
   }
 
@@ -415,7 +455,19 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
 
   function command(remote: Remote, bytes: Uint8Array) {
     const decoded = decodeClientMessage(bytes)
-    if (decoded) remote.play.command(decoded.message, decoded.seq, decoded.tick)
+    if (!decoded) return
+    const kind = decoded.message.kind
+    const placing = kind === ClientMessageKind.PlaceCity || kind === ClientMessageKind.PlaceBuilding
+    if (placing) remote.player.credits = Math.max(remote.player.credits, CHURN_CREDITS)
+    const layouts = watch && placing ? game.cityLayouts() : null
+    const units = game.units.length
+    remote.play.command(decoded.message, decoded.seq, decoded.tick)
+    if (!watch || !layouts) return
+    if (kind === ClientMessageKind.PlaceCity && game.cityLayouts().some((layout, index) => layout !== layouts[index])) {
+      watch.triggers.placeCity += 1
+    }
+    if (kind === ClientMessageKind.PlaceBuilding && game.units.length > units) watch.triggers.placeBuilding += 1
+    watch.observe()
   }
 
   function receive(remote: Remote, bytes: Uint8Array, now: number) {
@@ -483,12 +535,77 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
     } else if (spec.scenario === Scenario.Economy) {
       remote.actAt += TRAIN_CHECK_MS
       if (replica.queue().length < TRAIN_QUEUE) commander.spawn(UnitTypeId.Scout)
+    } else if (churn) {
+      remote.actAt += CHURN_EVERY_MS
+      churnAct(remote)
     } else remote.actAt = Infinity
+  }
+
+  /**
+   * Splits the remote player's tanks into a capture, a siege and a strike group and sends its scouts to the
+   * farthest cities, then keeps placing a factory and city buildings and attack-ordering a visible enemy structure.
+   */
+  function churnAct(remote: Remote) {
+    const replica = remote.replica
+    const commander = remote.commander
+    const index = players.indexOf(remote.player)
+    const own = replica.units.filter((unit) => unit.ownerId === replica.playerId && unit.health > 0)
+    const tanks = own.filter((unit) => unit.typeId === UnitTypeId.MedTank)
+    const third = Math.ceil(tanks.length / 3)
+    const states = game.cityStates()
+    const centers = game.cityLayouts().map((layout) => cityCenter(layout))
+    const home = tileOf(towns[index])
+    const order = (units: readonly { id: number }[], tile: TileCoord) => {
+      if (units.length === 0) return
+      commander.selectIds(units.map((unit) => unit.id))
+      commander.orderMove(tile)
+    }
+    if (remote.acts % 10 === 0) {
+      const neutral = centers.filter((_, city) => states[city].ownerId === 0)
+      neutral.sort((a, b) => distance(a, home) - distance(b, home))
+      if (neutral.length > 0) order(tanks.slice(0, third), neutral[0])
+    }
+    if (remote.acts === 0) {
+      const outpost = outposts[index] ?? remote.enemyTown
+      order(tanks.slice(third, third * 2), outpost)
+      order(tanks.slice(third * 2), outpost)
+      const far = [...centers].sort((a, b) => distance(b, home) - distance(a, home))
+      own.filter((unit) => unit.typeId === UnitTypeId.Scout).forEach((scout, at) => order([scout], far[at % far.length]))
+    }
+    remote.acts += 1
+    const structure = replica.units.find(
+      (unit) => unit.ownerId !== replica.playerId && unit.health > 0 && UNIT_TYPES[unit.typeId].topSpeed <= 0,
+    )
+    const strike = tanks.slice(third * 2)
+    if (structure && remote.strikeTarget !== structure.id && strike.length > 0) {
+      remote.strikeTarget = structure.id
+      commander.selectIds(strike.map((unit) => unit.id))
+      commander.orderAttack(structure.id)
+    }
+    if (!own.some((unit) => unit.typeId === UnitTypeId.Factory)) {
+      for (let i = 0; i < CHURN_PLACE_TRIES; i++) {
+        const step = PLACE_STEPS[remote.placeTries++ % PLACE_STEPS.length]
+        commander.armBuilding(UnitTypeId.Factory)
+        commander.placeBuilding({ x: home.x + step.x, y: home.y + step.y })
+      }
+    }
+    const terrain = terrainOf(game)
+    const { width, height } = game.world
+    const layouts = game.cityLayouts()
+    for (let city = 0; city < layouts.length; city++) {
+      if (states[city].ownerId !== replica.playerId) continue
+      const site = citySite(layouts[city], terrain, width, height)
+      if (!site) continue
+      commander.armCity()
+      commander.placeCity(site)
+      break
+    }
   }
 }
 
-/** Scenario units and cities, placed before any session joins. */
-function stage(scenario: Scenario, game: Game, players: readonly Player[], towns: readonly MapPoint[], all: readonly MapPoint[]) {
+/** Scenario units and cities, placed before any session joins; churn returns each remote player's nearby AI town. */
+function stage(scenario: Scenario, game: Game, players: readonly Player[], towns: readonly MapPoint[], all: readonly MapPoint[]): TileCoord[] {
+  const outposts: TileCoord[] = []
   if (scenario === Scenario.Idle) deploy(game, players, towns, IDLE_ARMY, [UnitTypeId.MedTank])
   else if (scenario === Scenario.Battle) deploy(game, players, towns, BATTLE_ARMY, MIXED)
   else if (scenario === Scenario.Assault) deploy(game, players, towns, ASSAULT_ARMY, MIXED)
@@ -508,11 +625,141 @@ function stage(scenario: Scenario, game: Game, players: readonly Player[], towns
       const anchor = tileOf(home)
       for (let reach = 3; reach < 12; reach++) if (game.setRally(id, { x: anchor.x + reach, y: anchor.y })) break
     }
-  } else {
+  } else if (scenario === Scenario.Cities) {
     const free = all.filter((town) => !towns.includes(town))
     free.forEach((town, index) => game.claimCity(town, players[index % players.length].id))
     deploy(game, players, towns, CITIES_ARMY, [UnitTypeId.MedTank])
+  } else {
+    const claimed = new Set(towns)
+    const claim = (from: MapPoint, playerId: number): MapPoint | null => {
+      const near = all.filter((town) => !claimed.has(town))
+      near.sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y))
+      if (near.length === 0) return null
+      game.claimCity(near[0], playerId)
+      claimed.add(near[0])
+      return near[0]
+    }
+    for (let index = 0; index < 2; index++) {
+      const ai = players[index + 2].id
+      const town = claim(towns[index], ai)
+      if (!town) continue
+      outposts[index] = tileOf(town)
+      for (const step of PLACE_STEPS) if (game.placeBuilding(ai, UnitTypeId.Factory, { x: outposts[index].x + step.x, y: outposts[index].y + step.y })) break
+      game.finishBuild(ai)
+    }
+    players.forEach((player, index) => claim(towns[index], player.id))
+    deploy(game, players, towns, CHURN_ARMY, CHURN_TYPES)
   }
+  return outposts
+}
+
+/** Counts the churn scenario's triggers from the Game between ticks and from the frames sent. */
+class Watch {
+  readonly triggers: Triggers = {
+    ownerFlips: 0,
+    ruinsAdded: 0,
+    placeCity: 0,
+    placeBuilding: 0,
+    structuresCompleted: 0,
+    structuresDestroyed: 0,
+    cityTilesExplored: 0,
+    viewSwitches: 0,
+  }
+  private owners: number[]
+  private ruins: number
+  private readonly building = new Set<number>()
+  private readonly standing = new Set<number>()
+  private readonly bounds: Uint8Array
+
+  constructor(private readonly game: Game) {
+    const states = game.cityStates()
+    this.owners = states.map((state) => state.ownerId)
+    this.ruins = states.reduce((sum, state) => sum + state.ruins.length, 0)
+    const { width, height } = game.world
+    this.bounds = new Uint8Array(width * height)
+    for (const layout of game.cityLayouts()) {
+      if (layout.tiles.length === 0) continue
+      const xs = layout.tiles.map((tile) => tile.x)
+      const ys = layout.tiles.map((tile) => tile.y)
+      for (let y = Math.max(0, Math.min(...ys)); y <= Math.min(height - 1, Math.max(...ys)); y++) {
+        for (let x = Math.max(0, Math.min(...xs)); x <= Math.min(width - 1, Math.max(...xs)); x++) this.bounds[y * width + x] = 1
+      }
+    }
+    this.structures()
+  }
+
+  observe() {
+    const states = this.game.cityStates()
+    states.forEach((state, index) => {
+      if (state.ownerId !== this.owners[index]) this.triggers.ownerFlips += 1
+    })
+    this.owners = states.map((state) => state.ownerId)
+    const ruins = states.reduce((sum, state) => sum + state.ruins.length, 0)
+    this.triggers.ruinsAdded += ruins - this.ruins
+    this.ruins = ruins
+    this.structures()
+  }
+
+  explored(frame: ServerFrame) {
+    const width = this.game.world.width
+    for (const event of frame.events) {
+      if (event.kind !== ServerEventKind.MapPatch) continue
+      for (const cell of event.map.cells) this.triggers.cityTilesExplored += this.bounds[cell.y * width + cell.x]
+    }
+  }
+
+  private structures() {
+    const alive = new Set<number>()
+    for (const unit of this.game.units) {
+      if (unit.type.topSpeed > 0 || unit.health <= 0) continue
+      alive.add(unit.id)
+      if (unit.progress < 1) this.building.add(unit.id)
+      else if (this.building.delete(unit.id)) this.triggers.structuresCompleted += 1
+    }
+    for (const id of this.standing) {
+      if (alive.has(id)) continue
+      this.triggers.structuresDestroyed += 1
+      this.building.delete(id)
+    }
+    this.standing.clear()
+    for (const id of alive) this.standing.add(id)
+  }
+}
+
+/** The first open building plot of a city, scanning its bounding box row by row. */
+function citySite(layout: CityLayout, terrain: ArrayLike<number>, width: number, height: number): TileCoord | null {
+  if (layout.tiles.length === 0) return null
+  const xs = layout.tiles.map((tile) => tile.x)
+  const ys = layout.tiles.map((tile) => tile.y)
+  for (let y = Math.min(...ys) - 1; y <= Math.max(...ys) + 1; y++) {
+    for (let x = Math.min(...xs) - 1; x <= Math.max(...xs) + 1; x++) {
+      if (canPlaceCityBuilding(layout, x, y, terrain, width, height)) return { x, y }
+    }
+  }
+  return null
+}
+
+function terrainOf(game: Game): number[] {
+  const terrain: number[] = []
+  for (let y = 0; y < game.world.height; y++) for (let x = 0; x < game.world.width; x++) terrain.push(game.world.terrainAt(x, y))
+  return terrain
+}
+
+const PLACE_STEPS = placeSteps()
+
+/** Factory tiles to try around a home town, nearest ring first. */
+function placeSteps(): TileCoord[] {
+  const steps: TileCoord[] = []
+  for (let radius = 3; radius <= 7; radius++) {
+    for (let y = -radius; y <= radius; y++) {
+      for (let x = -radius; x <= radius; x++) if (Math.max(Math.abs(x), Math.abs(y)) === radius) steps.push({ x, y })
+    }
+  }
+  return steps
+}
+
+function distance(a: TileCoord, b: TileCoord): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
 function deploy(game: Game, players: readonly Player[], towns: readonly MapPoint[], count: number, types: readonly UnitTypeId[]) {
@@ -636,11 +883,11 @@ network, and reports what each client receives and draws. Time is simulated;
 only the server ms/tick columns read the real clock.
 
 Options:
-  --scenario <name>  idle, battle, assault, economy, or cities. Default: battle
+  --scenario <name>  idle, battle, assault, economy, cities, or churn. Default: battle
   --size <n>         128 or 256. Default: 128
   --net <name>       lan, wan, bad, or spike. Default: wan
   --seed <n>         Map, game and network seed. Default: 11
-  --all              Every scenario, size and network (40 cases)
+  --all              Every scenario but churn, at every size and network (40 cases)
   --client <n>       Remote client the table shows. Default: 0
   --json             One JSON row per case, with every client, instead of the table
   --help             Show this help
@@ -688,6 +935,7 @@ async function main() {
   for (const spec of specs) {
     const row = await runCase(spec)
     console.log(json ? JSON.stringify(row) : tableRow(row, client))
+    if (!json && row.triggers) process.stderr.write(`${row.scenario}-${row.size} ${row.net} triggers ${JSON.stringify(row.triggers)}\n`)
   }
   process.stderr.write(`${specs.length} case(s) in ${((performance.now() - started) / 1000).toFixed(1)} s\n`)
 }
