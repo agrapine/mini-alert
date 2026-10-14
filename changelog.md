@@ -41,6 +41,7 @@
 - Units brushing past city buildings no longer twitch: your game stops them at a building's edge, as the server does.
 - Units stay exactly where they belong between server updates: a correction eases in only what it changes instead of knocking the unit up to a step off its glide.
 - A late network packet no longer leaves units drifting on screen: your game replays every unit from the packet's moment, not only the units it corrects.
+- Units no longer slowly slide away from where the server has them: the server checks your view against exactly the positions your game receives.
 
 ## 0.4
 
