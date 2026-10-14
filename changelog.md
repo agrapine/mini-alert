@@ -32,6 +32,7 @@
 - Units no longer jump on jittery or lossy connections: your game holds each server update until its moment comes, so it runs slightly behind the server, up to a fifth of a second on unsteady connections.
 - The server runs precompiled, spending 1–20% less time per tick and leaving more headroom on small hosts.
 - The server works out city and sight data once per tick for all players instead of once for each, redraws a player's view of a city only when the city changes or the player explores it, and retraces the sight of cities and buildings only when they change, leaving more headroom on small hosts.
+- Idle armies no longer cost the server sight work every tick: units standing still keep their view without the server retracing it for each player, cutting the server's network time on a quiet large map by more than half.
 
 ## 0.4
 

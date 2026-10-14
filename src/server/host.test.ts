@@ -13,6 +13,15 @@ function events(frames: readonly ServerFrame[]) {
   return frames.flatMap((frame) => frame.events)
 }
 
+function explored(frames: readonly ServerFrame[]): Set<string> {
+  const cells = new Set<string>()
+  for (const event of events(frames)) {
+    if (event.kind !== ServerEventKind.Snapshot && event.kind !== ServerEventKind.MapPatch) continue
+    for (const cell of event.map.cells) cells.add(`${cell.x},${cell.y}`)
+  }
+  return cells
+}
+
 describe('host snapshots', () => {
   it('sends a capture in progress as city state without the layout', () => {
     const tiles = new Uint8Array(20 * 20).fill(Terrain.Land)
@@ -153,6 +162,47 @@ describe('host snapshots', () => {
     expect(explored.has(`${20 + sight + 2},20`)).toBe(true)
     expect(explored.has(`${20 + sight + 3},20`)).toBe(false)
     expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
+  })
+
+  it("explores for a spectator what its player explores where a re-order's catch-up brings a unit to rest", () => {
+    const game = new Game(new World(64, 32))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 10, y: 10 })
+    const host = new ServerHost(game)
+    const own: ServerFrame[] = []
+    const watched: ServerFrame[] = []
+    const play = host.attach(player.id, true, (frame) => own.push(frame))
+    play.sync()
+    host.attach(player.id, false, (frame) => watched.push(frame)).sync()
+    const goal = { x: 14, y: 10 }
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: goal }, 1, host.tickNo)
+    for (let i = 0; i < 28; i++) host.tick(SIM_STEP)
+    const before = explored(own).size
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: goal }, 2, host.tickNo - 15)
+    expect(scout.speed).toBe(0)
+    expect(scout.path).toEqual([])
+    for (let i = 0; i < 10; i++) host.tick(SIM_STEP)
+    expect(explored(own).size).toBeGreaterThan(before)
+    expect(explored(watched)).toEqual(explored(own))
+  })
+
+  it("lights where a move order's catch-up takes a unit at rest, in the order's echo", () => {
+    const game = new Game(new World(48, 32))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 10, y: 10 })
+    const tank = game.spawn(enemy, UnitTypeId.MedTank, { x: 22, y: 14 })
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (frame) => frames.push(frame))
+    play.sync()
+    const snapshot = events(frames).find((event) => event.kind === ServerEventKind.Snapshot)
+    expect(snapshot?.units.some((unit) => unit.id === tank.id)).toBe(false)
+    for (let i = 0; i < 3; i++) host.tick(SIM_STEP)
+    frames.length = 0
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 20, y: 10 } }, 1, host.tickNo - 15)
+    expect(frames).toHaveLength(1)
+    expect(frames[0].events.some((event) => event.kind === ServerEventKind.UnitMotion && event.unit.id === tank.id)).toBe(true)
   })
 
   it('delivers every explored tile although patches wait for the ledger', () => {
