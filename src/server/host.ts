@@ -16,10 +16,10 @@ import {
   type ShotHit,
   type UnitSnapshot,
 } from '../shared/protocol.ts'
-import type { CityLayout } from '../shared/cities.ts'
+import { CITY_SIGHT, type CityLayout } from '../shared/cities.ts'
 import { type TileCoord } from '../shared/tiles.ts'
 import { spanOf, UNIT_TYPES } from '../shared/unit-types.ts'
-import { EXPLORE_MARGIN, friendsOf, type CitySight } from '../shared/vision.ts'
+import { EXPLORE_MARGIN, type CitySight } from '../shared/vision.ts'
 import type { AiPlayer } from '../ai/player.ts'
 import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
@@ -44,6 +44,9 @@ type VisibleCity = { index: number; layout: LayoutClip; state: StateClip }
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
 
+/** What an owner's cities and structures light: `discs` holds x, z, sight per source and `rects` tileX, tileY, spanX, spanY per structure. */
+type StaticLayer = { discs: number[]; rects: number[]; lit: Uint8Array }
+
 /** A change that may wait for the next frame going out anyway, or for the ledger cadence. */
 type Deferred = { event: ServerEvent; commit(): void }
 
@@ -64,6 +67,8 @@ type Memory = {
   /** Holds `sight` for tiles in view this tick and `sight - 1` for tiles in view last tick. */
   visible: Uint32Array
   sight: number
+  /** The static layer `visible` was last stamped against; its tiles count as in view without being stamped. */
+  layer: StaticLayer | null
   felledSeen: number
   /** Tiles explored or changed since the last map patch went out. */
   unsentTiles: Set<number>
@@ -112,6 +117,8 @@ export class ServerHost {
   private layouts: CityLayout[] | null = null
   private stateKeys: string[] | null = null
   private cityBounds: Bounds[] | null = null
+  private layers = new Map<number, StaticLayer>()
+  private checkedLayers: Map<number, StaticLayer> | null = null
 
   constructor(
     readonly game: Game,
@@ -255,6 +262,7 @@ export class ServerHost {
     this.layouts = null
     this.stateKeys = null
     this.cityBounds = null
+    this.checkedLayers = null
   }
 
   private pushSync(session: Session) {
@@ -459,6 +467,7 @@ export class ServerHost {
       explored: new Uint8Array(tiles),
       visible: new Uint32Array(tiles),
       sight: 1,
+      layer: null,
       felledSeen: 0,
       unsentTiles: new Set(),
       seen: new Set(),
@@ -488,8 +497,13 @@ export class ServerHost {
     const { width, height } = this.game.world
     const fresh: TileCoord[] = []
     const sight = ++memory.sight
+    const layer = this.staticLayer(memory.owner, units)
+    // A changed layer rescans every source, so the tiles it newly lights explore their margins in source order.
+    const whole = memory.layer !== layer
+    memory.layer = layer
     const see = (x: number, y: number) => {
       const index = y * width + x
+      if (!whole && layer.lit[index] === 1) return
       const before = memory.visible[index]
       memory.visible[index] = sight
       if (before === sight || before === sight - 1) return
@@ -503,22 +517,21 @@ export class ServerHost {
         fresh.push({ x: nx, y: ny })
       }
     }
-    this.sights ??= this.game.citySights()
-    for (const friend of friendsOf(units, memory.owner, this.sights)) {
-      const reach = Math.ceil(friend.sight)
-      const originX = Math.floor(friend.x)
-      const originY = Math.floor(friend.z)
-      const reachSq = friend.sight * friend.sight
-      for (let y = Math.max(0, originY - reach); y <= Math.min(height - 1, originY + reach); y++) {
-        for (let x = Math.max(0, originX - reach); x <= Math.min(width - 1, originX + reach); x++) {
-          const cx = x + 0.5 - friend.x
-          const cz = y + 0.5 - friend.z
-          if (cx * cx + cz * cz <= reachSq) see(x, y)
-        }
+    const disc = (originX: number, originZ: number, radius: number) => discTiles(originX, originZ, radius, width, height, see)
+    for (const unit of units) {
+      if (unit.ownerId !== memory.owner || unit.health <= 0 || unit.progress < 1) continue
+      if (!whole && isStructure(unit)) continue
+      const radius = UNIT_TYPES[unit.typeId].weapon.sight
+      if (radius > 0) disc(unit.x, unit.z, radius)
+    }
+    if (whole) {
+      for (const city of (this.sights ??= this.game.citySights())) {
+        if (city.ownerId === memory.owner) disc(city.x, city.z, CITY_SIGHT)
       }
     }
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0) continue
+      if (!whole && isStructure(unit)) continue
       const span = spanOf(UNIT_TYPES[unit.typeId])
       for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
         for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) see(x, y)
@@ -527,10 +540,49 @@ export class ServerHost {
     return fresh
   }
 
+  /** The owner's static layer, rebuilt when its sources differ by value from the ones it was built from. */
+  private staticLayer(owner: number, units: readonly UnitSnapshot[]): StaticLayer {
+    this.checkedLayers ??= new Map()
+    const checked = this.checkedLayers.get(owner)
+    if (checked) return checked
+    const discs: number[] = []
+    const rects: number[] = []
+    for (const unit of units) {
+      if (unit.ownerId !== owner || unit.health <= 0 || !isStructure(unit)) continue
+      const type = UNIT_TYPES[unit.typeId]
+      if (unit.progress >= 1 && type.weapon.sight > 0) discs.push(unit.x, unit.z, type.weapon.sight)
+      const span = spanOf(type)
+      rects.push(unit.tileX, unit.tileY, span.x, span.y)
+    }
+    for (const city of (this.sights ??= this.game.citySights())) {
+      if (city.ownerId === owner) discs.push(city.x, city.z, CITY_SIGHT)
+    }
+    let layer = this.layers.get(owner)
+    if (!layer || !sameValues(layer.discs, discs) || !sameValues(layer.rects, rects)) {
+      layer = { discs, rects, lit: this.stampStatic(discs, rects) }
+      this.layers.set(owner, layer)
+    }
+    this.checkedLayers.set(owner, layer)
+    return layer
+  }
+
+  private stampStatic(discs: readonly number[], rects: readonly number[]): Uint8Array {
+    const { width, height } = this.game.world
+    const lit = new Uint8Array(width * height)
+    const light = (x: number, y: number) => (lit[y * width + x] = 1)
+    for (let i = 0; i < discs.length; i += 3) discTiles(discs[i], discs[i + 1], discs[i + 2], width, height, light)
+    for (let i = 0; i < rects.length; i += 4) {
+      for (let y = Math.max(0, rects[i + 1]); y < Math.min(height, rects[i + 1] + rects[i + 3]); y++) {
+        for (let x = Math.max(0, rects[i]); x < Math.min(width, rects[i] + rects[i + 2]); x++) lit[y * width + x] = 1
+      }
+    }
+    return lit
+  }
+
   private knows(memory: Memory, unit: UnitSnapshot, width: number): boolean {
     if (unit.ownerId === memory.owner) return true
     const index = unit.tileY * width + unit.tileX
-    return index >= 0 && index < memory.visible.length && memory.visible[index] === memory.sight
+    return index >= 0 && index < memory.visible.length && (memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1)
   }
 
   private pointVisible(memory: Memory, x: number, z: number, width: number, height: number): boolean {
@@ -560,7 +612,8 @@ export class ServerHost {
     const tx = Math.floor(x)
     const ty = Math.floor(z)
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return false
-    return memory.visible[ty * width + tx] === memory.sight
+    const index = ty * width + tx
+    return memory.visible[index] === memory.sight || memory.layer?.lit[index] === 1
   }
 
   private visibleCities(memory: Memory): VisibleCity[] {
@@ -749,6 +802,30 @@ function progressStep(state: CityState): number {
 function shapeKey(layout: CityLayout): string {
   const buildings = layout.buildings.map((building) => `${building.x},${building.y},${building.model}`).join(';')
   return `${layout.tiles.length}:${layout.streets.length}:${buildings}`
+}
+
+function discTiles(originX: number, originZ: number, radius: number, width: number, height: number, visit: (x: number, y: number) => void) {
+  const reach = Math.ceil(radius)
+  const tileX = Math.floor(originX)
+  const tileY = Math.floor(originZ)
+  const reachSq = radius * radius
+  for (let y = Math.max(0, tileY - reach); y <= Math.min(height - 1, tileY + reach); y++) {
+    for (let x = Math.max(0, tileX - reach); x <= Math.min(width - 1, tileX + reach); x++) {
+      const cx = x + 0.5 - originX
+      const cz = y + 0.5 - originZ
+      if (cx * cx + cz * cz <= reachSq) visit(x, y)
+    }
+  }
+}
+
+function isStructure(unit: UnitSnapshot): boolean {
+  return UNIT_TYPES[unit.typeId].topSpeed === 0
+}
+
+function sameValues(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 function discOffsets(radius: number): TileCoord[] {
