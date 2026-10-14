@@ -402,7 +402,7 @@ export class LobbyView {
   }
 
   private fillSlots(state: GameLobbyState, host: boolean) {
-    this.main.replaceChildren()
+    const parts: HTMLElement[] = []
     const sizes = document.createElement('div')
     sizes.className = 'size-row'
     for (const size of MAP_SIZES) {
@@ -418,7 +418,7 @@ export class LobbyView {
       })
       sizes.append(button)
     }
-    this.main.append(sizes)
+    parts.push(sizes)
     if (host) {
       const regen = document.createElement('button')
       regen.type = 'button'
@@ -427,7 +427,7 @@ export class LobbyView {
         this.setBusy(true)
         this.actions.regenerate()
       })
-      this.main.append(regen)
+      parts.push(regen)
     }
 
     state.slots.forEach((slot, index) => {
@@ -451,7 +451,7 @@ export class LobbyView {
       } else if (slot.kind === SlotKind.Ai) {
         row.append(slotButton('Clear', () => this.actions.clearSlot(index)))
       }
-      this.main.append(row)
+      parts.push(row)
     })
 
     const actions = document.createElement('div')
@@ -470,9 +470,14 @@ export class LobbyView {
       start.addEventListener('click', () => this.actions.start())
       actions.append(start)
     }
-    this.main.append(actions)
+    parts.push(actions)
     this.syncPace(state.aiPace)
-    this.main.append(this.paceRow)
+    // Detaching the pace row would drop the slider's focus mid-adjustment.
+    for (const child of [...this.main.children]) {
+      if (child !== this.paceRow) child.remove()
+    }
+    this.main.prepend(...parts)
+    if (this.paceRow.parentElement !== this.main) this.main.append(this.paceRow)
   }
 
   syncPace(pace: number) {

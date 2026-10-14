@@ -331,6 +331,17 @@ describe('lobby room', () => {
     expect(pace.value).toBe('0.5')
   })
 
+  it('keeps a focused pace slider through a room update', () => {
+    const { root, view } = mount()
+    view.showGame(guestRoom(), null)
+    const pace = one<HTMLInputElement>(root, '.pace-row input')
+    pace.focus()
+    pace.value = '2.25'
+    view.showGame({ ...guestRoom(), aiPace: 0.5 }, null)
+    expect(document.activeElement).toBe(pace)
+    expect(pace.value).toBe('2.25')
+  })
+
   it('lists who is not seated, or says no one is waiting', () => {
     const { root, view } = mount()
     view.showGame(hostRoom(), null)
