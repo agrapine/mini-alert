@@ -78,13 +78,13 @@ function convoy(): UnitSnapshot[] {
   })
 }
 
-/** The convoy's UnitMotion every `every` ticks up to `last`, with routes the clients cannot predict switched at ticks 90 and 150. */
+/** The convoy's UnitMotion every `every` ticks up to `last`, with routes the clients cannot predict switched at ticks 120 and 150. */
 function convoyFrames(every: number, last: number): ServerFrame[] {
   const server = joined(...convoy())
   const frames: ServerFrame[] = []
   for (let tick = 10 + every; tick <= last; tick += every) {
     server.simulateTo(tick)
-    if (tick === 90) server.predictMove([1], { x: 14, y: 1 })
+    if (tick === 120) server.predictMove([1], { x: 14, y: 1 })
     if (tick === 150) server.predictMove([2, 3], { x: 3, y: 12 })
     frames.push({ tick, ack: 0, events: server.units.map((unit) => ({ kind: ServerEventKind.UnitMotion, unit: structuredClone(unit) })) })
   }

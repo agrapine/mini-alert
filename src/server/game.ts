@@ -4,7 +4,7 @@ import type { CitySight } from '../shared/vision.ts'
 import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
 import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
-import { SIM_STEP } from '../shared/motion.ts'
+import { atRest, SIM_STEP } from '../shared/motion.ts'
 import { planMoves } from '../shared/route.ts'
 import { PathFinder } from './path/pathfinder.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
@@ -415,7 +415,7 @@ export class Game {
     return unit
   }
 
-  /** Moves the units toward the tile; ground and sea units then advance `lag` steps, as the ordering client already shows them. */
+  /** Moves the units toward the tile; ground and sea units at rest then advance `lag` steps, as the ordering client already shows them. */
   orderMove(playerId: number, unitIds: readonly number[], tile: TileCoord, lag = 0): boolean {
     let moved = false
     const surface: Unit[] = []
@@ -427,12 +427,14 @@ export class Game {
         if (unit.orderMove(tile, this.pathfinder, this.units)) moved = true
       } else surface.push(unit)
     }
+    const resting = new Set(surface.filter(atRest))
     const movers = surface.map((unit) => ({ id: unit.id, tile: unit.tile, domain: domainOf(unit.type) }))
     const routes = planMoves(this.pathfinder, movers, tile)
     for (const unit of surface) {
       const path = routes.get(unit.id)
       if (!path || !unit.travel(path)) continue
       moved = true
+      if (!resting.has(unit)) continue
       for (let i = 0; i < lag; i++) unit.step(SIM_STEP, this.pathfinder, this.units)
     }
     return moved

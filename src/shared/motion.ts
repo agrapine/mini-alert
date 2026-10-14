@@ -38,6 +38,11 @@ export type MotionState = {
   bay?: number
 }
 
+/** A unit at rest takes an order at once on its client; one on the move keeps its course until the server answers. */
+export function atRest(unit: { readonly path: readonly TileCoord[]; readonly speed: number }): boolean {
+  return unit.path.length === 0 && unit.speed === 0
+}
+
 export function wrapAngle(angle: number): number {
   const turn = Math.PI * 2
   let wrapped = angle % turn

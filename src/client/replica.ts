@@ -1,6 +1,6 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { atRest, flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -567,7 +567,7 @@ export class Replica {
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
-  /** Plans the move the server will plan for the same order, from what this player knows of the map. */
+  /** Plans the move the server will plan for the same order, from what this player knows of the map, and starts the surface units at rest on it; one on the move keeps its course and target until the server answers. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
     this.guess({ kind: Logged.Move, unitIds, tile, plan: null })
   }
@@ -590,17 +590,21 @@ export class Replica {
 
   private planMove(guess: MoveGuess) {
     const surface: UnitSnapshot[] = []
+    const resting: UnitSnapshot[] = []
     let domains = 0
     for (const unit of this.ordered(guess.unitIds)) {
+      const type = UNIT_TYPES[unit.typeId]
+      if (type.topSpeed > 0 && domainOf(type) !== MoveDomain.Air) {
+        surface.push(unit)
+        domains |= 1 << domainOf(type)
+        if (!atRest(unit)) continue
+        resting.push(unit)
+      }
       unit.attackId = null
       unit.attackPoint = null
-      const type = UNIT_TYPES[unit.typeId]
-      if (type.topSpeed <= 0 || domainOf(type) === MoveDomain.Air) continue
-      surface.push(unit)
-      domains |= 1 << domainOf(type)
     }
     const world = this.world
-    if (!world || surface.length === 0) return
+    if (!world || resting.length === 0) return
     const inputs = this.routeInputs(surface)
     if (!guess.plan || !sameValues(guess.plan.inputs, inputs) || !this.openHolds(guess.plan, world, domains)) {
       const open = this.openTiles(world, domains)
@@ -608,7 +612,7 @@ export class Replica {
       const routes = planMoves(this.routeMap(world, open), movers, guess.tile)
       guess.plan = { inputs, open, terrainRevision: this.terrainRevision, cityRevision: this.cityRevision, routes }
     }
-    for (const unit of surface) {
+    for (const unit of resting) {
       const path = guess.plan.routes.get(unit.id)
       if (!path || path.length === 0) continue
       unit.path = path.slice()
@@ -688,7 +692,7 @@ export class Replica {
   private aim(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     for (const unit of this.ordered(unitIds)) {
       const type = UNIT_TYPES[unit.typeId]
-      const moving = domainOf(type) !== MoveDomain.Air && (unit.path.length > 0 || unit.speed !== 0)
+      const moving = domainOf(type) !== MoveDomain.Air && !atRest(unit)
       if (moving && type.weapon.turretRate <= 0) continue
       unit.attackId = targetId
       unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null

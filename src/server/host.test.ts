@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Replica } from '../client/replica.ts'
 import { canPlaceCityBuilding } from '../shared/cities.ts'
 import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, type MotionState } from '../shared/motion.ts'
-import { ClientMessageKind, ServerEventKind, type ServerFrame } from '../shared/protocol.ts'
+import { ClientMessageKind, ServerEventKind, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
@@ -121,30 +121,73 @@ describe('host snapshots', () => {
     expect(worst).toBeLessThan(0.5)
   })
 
-  it('predicts on the client the routes the server plans for a move order', () => {
+  it('predicts on the client the routes the server plans for the units a move order finds at rest', () => {
     const wall = []
     for (let y = 2; y < 12; y++) wall.push({ x: 12, y })
     const game = new Game(new World(24, 16, wall))
     const player = game.addPlayer()
     const enemy = game.addPlayer()
-    const tanks = [3, 5, 7, 9, 11].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 4, y }, Math.PI / 2))
+    const tanks = [3, 5, 7, 9].map((y) => game.spawn(player, UnitTypeId.MedTank, { x: 4, y }, Math.PI / 2))
     game.spawn(enemy, UnitTypeId.MedTank, { x: 14, y: 8 })
     const host = new ServerHost(game)
     const frames: ServerFrame[] = []
     host.attach(player.id, true, (message) => frames.push(message)).sync()
     const replica = new Replica()
     replica.apply(frames[0])
-    const orders: [number[], { x: number; y: number }][] = [
-      [[tanks[0].id], { x: 20, y: 3 }],
-      [tanks.map((tank) => tank.id), { x: 14, y: 8 }],
-    ]
-    for (const [ids, target] of orders) {
-      replica.predictMove(ids, target)
-      game.orderMove(player.id, ids, target)
-      for (const id of ids) {
-        expect(replica.unit(id)?.path).toEqual(game.units.find((unit) => unit.id === id)?.path)
-      }
+    const [runner, ...resting] = tanks
+    replica.predictMove([runner.id], { x: 20, y: 3 })
+    game.orderMove(player.id, [runner.id], { x: 20, y: 3 })
+    const course = structuredClone(runner.path)
+    expect(replica.unit(runner.id)?.path).toEqual(course)
+
+    replica.predictMove(tanks.map((tank) => tank.id), { x: 14, y: 8 })
+    game.orderMove(player.id, tanks.map((tank) => tank.id), { x: 14, y: 8 })
+    expect(runner.path).not.toEqual(course)
+    expect(replica.unit(runner.id)?.path).toEqual(course)
+    for (const tank of resting) expect(replica.unit(tank.id)?.path).toEqual(tank.path)
+  })
+
+  it('answers a late move order where it finds a unit on the move, as its client kept it, and catches up a unit at rest', () => {
+    const game = new Game(new World(48, 16))
+    const player = game.addPlayer()
+    const runner = game.spawn(player, UnitTypeId.MedTank, { x: 4, y: 3 }, Math.PI / 2)
+    const standing = game.spawn(player, UnitTypeId.MedTank, { x: 20, y: 12 }, Math.PI / 2)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    const client = new Replica()
+    const deliver = () => {
+      for (const frame of frames.splice(0)) client.apply(frame)
     }
+    const tick = () => {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      deliver()
+    }
+    deliver()
+    client.predictMove([runner.id], { x: 40, y: 3 })
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [runner.id], tile: { x: 40, y: 3 } }, 1, client.localTick)
+    deliver()
+    for (let i = 0; i < 20; i++) tick()
+
+    const ids = [runner.id, standing.id]
+    const goal = { x: 24, y: 12 }
+    const sent = client.localTick
+    const rest = standing.pos.x
+    client.predictMove(ids, goal)
+    for (let i = 0; i < 12; i++) tick()
+    const arrived = { x: Math.fround(runner.pos.x), z: Math.fround(runner.pos.z) }
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: ids, tile: goal }, 2, sent)
+    const echo = new Map<number, UnitSnapshot>()
+    for (const event of events(frames)) if (event.kind === ServerEventKind.UnitMotion) echo.set(event.unit.id, event.unit)
+    expect(echo.get(runner.id)).toMatchObject(arrived)
+    for (const id of ids) {
+      const shown = client.unit(id) as UnitSnapshot
+      const answer = echo.get(id) as UnitSnapshot
+      expect(Math.hypot(shown.x - answer.x, shown.z - answer.z)).toBeLessThan(0.01)
+    }
+    expect((echo.get(standing.id) as UnitSnapshot).x - rest).toBeGreaterThan(0.3)
   })
 
   it('explores terrain two tiles past sight without revealing units there', () => {
@@ -164,21 +207,22 @@ describe('host snapshots', () => {
     expect(snapshot?.units.some((unit) => unit.id === hidden.id)).toBe(false)
   })
 
-  it("explores for a spectator what its player explores where a re-order's catch-up brings a unit to rest", () => {
+  it("explores for a spectator what its player explores where a move order's catch-up brings a unit to rest", () => {
     const game = new Game(new World(64, 32))
     const player = game.addPlayer()
-    const scout = game.spawn(player, UnitTypeId.Scout, { x: 10, y: 10 })
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 10, y: 10 }, Math.PI / 2)
+    // Stopped short of the next tile, close enough for the catch-up to end at rest there.
+    scout.pos = { x: 10.8, z: 10.5 }
     const host = new ServerHost(game)
     const own: ServerFrame[] = []
     const watched: ServerFrame[] = []
     const play = host.attach(player.id, true, (frame) => own.push(frame))
     play.sync()
     host.attach(player.id, false, (frame) => watched.push(frame)).sync()
-    const goal = { x: 14, y: 10 }
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: goal }, 1, host.tickNo)
-    for (let i = 0; i < 28; i++) host.tick(SIM_STEP)
+    for (let i = 0; i < 3; i++) host.tick(SIM_STEP)
     const before = explored(own).size
-    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: goal }, 2, host.tickNo - 15)
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 11, y: 10 } }, 1, host.tickNo - 15)
+    expect(scout.pos.x).toBeGreaterThan(11)
     expect(scout.speed).toBe(0)
     expect(scout.path).toEqual([])
     for (let i = 0; i < 10; i++) host.tick(SIM_STEP)
