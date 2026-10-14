@@ -18,6 +18,8 @@ import {
 } from '../shared/lobby.ts'
 import { isMinimapShore, minimapRgb } from '../shared/minimap.ts'
 import type { Terrain } from '../shared/tiles.ts'
+import '@fontsource/saira-stencil-one/latin-400.css'
+import './lobby.css'
 
 export type LobbyActions = {
   setName(name: string): void
@@ -40,9 +42,13 @@ export type LobbyActions = {
 export class LobbyView {
   private readonly title: HTMLElement
   private readonly status: HTMLElement
+  private readonly statusDot: HTMLElement
+  private readonly statusText: Text
   private readonly nameInput: HTMLInputElement
+  private readonly grid: HTMLElement
   private readonly peopleTitle: HTMLElement
   private readonly people: HTMLElement
+  private readonly mainTitle: HTMLElement
   private readonly main: HTMLElement
   private readonly preview: HTMLElement
   private readonly map: HTMLElement
@@ -69,12 +75,11 @@ export class LobbyView {
     private readonly admin = false,
   ) {
     root.className = 'lobby-screen'
-    this.status = document.createElement('p')
-    this.status.className = 'lobby-status'
-    const card = document.createElement('section')
-    card.className = 'lobby-card'
     const head = document.createElement('header')
-    head.className = 'lobby-head'
+    head.className = 'lobby-head lobby-frame'
+    const logo = document.createElement('p')
+    logo.className = 'lobby-logo'
+    logo.textContent = 'MINI ALERT'
     this.title = document.createElement('h1')
     const titleRow = document.createElement('div')
     titleRow.className = 'lobby-title'
@@ -109,24 +114,30 @@ export class LobbyView {
       )
     })
     you.append(this.nameInput, copyLink)
-    head.append(titleRow, you)
+    this.status = document.createElement('p')
+    this.status.className = 'lobby-status'
+    this.statusDot = document.createElement('span')
+    this.statusDot.className = 'lobby-dot'
+    this.statusDot.setAttribute('aria-hidden', 'true')
+    this.statusText = document.createTextNode('')
+    this.status.append(this.statusDot, this.statusText)
+    head.append(logo, titleRow, you, this.status)
 
-    const columns = document.createElement('div')
-    columns.className = 'lobby-columns'
-    const peopleCol = document.createElement('section')
-    peopleCol.className = 'lobby-people'
     this.peopleTitle = document.createElement('h2')
+    const peoplePanel = panel('section', 'lobby-people', '01', this.peopleTitle)
     this.people = document.createElement('div')
     this.people.className = 'lobby-list'
-    peopleCol.append(this.peopleTitle, this.people)
+    peoplePanel.append(this.people)
 
-    this.main = document.createElement('section')
+    this.mainTitle = document.createElement('h2')
+    const battlePanel = panel('section', 'lobby-battle', '02', this.mainTitle)
+    this.main = document.createElement('div')
     this.main.className = 'lobby-main'
+    battlePanel.append(this.main)
 
-    this.preview = document.createElement('section')
-    this.preview.className = 'lobby-preview'
     const previewTitle = document.createElement('h2')
-    previewTitle.textContent = 'Map'
+    previewTitle.textContent = 'Radar'
+    this.preview = panel('section', 'lobby-preview', '03', previewTitle)
     this.map = document.createElement('div')
     this.map.className = 'lobby-map'
     this.canvas = document.createElement('canvas')
@@ -137,11 +148,11 @@ export class LobbyView {
     spinner.setAttribute('role', 'status')
     spinner.setAttribute('aria-label', 'Drawing map')
     this.map.append(this.canvas, this.marks)
-    this.preview.append(previewTitle, this.map, spinner)
-    columns.append(peopleCol, this.main, this.preview)
+    this.preview.append(this.map, spinner)
 
-    const chat = document.createElement('form')
-    chat.className = 'lobby-chat'
+    const chatTitle = document.createElement('h2')
+    chatTitle.textContent = 'Comms'
+    const chat = panel('form', 'lobby-chat', '04', chatTitle)
     this.chatLog = document.createElement('div')
     this.chatLog.className = 'lobby-log'
     const compose = document.createElement('div')
@@ -168,7 +179,7 @@ export class LobbyView {
     this.replaced.id = 'elsewhere'
     this.replaced.hidden = true
     const replacedCard = document.createElement('div')
-    replacedCard.className = 'outcome-card'
+    replacedCard.className = 'lobby-frame lobby-dialog'
     replacedCard.setAttribute('role', 'dialog')
     replacedCard.setAttribute('aria-modal', 'true')
     replacedCard.setAttribute('aria-labelledby', 'elsewhere-title')
@@ -179,16 +190,22 @@ export class LobbyView {
     replacedText.textContent = 'This game is open in another tab or window.'
     const playHere = document.createElement('button')
     playHere.type = 'button'
+    playHere.className = 'primary'
     playHere.textContent = 'Play here'
     playHere.addEventListener('click', () => {
       this.replaced.hidden = true
       this.actions.playHere()
     })
-    replacedCard.append(replacedTitle, replacedText, playHere)
+    const replacedBody = document.createElement('div')
+    replacedBody.className = 'lobby-dialog-body'
+    replacedBody.append(replacedText, playHere)
+    replacedCard.append(panelHead(replacedTitle), replacedBody)
     this.replaced.append(replacedCard)
 
-    card.append(head, columns, chat)
-    root.replaceChildren(this.status, card, this.replaced)
+    this.grid = document.createElement('div')
+    this.grid.className = 'lobby-grid'
+    this.grid.append(peoplePanel, battlePanel, this.preview, chat)
+    root.replaceChildren(head, this.grid, this.replaced)
     this.paceRow = document.createElement('label')
     this.paceRow.className = 'pace-row'
     this.paceRow.append(document.createTextNode('AI pace'))
@@ -225,7 +242,9 @@ export class LobbyView {
     this.title.textContent = 'Waiting room'
     this.nameInput.disabled = false
     this.setName(state.you.name)
-    this.peopleTitle.textContent = 'Here'
+    this.grid.classList.remove('room')
+    this.peopleTitle.textContent = 'Operators'
+    this.mainTitle.textContent = 'Battles'
     this.preview.hidden = true
     this.fillPeople(state.people)
     this.fillGames(state.games)
@@ -236,10 +255,13 @@ export class LobbyView {
     this.mode = 'game'
     this.paintStatus()
     const host = state.hostId === state.you.id
-    this.title.textContent = host ? `Game ${state.gameId} · host` : `Game ${state.gameId}`
+    const battle = `Battle #${state.gameId}`
+    this.title.textContent = host ? `${battle} · host` : battle
     this.setName(state.you.name)
     this.nameInput.disabled = state.status === RoomStatus.Playing
+    this.grid.classList.add('room')
     this.peopleTitle.textContent = 'Not seated'
+    this.mainTitle.textContent = battle
     this.preview.hidden = false
     this.slots = state.slots
     this.setBusy(state.generating)
@@ -290,11 +312,12 @@ export class LobbyView {
   }
 
   private paintStatus() {
-    if (this.mode === 'hidden') {
-      this.status.textContent = ''
-      return
-    }
-    this.status.textContent = this.connected ? '' : 'Reconnecting…'
+    const live = this.mode !== 'hidden' && this.connected
+    const offline = this.mode !== 'hidden' && !this.connected
+    this.status.classList.toggle('live', live)
+    this.status.classList.toggle('offline', offline)
+    this.statusDot.textContent = live ? '◉' : offline ? '◌' : ''
+    this.statusText.data = live ? ' Live' : offline ? ' Reconnecting…' : ''
   }
 
   private fillPeople(people: readonly Person[]) {
@@ -317,7 +340,8 @@ export class LobbyView {
     this.main.replaceChildren()
     const create = document.createElement('button')
     create.type = 'button'
-    create.textContent = 'Create game'
+    create.className = 'primary'
+    create.textContent = 'Deploy'
     create.addEventListener('click', () => this.actions.createGame())
     this.main.append(create)
     if (games.length === 0) {
@@ -336,9 +360,9 @@ export class LobbyView {
       else if (phase === 'pending') pending.push(game)
       else unstarted.push(game)
     }
-    this.appendGameSection('Unstarted', 'Nobody seated yet', unstarted)
-    this.appendGameSection('Pending', 'Seated, waiting to start', pending)
-    this.appendGameSection('In play', 'Already going', playing)
+    this.appendGameSection(phaseLabel('unstarted'), 'Nobody seated yet', unstarted)
+    this.appendGameSection(phaseLabel('pending'), 'Seated, waiting to start', pending)
+    this.appendGameSection(phaseLabel('live'), 'Already going', playing)
   }
 
   private appendGameSection(title: string, hint: string, games: readonly GameCard[]) {
@@ -362,7 +386,7 @@ export class LobbyView {
     const head = document.createElement('header')
     head.className = 'game-row-head'
     const heading = document.createElement('h3')
-    heading.textContent = `Game ${game.id}`
+    heading.textContent = `#${game.id}`
     const badge = document.createElement('span')
     badge.className = 'game-badge'
     badge.textContent = phaseLabel(phase)
@@ -388,10 +412,10 @@ export class LobbyView {
     if (this.admin) {
       const destroy = document.createElement('button')
       destroy.type = 'button'
-      destroy.className = 'lobby-destroy'
+      destroy.className = 'lobby-destroy danger'
       destroy.textContent = 'Destroy'
       destroy.addEventListener('click', () => {
-        const ok = window.confirm(`Destroy game ${game.id}? Everyone in it returns to the waiting room.`)
+        const ok = window.confirm(`Destroy battle #${game.id}? Everyone in it returns to the waiting room.`)
         if (!ok) return
         this.actions.destroyGame(game.id)
       })
@@ -464,7 +488,7 @@ export class LobbyView {
     if (host) {
       const start = document.createElement('button')
       start.type = 'button'
-      start.className = 'lobby-start'
+      start.className = 'lobby-start primary'
       start.textContent = 'Start'
       start.disabled = !state.slots.some((slot) => slot.kind === SlotKind.Human)
       start.addEventListener('click', () => this.actions.start())
@@ -502,6 +526,27 @@ export class LobbyView {
   }
 }
 
+function panel(kind: 'section' | 'form', name: string, index: string, heading: HTMLElement): HTMLElement {
+  const element = document.createElement(kind)
+  element.className = `lobby-frame lobby-panel ${name}`
+  element.append(panelHead(heading, index))
+  return element
+}
+
+function panelHead(heading: HTMLElement, index?: string): HTMLElement {
+  const head = document.createElement('header')
+  head.className = 'lobby-panel-head'
+  if (index) {
+    const tag = document.createElement('span')
+    tag.className = 'lobby-tag'
+    tag.setAttribute('aria-hidden', 'true')
+    tag.textContent = index
+    head.append(tag)
+  }
+  head.append(heading)
+  return head
+}
+
 function slotButton(label: string, onClick: () => void): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
@@ -521,9 +566,9 @@ function gamePhase(game: GameCard): GamePhase {
 }
 
 function phaseLabel(phase: GamePhase): string {
-  if (phase === 'live') return 'In play'
-  if (phase === 'pending') return 'Pending'
-  return 'Unstarted'
+  if (phase === 'live') return 'In combat'
+  if (phase === 'pending') return 'Staging'
+  return 'Open'
 }
 
 function occupancy(game: GameCard): string {
