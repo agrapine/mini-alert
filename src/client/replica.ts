@@ -53,8 +53,13 @@ const enum Logged {
   Attack = 2,
 }
 
+/** Routes `planMoves` returned, never handed to a unit, and what it planned them from: `routeInputs`, and `open` as of both revisions. */
+type Plan = { inputs: number[]; open: Uint8Array; terrainRevision: number; cityRevision: number; routes: Map<number, TileCoord[]> }
+
+type MoveGuess = { kind: Logged.Move; unitIds: readonly number[]; tile: TileCoord; plan: Plan | null }
+
 type Guess =
-  | { kind: Logged.Move; unitIds: readonly number[]; tile: TileCoord }
+  | MoveGuess
   | { kind: Logged.Attack; unitIds: readonly number[]; target: { x: number; z: number }; targetId: number | null }
 
 type Entry = { kind: Logged.Frame; frame: ServerFrame } | Guess
@@ -216,9 +221,8 @@ export class Replica {
    */
   private rewind(frame: ServerFrame): boolean {
     const history = this.history
-    const index = history && history.length > 0 ? frame.tick - history[0].tick : -1
-    if (!history || index < 0) return false
-    const moment = history[index]
+    const moment = this.momentAt(frame.tick)
+    if (!history || !moment) return false
     const was = new Map<number, Pose>()
     for (const unit of this.units) was.set(unit.id, poseOf(unit))
     this.rewinding = true
@@ -230,7 +234,7 @@ export class Replica {
     while (at > 0 && moment.log[at - 1].kind !== Logged.Frame) at -= 1
     moment.log.splice(at, 0, { kind: Logged.Frame, frame })
     this.replay(moment.log.slice(at + 1))
-    for (const later of history.slice(index + 1)) {
+    for (const later of history.slice(history.indexOf(moment) + 1)) {
       this.keep()
       this.localTick = later.tick
       this.stepUnits(SIM_STEP)
@@ -565,7 +569,7 @@ export class Replica {
 
   /** Plans the move the server will plan for the same order, from what this player knows of the map. */
   predictMove(unitIds: readonly number[], tile: TileCoord) {
-    this.guess({ kind: Logged.Move, unitIds, tile })
+    this.guess({ kind: Logged.Move, unitIds, tile, plan: null })
   }
 
   /** Points ordered units at the target and leads those out of range toward it. */
@@ -580,46 +584,82 @@ export class Replica {
   }
 
   private applyGuess(guess: Guess) {
-    if (guess.kind === Logged.Move) this.planMove(guess.unitIds, guess.tile)
+    if (guess.kind === Logged.Move) this.planMove(guess)
     else this.aim(guess.unitIds, guess.target, guess.targetId)
   }
 
-  private planMove(unitIds: readonly number[], tile: TileCoord) {
+  private planMove(guess: MoveGuess) {
     const surface: UnitSnapshot[] = []
-    for (const unit of this.ordered(unitIds)) {
+    let domains = 0
+    for (const unit of this.ordered(guess.unitIds)) {
       unit.attackId = null
       unit.attackPoint = null
       const type = UNIT_TYPES[unit.typeId]
-      if (type.topSpeed > 0 && domainOf(type) !== MoveDomain.Air) surface.push(unit)
+      if (type.topSpeed <= 0 || domainOf(type) === MoveDomain.Air) continue
+      surface.push(unit)
+      domains |= 1 << domainOf(type)
     }
-    const map = this.routeMap()
-    if (!map || surface.length === 0) return
-    const movers = surface.map((unit) => ({ id: unit.id, tile: { x: unit.tileX, y: unit.tileY }, domain: domainOf(UNIT_TYPES[unit.typeId]) }))
-    const routes = planMoves(map, movers, tile)
+    const world = this.world
+    if (!world || surface.length === 0) return
+    const inputs = this.routeInputs(surface)
+    if (!guess.plan || !sameValues(guess.plan.inputs, inputs) || !this.openHolds(guess.plan, world, domains)) {
+      const open = this.openTiles(world, domains)
+      const movers = surface.map((unit) => ({ id: unit.id, tile: { x: unit.tileX, y: unit.tileY }, domain: domainOf(UNIT_TYPES[unit.typeId]) }))
+      const routes = planMoves(this.routeMap(world, open), movers, guess.tile)
+      guess.plan = { inputs, open, terrainRevision: this.terrainRevision, cityRevision: this.cityRevision, routes }
+    }
     for (const unit of surface) {
-      const path = routes.get(unit.id)
+      const path = guess.plan.routes.get(unit.id)
       if (!path || path.length === 0) continue
-      unit.path = path
+      unit.path = path.slice()
       unit.goal = { ...path[path.length - 1] }
     }
   }
 
-  /** The map as this player knows it: unexplored tiles count as open, city buildings and units as the server stamps them. */
-  private routeMap(): RouteMap | null {
-    const world = this.world
-    if (!world) return null
-    const { width, height } = world
-    const blocked = new Uint8Array(width * height)
-    for (const city of this.settledLayouts()) {
-      if (city) for (const building of city.buildings) blocked[building.y * width + building.x] = 1
+  /** The movers and each unit `routeMap` stamps, by id, type and tile. */
+  private routeInputs(surface: readonly UnitSnapshot[]): number[] {
+    const inputs = [surface.length]
+    for (const unit of surface) inputs.push(unit.id, unit.typeId, unit.tileX, unit.tileY)
+    for (const unit of this.units) if (grounded(unit)) inputs.push(unit.id, unit.typeId, unit.tileX, unit.tileY)
+    return inputs
+  }
+
+  /** Whether the tiles open to a plan's movers still are; rebuilds them only when the map or the cities changed since. */
+  private openHolds(plan: Plan, world: WorldSnapshot, domains: number): boolean {
+    if (plan.terrainRevision === this.terrainRevision && plan.cityRevision === this.cityRevision) return true
+    if (!sameValues(plan.open, this.openTiles(world, domains))) return false
+    plan.terrainRevision = this.terrainRevision
+    plan.cityRevision = this.cityRevision
+    return true
+  }
+
+  /** Per tile, bit `1 << domain` for each of `domains` that may stand there: unexplored tiles count as open, city buildings as closed. */
+  private openTiles(world: WorldSnapshot, domains: number): Uint8Array {
+    const { width, terrain, known } = world
+    const ground = domains & (1 << MoveDomain.Ground)
+    const water = domains & (1 << MoveDomain.Water)
+    const open = new Uint8Array(terrain.length)
+    for (let index = 0; index < open.length; index++) {
+      const tile = terrain[index]
+      if (known[index] === 0) open[index] = domains
+      else if (tile === Terrain.Water || tile === Terrain.Lake) open[index] = water
+      else if (isWalkableTerrain(tile)) open[index] = ground
     }
-    const cleared = new Uint8Array(width * height)
-    for (const tile of this.cleared) cleared[tile.y * width + tile.x] = 1
+    for (const tile of this.cleared) open[tile.y * width + tile.x] |= ground
+    for (const city of this.settledLayouts()) {
+      if (city) for (const building of city.buildings) open[building.y * width + building.x] = 0
+    }
+    return open
+  }
+
+  /** The map as this player knows it: unexplored tiles count as open, city buildings and units as the server stamps them. */
+  private routeMap(world: WorldSnapshot, open: Uint8Array): RouteMap {
+    const { width, height } = world
     const holders = new Int32Array(width * height)
     const soft = new Uint8Array(width * height)
     for (const unit of this.units) {
+      if (!grounded(unit)) continue
       const type = UNIT_TYPES[unit.typeId]
-      if (unit.health <= 0 || domainOf(type) === MoveDomain.Air) continue
       const span = spanOf(type)
       for (let y = Math.max(0, unit.tileY); y < Math.min(height, unit.tileY + span.y); y++) {
         for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) {
@@ -633,12 +673,7 @@ export class Replica {
       height,
       terrainOpen(x, y, domain) {
         if (x < 0 || y < 0 || x >= width || y >= height) return false
-        const index = y * width + x
-        if (blocked[index] === 1) return false
-        if (domain === MoveDomain.Air || world.known[index] === 0) return true
-        const terrain = world.terrain[index]
-        if (domain === MoveDomain.Water) return terrain === Terrain.Water || terrain === Terrain.Lake
-        return isWalkableTerrain(terrain) || cleared[index] === 1
+        return (open[y * width + x] & (1 << domain)) !== 0
       },
       occupant(x, y) {
         const id = holders[y * width + x]
@@ -1104,6 +1139,16 @@ function changesUnits(event: ServerFrame['events'][number]): boolean {
     kind === ServerEventKind.UnitProgress ||
     kind === ServerEventKind.UnitHidden
   )
+}
+
+function grounded(unit: UnitSnapshot): boolean {
+  return unit.health > 0 && domainOf(UNIT_TYPES[unit.typeId]) !== MoveDomain.Air
+}
+
+function sameValues(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 /** A unit's own copy of its path, the one field stepping changes in place. */

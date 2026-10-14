@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SIM_STEP } from '../shared/motion.ts'
 import { ServerEventKind, type MapCell, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
+import { planMoves } from '../shared/route.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { UnitTypeId } from '../shared/unit-types.ts'
 import { Replica } from './replica.ts'
+
+vi.mock('../shared/route.ts', { spy: true })
 
 function scout(x: number, path: { x: number; y: number }[]): UnitSnapshot {
   return {
@@ -347,6 +350,49 @@ describe('replica drawing', () => {
     replica.simulateTo(30)
     expect(onTime.units[0].x).toBeGreaterThan(2.6)
     expect(replica.units).toEqual(onTime.units)
+  })
+
+  it('re-applies a move guess without planning it again when late frames ahead of it leave the map as it was', () => {
+    const land: ServerFrame['events'][number] = {
+      kind: ServerEventKind.MapPatch,
+      map: { width: 16, height: 16, cells: [{ x: 15, y: 15, terrain: Terrain.Land, shift: 0 }], coast: [], holes: [], roads: [], towns: [], cleared: [] },
+    }
+    const frames: ServerFrame[] = [10, 11].map((tick) => ({ tick, ack: 0, events: [land] }))
+    // Off its tile's centre line, the unit's course depends on the route's first tile.
+    const unit = () => ({ ...scout(2.5, []), z: 4.2 })
+    const onTime = rolling(unit())
+    onTime.apply(frames[0])
+    onTime.simulateTo(11)
+    onTime.apply(frames[1])
+    onTime.predictMove([1], { x: 12, y: 4 })
+    onTime.simulateTo(30)
+    const late = rolling(unit())
+    late.simulateTo(11)
+    late.predictMove([1], { x: 12, y: 4 })
+    late.simulateTo(24)
+    vi.mocked(planMoves).mockClear()
+    for (const frame of frames) late.apply(frame)
+    expect(planMoves).not.toHaveBeenCalled()
+    late.simulateTo(30)
+    expect(late.units).toEqual(onTime.units)
+  })
+
+  it('re-plans a move guess when a late frame ahead of it moves a unit onto its goal', () => {
+    const units = () => [scout(2.5, []), onRow(scout(2.5, []), 2, 8)]
+    const moved: ServerFrame = { tick: 13, ack: 0, events: [motion(onRow(scout(12.5, []), 2, 4))] }
+    const onTime = rolling(...units())
+    onTime.simulateTo(13)
+    onTime.apply(moved)
+    onTime.predictMove([1], { x: 12, y: 4 })
+    onTime.simulateTo(30)
+    const late = rolling(...units())
+    late.simulateTo(13)
+    late.predictMove([1], { x: 12, y: 4 })
+    late.simulateTo(16)
+    late.apply(moved)
+    late.simulateTo(30)
+    expect(onTime.units[0].goal).not.toEqual({ x: 12, y: 4 })
+    expect(late.units).toEqual(onTime.units)
   })
 
   it('counts a city update apart from terrain changes', () => {
