@@ -135,6 +135,18 @@ const lobby = new LobbyView(lobbyRoot, {
   destroyGame(id) {
     net.sendLobby({ kind: LobbyClientKind.DestroyGame, gameId: id })
   },
+  postRequest(text) {
+    net.sendLobby({ kind: LobbyClientKind.PostRequest, text })
+  },
+  toggleVote(id) {
+    net.sendLobby({ kind: LobbyClientKind.ToggleVote, requestId: id })
+  },
+  markRequestDone(id) {
+    net.sendLobby({ kind: LobbyClientKind.MarkRequestDone, requestId: id })
+  },
+  deleteRequest(id) {
+    net.sendLobby({ kind: LobbyClientKind.DeleteRequest, requestId: id })
+  },
   playHere() {
     net.connect()
   },

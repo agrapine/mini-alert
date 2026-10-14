@@ -82,6 +82,15 @@ export function hall(): WaitingRoom {
   }
 }
 
+/** Ada holds as many open requests as a seat may. */
+export function seatLimitHall(): WaitingRoom {
+  const state = hall()
+  state.requests = state.requests.map((card) =>
+    card.status === RequestStatus.Open ? { ...card, author: 'Ada', mine: true } : card,
+  )
+  return state
+}
+
 export function emptyHall(): WaitingRoom {
   return { kind: LobbyServerKind.Waiting, you: { id: 1, name: 'Ada' }, people: [], games: [], chat: [], requests: [] }
 }

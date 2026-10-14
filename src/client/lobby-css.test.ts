@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emptyHall, guestRoom, hall, hostRoom, roomPreview } from './lobby-fixtures.ts'
+import { emptyHall, guestRoom, hall, hostRoom, roomPreview, seatLimitHall } from './lobby-fixtures.ts'
 import { LobbyView, type LobbyActions } from './lobby-ui.ts'
 
 const css = readFileSync(join(import.meta.dirname, 'lobby.css'), 'utf8')
@@ -68,6 +68,7 @@ const SCENES: ((view: LobbyView) => void)[] = [
     view.showWaiting(hall())
   },
   (view) => view.showWaiting(emptyHall()),
+  (view) => view.showWaiting(seatLimitHall()),
   (view) => view.showGame(hostRoom(), roomPreview()),
   (view) => view.showGame(guestRoom(), roomPreview()),
   (view) => view.showReplaced(),

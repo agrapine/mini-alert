@@ -128,6 +128,8 @@ body.match #lobby {
 .game-badge,
 .game-meta,
 .game-section h2,
+.request-group h3,
+.request-mine,
 .slot-index,
 .pace-row,
 .lobby-tag,
@@ -146,7 +148,8 @@ body.match #lobby {
 }
 
 .admin-mark,
-.game-badge {
+.game-badge,
+.request-mine {
   flex: none;
   padding: 2px 6px;
   border: 1px solid;
@@ -191,11 +194,11 @@ body.match #lobby {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) minmax(260px, 340px);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
-    'people battle'
-    'chat chat';
+    'people battle requests'
+    'chat chat requests';
   gap: 12px;
   padding: 12px 16px 16px;
 }
@@ -221,6 +224,10 @@ body.match #lobby {
 
 .lobby-chat {
   grid-area: chat;
+}
+
+.lobby-requests {
+  grid-area: requests;
 }
 
 .lobby-panel {
@@ -268,7 +275,8 @@ body.match #lobby {
 
 .lobby-list,
 .lobby-main,
-.lobby-log {
+.lobby-log,
+.request-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -278,7 +286,8 @@ body.match #lobby {
 }
 
 .lobby-list,
-.lobby-main {
+.lobby-main,
+.request-list {
   flex: 1;
 }
 
@@ -294,7 +303,9 @@ body.match #lobby {
 .lobby-empty,
 .game-section-note,
 .game-meta,
-.pace-row {
+.pace-row,
+.request-by,
+.request-group .request-text {
   color: var(--con-dim);
 }
 
@@ -380,14 +391,16 @@ body.match #lobby {
   padding: 9px 22px;
 }
 
-.game-section {
+.game-section,
+.request-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
 }
 
-.game-section h2 {
+.game-section h2,
+.request-group h3 {
   font-size: 11px;
 }
 
@@ -424,7 +437,10 @@ body.match #lobby {
 .size-row,
 .slot-row,
 .pace-row,
-.lobby-compose {
+.lobby-compose,
+.request-post,
+.request-by,
+.request-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -514,8 +530,63 @@ body.match #lobby {
   border-top: 1px solid var(--con-edge);
 }
 
-.lobby-compose input {
+.lobby-compose input,
+.request-post input {
   flex: 1;
+}
+
+.request-post {
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--con-edge);
+}
+
+.request-hint {
+  flex-basis: 100%;
+  color: var(--con-amber);
+  font-size: 12px;
+}
+
+.request-list {
+  gap: 6px;
+}
+
+.request-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 8px;
+  background: var(--con-plate);
+}
+
+.request-card button {
+  background: var(--con-void);
+}
+
+.lobby-screen button.request-vote {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 64px;
+}
+
+.lobby-screen button.request-vote[aria-pressed='true'] {
+  border-color: var(--con-radar);
+  background: var(--con-radar);
+  color: var(--con-void);
+}
+
+.request-text {
+  overflow-wrap: anywhere;
+}
+
+.request-by {
+  font-size: 12px;
+}
+
+.request-mine {
+  color: var(--con-radar);
 }
 
 .lobby-map {
@@ -606,6 +677,10 @@ body.match #lobby {
     animation-delay: -5.25s;
   }
 
+  .lobby-requests .lobby-panel-head::after {
+    animation-delay: -2.6s;
+  }
+
   .lobby-status.live .lobby-dot {
     animation: lobby-pulse 2.4s ease-in-out infinite;
   }
@@ -669,6 +744,7 @@ body.match #lobby {
     grid-template-rows: none;
     grid-template-areas:
       'battle'
+      'requests'
       'chat'
       'people';
     align-content: start;
@@ -693,11 +769,16 @@ body.match #lobby {
     height: min(52vw, 38vh);
   }
 
+  .request-list {
+    max-height: 50vh;
+  }
+
   .size-row,
   .slot-row,
   .lobby-actions,
   .game-row-head,
-  .game-actions {
+  .game-actions,
+  .request-actions {
     flex-wrap: wrap;
   }
 
@@ -757,5 +838,13 @@ body.match #lobby {
   .game-actions {
     grid-column: 1;
     grid-row: auto;
+  }
+
+  .request-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .request-actions {
+    grid-column: 2;
   }
 }
