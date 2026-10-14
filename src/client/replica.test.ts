@@ -133,6 +133,29 @@ describe('replica drawing', () => {
     expect(replica.drawn()[0].x).toBeCloseTo(3.5, 2)
   })
 
+  it('draws a moving unit corrected with its own state as an uncorrected copy draws it', () => {
+    const corrected = joined(scout(2.5, road))
+    const uncorrected = joined(scout(2.5, road))
+    const pose = (replica: Replica) => {
+      const { x, z, facing, turretYaw, altitude } = replica.drawn()[0]
+      return [x, z, facing, turretYaw, altitude ?? 0]
+    }
+    for (const replica of [corrected, uncorrected]) {
+      replica.drawn()
+      replica.advance(SIM_STEP * 1.5)
+      replica.drawn()
+    }
+    const now = performance.now()
+    const tick = corrected.localTick
+    corrected.apply({ tick, ack: 0, events: [{ kind: ServerEventKind.UnitMotion, unit: structuredClone(corrected.units[0]) }] }, now)
+    uncorrected.apply({ tick, ack: 0, events: [] }, now)
+    for (let frame = 0; frame < 12; frame++) {
+      expect(pose(corrected)).toEqual(pose(uncorrected).map((value) => expect.closeTo(value, 9)))
+      corrected.advance(SIM_STEP / 3)
+      uncorrected.advance(SIM_STEP / 3)
+    }
+  })
+
   it('steps forward to a frame far ahead instead of asking for a snapshot', () => {
     const replica = joined(scout(2.5, road))
     replica.apply({ tick: 160, ack: 0, events: [] })

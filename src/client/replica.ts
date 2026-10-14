@@ -667,9 +667,7 @@ export class Replica {
       this.units.push(copyUnit(next))
       return
     }
-    const shown = this.shown.get(unit.id)
-    const was = shown ? poseOf(shown.view) : poseOf(unit)
-    const from = { x: unit.x, z: unit.z }
+    const was = poseOf(unit)
     unit.x = next.x
     unit.z = next.z
     unit.facing = next.facing
@@ -695,17 +693,18 @@ export class Replica {
       const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
       for (let i = 0; i < behind; i++) this.stepUnit(unit, occupied, SIM_STEP)
     }
-    this.onCorrection?.(Math.hypot(unit.x - from.x, unit.z - from.z))
+    const offset = offsetOf(was, poseOf(unit))
+    const jump = Math.hypot(offset.x, offset.z)
+    this.onCorrection?.(jump)
+    const shown = this.shown.get(unit.id)
     if (!shown) return
-    shown.before = poseOf(unit)
-    const jump = Math.hypot(was.x - unit.x, was.z - unit.z)
-    shown.drift = jump > TELEPORT_DISTANCE ? still() : {
-      x: was.x - unit.x,
-      z: was.z - unit.z,
-      facing: wrapAngle(was.facing - unit.facing),
-      turretYaw: wrapAngle(was.turretYaw - unit.turretYaw),
-      altitude: was.altitude - (unit.altitude ?? 0),
+    if (jump > TELEPORT_DISTANCE) {
+      shown.before = poseOf(unit)
+      shown.drift = still()
+      return
     }
+    shiftPose(shown.before, offset, 1)
+    shiftPose(shown.drift, offset, -1)
   }
 
   private stepUnits(dt: number) {
@@ -927,6 +926,24 @@ function poseOf(unit: UnitSnapshot): Pose {
 
 function still(): Pose {
   return { x: 0, z: 0, facing: 0, turretYaw: 0, altitude: 0 }
+}
+
+function offsetOf(from: Pose, to: Pose): Pose {
+  return {
+    x: to.x - from.x,
+    z: to.z - from.z,
+    facing: wrapAngle(to.facing - from.facing),
+    turretYaw: wrapAngle(to.turretYaw - from.turretYaw),
+    altitude: to.altitude - from.altitude,
+  }
+}
+
+function shiftPose(pose: Pose, offset: Pose, factor: number) {
+  pose.x += offset.x * factor
+  pose.z += offset.z * factor
+  pose.facing = wrapAngle(pose.facing + offset.facing * factor)
+  pose.turretYaw = wrapAngle(pose.turretYaw + offset.turretYaw * factor)
+  pose.altitude += offset.altitude * factor
 }
 
 function scalePose(pose: Pose, factor: number) {
