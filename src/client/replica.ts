@@ -1,6 +1,7 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { atRest, flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
+import { Flight } from '../shared/flight.ts'
+import { atRest, flightLine, holdInRange, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
   type CityRecord,
@@ -15,7 +16,7 @@ import {
   type WorldSnapshot,
 } from '../shared/protocol.ts'
 import { Terrain, isWalkableTerrain, type TileCoord } from '../shared/tiles.ts'
-import { domainOf, Locomotion, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
+import { domainOf, Locomotion, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, WeaponKind, type UnitType } from '../shared/unit-types.ts'
 import { planMoves, type RouteMap } from '../shared/route.ts'
 
 const CATCHUP_STEPS = 8
@@ -573,7 +574,7 @@ export class Replica {
     this.guess({ kind: Logged.Move, unitIds, tile, plan: null })
   }
 
-  /** Points ordered units at the target and leads those at rest and out of range toward it; a surface unit on the move keeps its course, and without a turret its target, until the server answers. */
+  /** Points ordered units at the target and leads those at rest and out of range toward it; a unit on the move keeps its course, and without a turret its target, until the server answers. */
   predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     this.guess({ kind: Logged.Attack, unitIds, target: { x: target.x, z: target.z }, targetId })
   }
@@ -693,7 +694,7 @@ export class Replica {
   private aim(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
     for (const unit of this.ordered(unitIds)) {
       const type = UNIT_TYPES[unit.typeId]
-      const moving = domainOf(type) !== MoveDomain.Air && !atRest(unit)
+      const moving = !atRest(unit)
       if (moving && type.weapon.turretRate <= 0) continue
       unit.attackId = targetId
       unit.attackPoint = targetId === null ? { x: target.x, z: target.z } : null
@@ -929,6 +930,13 @@ export class Replica {
     return nearest
   }
 
+  /** The ground point a unit attacks, else its attack target while alive and hostile. */
+  private attackAim(unit: UnitSnapshot): { x: number; z: number } | null {
+    if (unit.attackPoint) return unit.attackPoint
+    const target = unit.attackId === null ? undefined : this.unit(unit.attackId)
+    return target && target.health > 0 && target.ownerId !== unit.ownerId ? target : null
+  }
+
   private occupancy(): Map<string, number> {
     const occupied = new Map<string, number>()
     for (const unit of this.units) {
@@ -961,6 +969,8 @@ export class Replica {
       orbitY: unit.orbit?.y,
       bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
+    const aim = type.weapon.turretRate > 0 || mayRearm(type, unit) ? null : this.attackAim(unit)
+    if (aim && holdInRange(state, type, aim, dt)) state.loiter = false
     stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
     const span = spanOf(type)
     if (state.tileX !== unit.tileX || state.tileY !== unit.tileY) {
@@ -970,6 +980,7 @@ export class Replica {
     unit.x = state.x
     unit.z = state.z
     unit.facing = state.facing
+    if (type.weapon.turretRate <= 0) unit.turretYaw = state.facing
     unit.speed = state.speed
     unit.tileX = state.tileX
     unit.tileY = state.tileY
@@ -1147,6 +1158,12 @@ function changesUnits(event: ServerFrame['events'][number]): boolean {
     kind === ServerEventKind.UnitProgress ||
     kind === ServerEventKind.UnitHidden
   )
+}
+
+/** Whether the server may be rearming a rocket unit, which it never holds in range: rounds are not on the wire, so every homeless or homebound one counts. */
+function mayRearm(type: UnitType, unit: UnitSnapshot): boolean {
+  if (type.weapon.kind !== WeaponKind.Rocket) return false
+  return !unit.home || unit.returning === true || unit.flight === Flight.Landing || unit.flight === Flight.Taxi
 }
 
 function grounded(unit: UnitSnapshot): boolean {

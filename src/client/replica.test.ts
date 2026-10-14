@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Flight } from '../shared/flight.ts'
 import { SIM_STEP } from '../shared/motion.ts'
 import { ServerEventKind, type MapCell, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
 import { planMoves } from '../shared/route.ts'
@@ -433,6 +434,17 @@ describe('replica drawing', () => {
     replica.predictAttack([2], foe, 3)
     for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
     expect(replica.unit(2)?.turretYaw).toBeGreaterThan(1)
+  })
+
+  it('keeps a flying jet on course without its target on an attack order in range until the server answers', () => {
+    const jet = { ...scout(4.5, road.slice(2)), typeId: UnitTypeId.Jet, speed: 8, home: { x: 0, y: 12 }, flight: Flight.Cruise, altitude: 2.6 }
+    const foe = { ...scout(8.5, []), id: 3, ownerId: 2, z: 8.5, tileY: 8 }
+    const ordered = joined(jet, foe)
+    const unordered = joined(jet, foe)
+    ordered.predictAttack([1], foe, 3)
+    ordered.simulateTo(20)
+    unordered.simulateTo(20)
+    expect(ordered.unit(1)).toEqual(unordered.unit(1))
   })
 
   it('leads a unit out of range toward its attack target', () => {

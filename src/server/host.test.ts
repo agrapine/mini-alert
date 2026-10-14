@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { Replica } from '../client/replica.ts'
 import { canPlaceCityBuilding } from '../shared/cities.ts'
-import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, type MotionState } from '../shared/motion.ts'
+import { Flight } from '../shared/flight.ts'
+import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, wrapAngle, type MotionState } from '../shared/motion.ts'
 import { ClientMessageKind, ServerEventKind, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
 import { Terrain } from '../shared/tiles.ts'
-import { SCOUT, UnitTypeId } from '../shared/unit-types.ts'
+import { JET, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
 import { World } from './world.ts'
@@ -82,6 +83,74 @@ describe('host snapshots', () => {
     play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 4 } }, 1, host.tickNo)
     host.tick(SIM_STEP)
     expect(events(frames).some((event) => event.kind === ServerEventKind.UnitMotion)).toBe(true)
+  })
+
+  it('sends no motion for a scout turning a corner, which its client turns alike', () => {
+    const wall = []
+    for (let y = 5; y < 14; y++) for (let x = 2; x < 12; x++) wall.push({ x, y })
+    const game = new Game(new World(32, 32, wall))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 }, Math.PI / 2)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    play.command({ kind: ClientMessageKind.OrderMove, unitIds: [scout.id], tile: { x: 12, y: 12 } }, 1, host.tickNo)
+    frames.length = 0
+    for (let i = 0; i < 200; i++) host.tick(SIM_STEP)
+    expect(scout.tile).toEqual({ x: 12, y: 12 })
+    expect(events(frames).filter((event) => event.kind === ServerEventKind.UnitMotion)).toEqual([])
+  })
+
+  it('stops a scout in range of its attack target and turns its hull toward it at 2.5 rad/s on its client, tick for tick as the server does', () => {
+    const game = new Game(new World(16, 16))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 }, Math.PI / 2)
+    const foe = game.spawn(game.addPlayer(), UnitTypeId.Scout, { x: 4, y: 10 })
+    game.orderMove(player.id, [scout.id], { x: 9, y: 4 })
+    for (let i = 0; i < 10; i++) game.tick(SIM_STEP)
+    scout.attackId = foe.id
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => frames.push(frame)).sync()
+    const client = new Replica()
+    client.apply(frames[0])
+    const before = scout.facing
+    host.tick(SIM_STEP)
+    expect(wrapAngle(before - scout.facing)).toBeCloseTo(2.5 * SIM_STEP, 9)
+    for (let i = 0; i < 30; i++) {
+      client.simulateTo(host.tickNo)
+      const { x, z } = scout.pos
+      expect(client.unit(scout.id)).toMatchObject({ x: expect.closeTo(x, 5), z: expect.closeTo(z, 5), facing: expect.closeTo(scout.facing, 5), speed: expect.closeTo(scout.speed, 5), path: [] })
+      host.tick(SIM_STEP)
+    }
+    expect(scout.speed).toBe(0)
+    expect(scout.facing).toBeCloseTo(Math.atan2(foe.pos.x - scout.pos.x, foe.pos.z - scout.pos.z), 9)
+  })
+
+  it('sends no motion for a jet flying home to rearm past an enemy it is ordered to attack', () => {
+    const game = new Game(new World(32, 20))
+    const player = game.addPlayer()
+    const enemy = game.addPlayer()
+    const airport = game.spawn(player, UnitTypeId.Airport, { x: 4, y: 6 })
+    const jet = game.spawn(player, UnitTypeId.Jet, { x: 24, y: 4 }, -Math.PI / 2)
+    const foe = game.spawn(enemy, UnitTypeId.Scout, { x: 14, y: 8 })
+    jet.home = { ...airport.tile }
+    jet.flight = Flight.Cruise
+    jet.altitude = 2.6
+    jet.speed = 8
+    jet.rounds = 0
+    game.tick(SIM_STEP)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    play.command({ kind: ClientMessageKind.OrderAttack, unitIds: [jet.id], targetId: foe.id }, 1, host.tickNo)
+    frames.length = 0
+    for (let i = 0; i < 60; i++) host.tick(SIM_STEP)
+    expect(jet).toMatchObject({ returning: true, attackId: foe.id })
+    expect(Math.hypot(foe.pos.x - jet.pos.x, foe.pos.z - jet.pos.z)).toBeLessThan(JET.weapon.range)
+    expect(events(frames).filter((event) => event.kind === ServerEventKind.UnitMotion)).toEqual([])
   })
 
   it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
