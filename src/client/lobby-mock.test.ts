@@ -22,16 +22,16 @@ describe('lobby mock', () => {
       await openMock(`?screen=${screen}`)
       seen[screen] = {
         title: document.querySelector('.lobby-title h1')?.textContent,
-        offline: document.querySelector('.lobby-status')?.textContent === 'Reconnecting…',
+        offline: document.querySelector('.lobby-status')?.textContent === '◌ Reconnecting…',
         drawing: document.querySelector('.lobby-preview')?.classList.contains('busy'),
         replaced: document.querySelector<HTMLElement>('#elsewhere')?.hidden === false,
       }
     }
     expect(seen).toEqual({
       hall: { title: 'Waiting room', offline: false, drawing: false, replaced: false },
-      host: { title: 'Game 12 · host', offline: false, drawing: false, replaced: false },
-      guest: { title: 'Game 12', offline: false, drawing: false, replaced: false },
-      drawing: { title: 'Game 12 · host', offline: false, drawing: true, replaced: false },
+      host: { title: 'Battle #12 · host', offline: false, drawing: false, replaced: false },
+      guest: { title: 'Battle #12', offline: false, drawing: false, replaced: false },
+      drawing: { title: 'Battle #12 · host', offline: false, drawing: true, replaced: false },
       offline: { title: 'Waiting room', offline: true, drawing: false, replaced: false },
       replaced: { title: 'Waiting room', offline: false, drawing: false, replaced: true },
     })

@@ -61,7 +61,7 @@ function field(scope: ParentNode, label: string): HTMLInputElement {
 }
 
 function gameRow(scope: ParentNode, id: number): HTMLElement {
-  const found = all(scope, '.game-row').find((row) => one(row, 'h3').textContent === `Game ${id}`)
+  const found = all(scope, '.game-row').find((row) => one(row, 'h3').textContent === `#${id}`)
   if (!found) throw new Error(`no row for game ${id}`)
   return found
 }
@@ -91,6 +91,42 @@ describe('lobby status', () => {
   })
 })
 
+describe('lobby header', () => {
+  it('holds the logotype, the screen label, the identity controls and the link status', () => {
+    const { root, view } = mount(true)
+    view.showWaiting(hall())
+    const head = one(root, '.lobby-head')
+    expect(one(head, '.lobby-logo').textContent).toBe('MINI ALERT')
+    expect(one(head, 'h1').textContent).toBe('Waiting room')
+    expect(one(head, '.admin-mark').textContent).toBe('Admin')
+    expect(field(head, 'Name').value).toBe('Ada')
+    button(head, 'Copy my link')
+    const status = one(head, '.lobby-status')
+    view.setConnected(true)
+    expect(status.textContent).toBe('◉ Live')
+    view.setConnected(false)
+    expect(status.textContent).toBe('◌ Reconnecting…')
+    view.hide()
+    view.setConnected(true)
+    expect(status.textContent).toBe('')
+  })
+})
+
+describe('lobby panels', () => {
+  function headings(root: ParentNode): string[] {
+    return texts(root, '.lobby-grid > .lobby-panel:not([hidden]) > .lobby-panel-head h2')
+  }
+
+  it('heads each panel of the hall and the room, beside an index tag hidden from assistive tech', () => {
+    const { root, view } = mount()
+    view.showWaiting(hall())
+    expect(headings(root)).toEqual(['Operators', 'Battles', 'Comms'])
+    view.showGame(hostRoom(), roomPreview())
+    expect(headings(root)).toEqual(['Not seated', 'Battle #12', 'Radar', 'Comms'])
+    expect(all(root, '.lobby-panel-head .lobby-tag').map((tag) => tag.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true'])
+  })
+})
+
 describe('lobby title', () => {
   it('names the hall, a guest room and a hosted room', () => {
     const { root, view } = mount()
@@ -98,9 +134,9 @@ describe('lobby title', () => {
     view.showWaiting(hall())
     expect(title.textContent).toBe('Waiting room')
     view.showGame(guestRoom(), null)
-    expect(title.textContent).toBe('Game 12')
+    expect(title.textContent).toBe('Battle #12')
     view.showGame(hostRoom(), null)
-    expect(title.textContent).toBe('Game 12 · host')
+    expect(title.textContent).toBe('Battle #12 · host')
   })
 
   it('shows the Admin mark only for an admin view', () => {
@@ -172,7 +208,7 @@ describe('lobby hall', () => {
   it('lists the people here, or says no one is waiting', () => {
     const { root, view } = mount()
     view.showWaiting(hall())
-    expect(one(root, '.lobby-people h2').textContent).toBe('Here')
+    expect(one(root, '.lobby-people h2').textContent).toBe('Operators')
     expect(texts(root, '.lobby-people .lobby-list p')).toEqual(['Ada', 'Eve'])
     view.showWaiting(emptyHall())
     expect(texts(root, '.lobby-people .lobby-list p')).toEqual(['No one waiting'])
@@ -182,7 +218,7 @@ describe('lobby hall', () => {
     const { root, view, actions } = mount()
     view.showWaiting(emptyHall())
     expect(texts(root, '.lobby-main .lobby-empty')).toEqual(['No games yet'])
-    button(root, 'Create game').click()
+    button(root, 'Deploy').click()
     expect(actions.createGame).toHaveBeenCalledOnce()
   })
 
@@ -194,19 +230,19 @@ describe('lobby hall', () => {
     state.games.push({ ...unstarted, id: 11 })
     view.showWaiting(state)
     const sections = all(root, '.game-section')
-    expect(sections.map((section) => one(section, 'h2').textContent)).toEqual(['Unstarted · 2', 'Pending · 1', 'In play · 1'])
+    expect(sections.map((section) => one(section, 'h2').textContent)).toEqual(['Open · 2', 'Staging · 1', 'In combat · 1'])
     expect(sections.map((section) => one(section, '.game-section-note').textContent)).toEqual([
       'Nobody seated yet',
       'Seated, waiting to start',
       'Already going',
     ])
-    expect(sections.map((section) => texts(section, '.game-row h3'))).toEqual([['Game 3', 'Game 11'], ['Game 7'], ['Game 9']])
+    expect(sections.map((section) => texts(section, '.game-row h3'))).toEqual([['#3', '#11'], ['#7'], ['#9']])
   })
 
   it('shows each game with its phase, occupancy, slots and waiting names', () => {
     const { root, view } = mount()
     view.showWaiting(hall())
-    expect(texts(root, '.game-badge')).toEqual(['Unstarted', 'Pending', 'In play'])
+    expect(texts(root, '.game-badge')).toEqual(['Open', 'Staging', 'In combat'])
     expect(texts(root, '.game-meta')).toEqual(['64 · 1 AI · 1 open', '128 · 1 seated · 1 AI · 2 open', '192 · 2 seated · 3 AI · 1 open'])
     const pending = gameRow(root, 7)
     expect(pending.textContent).toContain('Bo · AI · open · open')
