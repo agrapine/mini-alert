@@ -828,6 +828,7 @@ body.match #lobby {
   .lobby-grid.room {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
+    grid-auto-rows: max-content;
     grid-template-areas:
       'battle'
       'requests'
