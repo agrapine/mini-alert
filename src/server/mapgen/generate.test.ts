@@ -8,7 +8,7 @@ import { createIslandMatch } from '../island-match.ts'
 import { CREDIT_PER_POPULATION } from '../player.ts'
 import { MAX_HOPS, countyHops, fillWaterCracks, generateIsland } from './generate.ts'
 
-const island = generateIsland(1)
+const island = generateIsland(1, 128, 128)
 
 describe('island generator', () => {
   it('keeps the map edge as water', () => {
@@ -107,7 +107,7 @@ describe('island generator', () => {
 
 describe('island match', () => {
   it('spawns both sides on walkable tiles and anchors the spawn buttons', () => {
-    const { game, human, ai } = createIslandMatch()
+    const { game, human, ai } = createIslandMatch(1)
     const humans = game.units.filter((unit) => unit.ownerId === human.id)
     const bots = game.units.filter((unit) => unit.ownerId === ai.id)
     expect(humans.length).toBe(1)
@@ -161,7 +161,7 @@ function inside(loop: { x: number; y: number }[], x: number, y: number): boolean
 describe('coverage', () => {
   it('opens a hole in the grass for every lake the shore covers', () => {
     for (const seed of [101, 1]) {
-      const map = generateIsland(seed)
+      const map = generateIsland(seed, 128, 128)
       const shore = smoothShore(map.terrain, map.width, map.height, map.seed)
       const tiles = new Set(
         blockerTiles(map.terrain, map.width, map.height, shore.coast).map((tile) => tile.y * map.width + tile.x),

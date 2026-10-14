@@ -1,3 +1,4 @@
+import { DEFAULT_MAP_SIZE } from '../shared/lobby.ts'
 import type { MapPoint } from '../shared/protocol.ts'
 import { playerColor } from '../shared/players.ts'
 import type { TileCoord } from '../shared/tiles.ts'
@@ -7,8 +8,6 @@ import { generateIsland, type Island } from './mapgen/generate.ts'
 import { Player } from './player.ts'
 import { World } from './world.ts'
 
-const MATCH_SEED = Math.random() * 100
-
 const SQUAD = [UnitTypeId.Scout]
 
 export type MatchSeat = {
@@ -16,8 +15,8 @@ export type MatchSeat = {
   color: number
 }
 
-export function createIslandMatch(seed = MATCH_SEED): { game: Game; human: Player; ai: Player } {
-  const island = generateIsland(seed)
+export function createIslandMatch(seed: number): { game: Game; human: Player; ai: Player } {
+  const island = generateIsland(seed, DEFAULT_MAP_SIZE, DEFAULT_MAP_SIZE)
   const { game, players } = seatIsland(island, [
     { ai: false, color: playerColor(1) },
     { ai: true, color: playerColor(2) },
