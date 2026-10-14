@@ -70,6 +70,7 @@ type Moment = { tick: number; units: UnitSnapshot[]; log: Entry[] }
 export class Replica {
   playerId: number | null = null
   world: WorldSnapshot | null = null
+  /** In id order, as the server steps its units, so a tile two units enter in one tick goes to the same unit. */
   units: UnitSnapshot[] = []
   credits = 0
   training: TrainJob[] = []
@@ -845,7 +846,9 @@ export class Replica {
   private applyMotion(next: UnitSnapshot, tick: number) {
     const unit = this.unit(next.id)
     if (!unit) {
-      this.units.push(copyUnit(next))
+      let at = this.units.length
+      while (at > 0 && this.units[at - 1].id > next.id) at -= 1
+      this.units.splice(at, 0, copyUnit(next))
       return
     }
     const was = poseOf(unit)
