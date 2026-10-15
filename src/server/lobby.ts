@@ -119,6 +119,8 @@ export class Lobby {
   private readonly board = new RequestBoard()
   private clock = 0
 
+  constructor(private readonly random: () => number = Math.random) {}
+
   gameIds(): number[] {
     return [...this.games.keys()]
   }
@@ -818,7 +820,7 @@ export class Lobby {
     let island: Island | null = null
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
-        const seed = Math.floor(Math.random() * 0x7fffffff) + 1
+        const seed = Math.floor(this.random() * 0x7fffffff) + 1
         const next = generateIsland(seed, game.mapSize, game.mapSize, { landform: game.landform, lakes: game.lakes })
         island = next
         if (next.towns.length >= need) break
