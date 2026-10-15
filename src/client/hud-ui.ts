@@ -1,6 +1,6 @@
 import type { Faction } from '../shared/lobby.ts'
 import { Locomotion, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
-import { focusLabel, PingState, TileKind, Trend, type HudModel, type HudTile } from './hud-model.ts'
+import { BuildTab, focusLabel, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type Selection } from './hud-model.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
 import './console.css'
@@ -82,8 +82,13 @@ const MARKUP = `
   </section>
   <section class="hud-panel" id="build-panel" aria-labelledby="build-title">
     <header class="panel-head"><span class="panel-index" aria-hidden="true">02</span><h2 id="build-title">Build</h2></header>
-    <div class="panel-scroll">
-      <div id="orders"></div>
+    <div class="build-tabs" role="tablist" aria-label="Build category" hidden></div>
+    <div class="panel-scroll" id="build-scroll">
+      <div id="orders" hidden></div>
+      <div id="queue" role="group" aria-labelledby="queue-label" hidden>
+        <p id="queue-label">Queue</p>
+        <div class="chips"></div>
+      </div>
       <div id="city-focus" hidden>
         <p id="city-focus-name">City hall</p>
         <p id="city-focus-label">Balanced</p>
@@ -120,6 +125,32 @@ type TileNode = {
   badge: HTMLElement
   hotkey: HTMLElement
   cost: HTMLElement
+  state: HTMLElement
+}
+
+type ChipNode = {
+  chip: QueueChip
+  button: HTMLButtonElement
+  count: HTMLElement
+  pie: HTMLElement
+}
+
+const TABS: readonly (readonly [BuildTab, string])[] = [
+  [BuildTab.Base, 'Base'],
+  [BuildTab.Land, 'Land'],
+  [BuildTab.Air, 'Air'],
+  [BuildTab.Sea, 'Sea'],
+]
+
+const BLOCK_TEXT: Record<TileBlock, string> = {
+  [TileBlock.NeedsFactory]: 'Needs a factory',
+  [TileBlock.NeedsPopulation]: 'Needs population',
+  [TileBlock.SelectFactory]: 'Select a factory',
+  [TileBlock.SelectAirport]: 'Select an airport',
+  [TileBlock.SelectHelipad]: 'Select a helipad',
+  [TileBlock.SelectShipyard]: 'Select a shipyard',
+  [TileBlock.NotFinished]: 'Not finished',
+  [TileBlock.ApronFull]: 'Apron full',
 }
 
 export class HudView {
@@ -131,8 +162,11 @@ export class HudView {
   private readonly population: HTMLElement
   private readonly cities: HTMLElement
   private readonly ping: HTMLElement
+  private readonly tablist: HTMLElement
+  private readonly tabs: { tab: BuildTab; button: HTMLButtonElement }[]
   private readonly orders: HTMLElement
-  private readonly queueSplit: HTMLElement
+  private readonly queue: HTMLElement
+  private readonly chipRow: HTMLElement
   private readonly cityFocus: HTMLElement
   private readonly focusLabel: HTMLElement
   private readonly focusRange: HTMLInputElement
@@ -146,7 +180,11 @@ export class HudView {
   private readonly outcomeText: HTMLElement
   private readonly trace: ReturnType<typeof bindTrace>
   private readonly tiles: TileNode[] = []
-  private yard: number | null = null
+  private readonly chips = new Map<UnitTypeId, ChipNode>()
+  private selectionTab: BuildTab | null = null
+  private selection: Selection = { ids: [], hall: null }
+  private clicked: { tab: BuildTab; selection: Selection } | null = null
+  private open: BuildTab | null = null
 
   constructor(
     root: HTMLElement,
@@ -166,11 +204,24 @@ export class HudView {
     this.population = find('#population')
     this.cities = find('#cities')
     this.ping = find('#ping')
+    this.tablist = find('.build-tabs')
+    this.tabs = TABS.map(([tab, label]) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'plate'
+      button.setAttribute('role', 'tab')
+      button.setAttribute('aria-selected', 'false')
+      button.textContent = label
+      button.addEventListener('click', () => {
+        this.clicked = { tab, selection: this.selection }
+        this.showTab()
+      })
+      this.tablist.append(button)
+      return { tab, button }
+    })
     this.orders = find('#orders')
-    this.queueSplit = document.createElement('div')
-    this.queueSplit.className = 'queue-split'
-    this.queueSplit.textContent = 'Queued: '
-    this.queueSplit.hidden = true
+    this.queue = find('#queue')
+    this.chipRow = find('#queue .chips')
     this.cityFocus = find('#city-focus')
     this.focusLabel = find('#city-focus-label')
     this.focusRange = find<HTMLInputElement>('#city-focus-range')
@@ -214,19 +265,21 @@ export class HudView {
     setText(this.ping, ping.state === PingState.None ? '–' : `${ping.ms} ms`)
     this.ping.classList.toggle('slow', ping.state === PingState.Slow || ping.state === PingState.Bad)
     this.ping.classList.toggle('bad', ping.state === PingState.Bad)
-    this.orders.hidden = model.hall !== null
     this.cityFocus.hidden = model.hall === null
     if (model.hall !== null && document.activeElement !== this.focusRange) {
       const focus = String(model.hall.focus)
       if (this.focusRange.value !== focus) this.focusRange.value = focus
       setText(this.focusLabel, model.hall.label)
     }
-    this.queueSplit.hidden = !model.queued
-    this.yard = model.yard
     for (let i = 0; i < model.tiles.length; i++) {
       const tile = model.tiles[i]
       paintTile(this.tiles[i] ?? this.createTile(tile), tile)
     }
+    this.paintQueue(model.queue)
+    if (this.clicked && !sameSelection(this.clicked.selection, model.selection)) this.clicked = null
+    this.selectionTab = model.tab
+    this.selection = model.selection
+    this.showTab()
   }
 
   setBattle(gameId: number) {
@@ -277,6 +330,7 @@ export class HudView {
   }
 
   clear() {
+    this.clicked = null
     this.build.hidden = false
     this.vision.hidden = true
     this.plates.replaceChildren()
@@ -288,11 +342,39 @@ export class HudView {
 
   /** Presses the tile labelled F<slot>; false when no shown tile carries that label. */
   pressSlot(slot: number, shift: boolean): boolean {
-    const node = this.tiles.find((entry) => entry.tile.slot === slot)
+    const node = this.tiles.find((entry) => entry.tile.tab === this.open && entry.tile.slot === slot)
     if (!node) return false
     if (shift) this.remove(node.tile)
-    else if (node.tile.ready) this.add(node.tile)
+    else if (node.tile.block === null) this.add(node.tile)
     return true
+  }
+
+  private showTab() {
+    const open = this.selectionTab === null ? null : (this.clicked?.tab ?? this.selectionTab)
+    this.open = open
+    this.tablist.hidden = open === null
+    this.orders.hidden = open === null
+    this.queue.hidden = open === null || this.chipRow.childElementCount === 0
+    for (const { tab, button } of this.tabs) {
+      const selected = String(tab === open)
+      if (button.getAttribute('aria-selected') !== selected) button.setAttribute('aria-selected', selected)
+    }
+    for (const node of this.tiles) node.button.hidden = node.tile.tab !== open
+  }
+
+  private paintQueue(queue: readonly QueueChip[]) {
+    const buttons = queue.map((chip) => {
+      const node = this.chips.get(chip.type) ?? this.createChip(chip)
+      paintChip(node, chip)
+      return node.button
+    })
+    const row = this.chipRow.children
+    if (buttons.length !== row.length || buttons.some((button, index) => row[index] !== button)) this.chipRow.replaceChildren(...buttons)
+  }
+
+  private drop(chip: QueueChip) {
+    if (chip.kind === TileKind.Structure) this.actions.cancelBuild(chip.type)
+    else this.actions.cancelQueued(chip.type)
   }
 
   private add(tile: HudTile) {
@@ -303,8 +385,7 @@ export class HudView {
 
   private remove(tile: HudTile) {
     if (tile.kind === TileKind.Structure) this.actions.cancelBuild(tile.type)
-    else if (tile.kind === TileKind.Queued) this.actions.cancelQueued(tile.type)
-    else if (tile.kind === TileKind.Train && this.yard !== null) this.actions.cancelSpawn(tile.type, this.yard)
+    else if (tile.kind === TileKind.Train && tile.yard !== null) this.actions.cancelSpawn(tile.type, tile.yard)
   }
 
   private createTile(tile: HudTile): TileNode {
@@ -320,41 +401,85 @@ export class HudView {
     label.textContent = name
     const cost = document.createElement('span')
     cost.className = 'cost'
+    const state = document.createElement('span')
+    state.className = 'state'
     const badge = document.createElement('span')
     badge.className = 'badge'
     badge.hidden = true
     const hotkey = document.createElement('span')
     hotkey.className = 'hotkey'
-    button.append(pie, label, cost, badge, hotkey)
-    const node: TileNode = { tile, button, pie, badge, hotkey, cost }
+    button.append(pie, label, cost, state, badge, hotkey)
+    const node: TileNode = { tile, button, pie, badge, hotkey, cost, state }
     button.addEventListener('click', (event) => {
-      if (node.tile.kind === TileKind.Queued || event.shiftKey) this.remove(node.tile)
-      else if (node.tile.ready) this.add(node.tile)
+      if (event.shiftKey) this.remove(node.tile)
+      else if (node.tile.block === null) this.add(node.tile)
     })
     button.addEventListener('contextmenu', (event) => {
       event.preventDefault()
       this.remove(node.tile)
     })
-    if (tile.kind === TileKind.Queued && !this.queueSplit.isConnected) this.orders.append(this.queueSplit)
     this.orders.append(button)
     this.tiles.push(node)
+    return node
+  }
+
+  private createChip(chip: QueueChip): ChipNode {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'chip'
+    const name = document.createElement('span')
+    name.className = 'name'
+    name.textContent = UNIT_TYPES[chip.type].label
+    const count = document.createElement('span')
+    count.className = 'count'
+    const pie = document.createElement('span')
+    pie.className = 'pie'
+    button.append(name, count, pie)
+    const node: ChipNode = { chip, button, count, pie }
+    button.addEventListener('click', () => this.drop(node.chip))
+    button.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      this.drop(node.chip)
+    })
+    this.chips.set(chip.type, node)
     return node
   }
 }
 
 function paintTile(node: TileNode, tile: HudTile) {
   node.tile = tile
-  node.button.hidden = !tile.visible
-  const amount = Math.max(0, Math.min(1, tile.progress))
+  const amount = fraction(tile.progress)
   node.pie.style.setProperty('--p', String(amount))
   node.pie.classList.toggle('on', amount > 0)
   node.badge.hidden = !tile.badge
   setText(node.badge, tile.badge ? String(tile.count) : '')
-  node.button.classList.toggle('ready', tile.ready)
+  node.button.classList.toggle('ready', tile.block === null)
   node.button.classList.toggle('live', tile.count > 0 || tile.progress > 0 || tile.armed)
   node.button.classList.toggle('armed', tile.armed)
   setText(node.cost, tile.cost)
-  setText(node.hotkey, tile.slot === null ? '' : `F${tile.slot}`)
+  setText(node.state, stateLine(tile))
+  setText(node.hotkey, `F${tile.slot}`)
+}
+
+function stateLine(tile: HudTile): string {
+  if (tile.block !== null) return BLOCK_TEXT[tile.block]
+  if (tile.armed) return 'Ready · place'
+  if (tile.progress > 0) return `${Math.floor(fraction(tile.progress) * 100)}%`
+  return ''
+}
+
+function paintChip(node: ChipNode, chip: QueueChip) {
+  node.chip = chip
+  setText(node.count, chip.count > 1 ? `×${chip.count}` : '')
+  node.pie.style.setProperty('--p', String(fraction(chip.progress)))
+}
+
+function fraction(progress: number): number {
+  return Math.max(0, Math.min(1, progress))
+}
+
+function sameSelection(a: Selection, b: Selection): boolean {
+  return a.hall === b.hall && a.ids.length === b.ids.length && a.ids.every((id, index) => b.ids[index] === id)
 }
 
 function factionMark(faction: Faction): [HTMLElement, HTMLElement] {

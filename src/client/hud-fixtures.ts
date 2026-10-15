@@ -13,7 +13,6 @@ export type HudFixture = {
   input: HudInput
   credits: CreditReadout
   factions: Faction[]
-  selected: number[]
 }
 
 const ME = 1
@@ -79,6 +78,7 @@ function input(units: UnitSnapshot[], towns: Town[], fields: Partial<HudInput> =
     queue: [],
     cities: towns.map((entry) => entry.state),
     layouts: towns.map((entry) => entry.layout),
+    selected: [],
     yard: null,
     placing: null,
     raising: false,
@@ -113,7 +113,7 @@ function baseTowns(focus = 0): Town[] {
 }
 
 export function baseHud(): HudFixture {
-  return { input: input(baseUnits(), baseTowns()), credits: { shown: 12_450, trend: Trend.Steady }, factions: factions(4), selected: [] }
+  return { input: input(baseUnits(), baseTowns()), credits: { shown: 12_450, trend: Trend.Steady }, factions: factions(4) }
 }
 
 export function armedHud(): HudFixture {
@@ -128,7 +128,7 @@ export function factoryHud(): HudFixture {
     job(UnitTypeId.Scout, FACTORY_ID),
     job(UnitTypeId.Jet, AIRPORT_ID, 0.6),
   ]
-  return { ...baseHud(), input: input(units, baseTowns(), { queue, yard: units[0] }), selected: [FACTORY_ID] }
+  return { ...baseHud(), input: input(units, baseTowns(), { queue, selected: [FACTORY_ID], yard: units[0] }) }
 }
 
 export function airportHud(): HudFixture {
@@ -138,7 +138,7 @@ export function airportHud(): HudFixture {
     units.push(unit(10 + bay, UnitTypeId.Jet, 31 + bay, 44, { home: { x: airport.tileX, y: airport.tileY }, bay }))
   }
   const queue = [job(UnitTypeId.Jet, AIRPORT_ID, 0.25)]
-  return { ...baseHud(), input: input(units, baseTowns(), { queue, yard: airport }), selected: [AIRPORT_ID] }
+  return { ...baseHud(), input: input(units, baseTowns(), { queue, selected: [AIRPORT_ID], yard: airport }) }
 }
 
 export function hallHud(): HudFixture {
@@ -165,10 +165,9 @@ const ARMY_SELECTION = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
 export function armyHud(): HudFixture {
   return {
-    input: input(armyUnits(), baseTowns(), { rtt: 210 }),
+    input: input(armyUnits(), baseTowns(), { rtt: 210, selected: ARMY_SELECTION }),
     credits: { shown: 4_870, trend: Trend.Up },
     factions: factions(4),
-    selected: ARMY_SELECTION,
   }
 }
 
@@ -183,7 +182,6 @@ export function spectateHud(): HudFixture {
     input: input(units, [...baseTowns(), town(CY, 30)], { playerId: CY, spectating: true }),
     credits: { shown: 9_300, trend: Trend.Steady },
     factions: factions(8),
-    selected: [],
   }
 }
 
@@ -215,7 +213,6 @@ export function strainedHud(): HudFixture {
     input: input(units, [town(ME, supply(units) + supply(queue))], { queue, rtt: 420 }),
     credits: { shown: 85, trend: Trend.Down },
     factions: factions(4),
-    selected: [],
   }
 }
 

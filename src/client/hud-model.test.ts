@@ -3,7 +3,7 @@ import { CITY_CATALOG, type CityLayout } from '../shared/cities.ts'
 import type { CityState, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
-import { CreditCounter, focusLabel, functionSlot, hudModel, PingState, TileKind, Trend, type HudInput, type HudModel, type HudTile } from './hud-model.ts'
+import { BuildTab, CreditCounter, focusLabel, functionSlot, hudModel, PingState, TileBlock, TileKind, Trend, type HudInput, type HudModel, type HudTile } from './hud-model.ts'
 
 const ME = 1
 const RIVAL = 2
@@ -54,6 +54,7 @@ function input(fields: Partial<HudInput> & { towns?: Town[] } = {}): HudInput {
     queue: [],
     cities: towns.map((entry) => entry.state),
     layouts: towns.map((entry) => entry.layout),
+    selected: [],
     yard: null,
     placing: null,
     raising: false,
@@ -66,13 +67,11 @@ function input(fields: Partial<HudInput> & { towns?: Town[] } = {}): HudInput {
 }
 
 function name(tile: HudTile): string {
-  if (tile.kind === TileKind.City) return 'Building'
-  const label = UNIT_TYPES[tile.type].label
-  return tile.kind === TileKind.Queued ? `Queued ${label}` : label
+  return tile.kind === TileKind.City ? 'Building' : UNIT_TYPES[tile.type].label
 }
 
 function shown(model: HudModel): string[] {
-  return model.tiles.filter((tile) => tile.visible).map(name)
+  return model.tiles.filter((tile) => tile.tab === model.tab).map(name)
 }
 
 function find(model: HudModel, label: string): HudTile {
@@ -82,7 +81,7 @@ function find(model: HudModel, label: string): HudTile {
 }
 
 function ready(model: HudModel): string[] {
-  return model.tiles.filter((tile) => tile.visible && tile.ready && tile.kind !== TileKind.Queued).map(name)
+  return model.tiles.filter((tile) => tile.tab === model.tab && tile.block === null).map(name)
 }
 
 describe('hud readouts', () => {
@@ -157,20 +156,25 @@ describe('credit counter', () => {
 })
 
 describe('hud tiles without a yard', () => {
-  it('shows Factory, Turret and the city house before a factory is finished', () => {
-    const model = hudModel(input({ units: [unit(1, UnitTypeId.Factory, { progress: 0.5 })] }))
-    expect(shown(model)).toEqual(['Factory', 'Turret', 'Building'])
+  it('shows every Base tile, marking Airport, Helipad and Shipyard Needs a factory until a factory is finished', () => {
+    const blocks = (units: UnitSnapshot[]) => {
+      const model = hudModel(input({ units }))
+      return model.tiles.filter((tile) => tile.tab === model.tab).map((tile) => [name(tile), tile.block])
+    }
+    expect(blocks([unit(1, UnitTypeId.Factory, { progress: 0.5 })])).toEqual([
+      ['Factory', null],
+      ['Turret', null],
+      ['Airport', TileBlock.NeedsFactory],
+      ['Helipad', TileBlock.NeedsFactory],
+      ['Shipyard', TileBlock.NeedsFactory],
+      ['Building', null],
+    ])
+    expect(blocks([unit(1, UnitTypeId.Factory)]).every(([, block]) => block === null)).toBe(true)
   })
 
-  it('shows Airport, Helipad and Shipyard once a factory is finished', () => {
-    const model = hudModel(input({ units: [unit(1, UnitTypeId.Factory)] }))
-    expect(shown(model)).toEqual(['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building'])
-  })
-
-  it('shows a placed yard site without a finished factory', () => {
+  it('counts a placed yard site without a finished factory', () => {
     const model = hudModel(input({ units: [unit(1, UnitTypeId.Helipad, { progress: 0 })] }))
-    expect(shown(model)).toEqual(['Factory', 'Turret', 'Helipad', 'Building'])
-    expect(find(model, 'Helipad')).toMatchObject({ count: 1, progress: 0, ready: false })
+    expect(find(model, 'Helipad')).toMatchObject({ count: 1, progress: 0, block: TileBlock.NeedsFactory })
   })
 
   it('readies a structure only with population room for its supply, plus a finished factory where it needs one', () => {
@@ -181,15 +185,13 @@ describe('hud tiles without a yard', () => {
     expect(ready(roomy)).toEqual(['Factory', 'Turret', 'Helipad', 'Building'])
     const tight = hudModel(input({ towns: [town(ME, used + UNIT_TYPES[UnitTypeId.Turret].supply)], units, queue }))
     expect(ready(tight)).toEqual(['Turret', 'Building'])
-    const site = hudModel(input({ units: [unit(1, UnitTypeId.Factory, { progress: 0.5 }), unit(2, UnitTypeId.Helipad, { progress: 0.1 })] }))
-    expect(find(site, 'Helipad')).toMatchObject({ visible: true, ready: false })
   })
 
   it('prices the city house with the quote and arms it while raising', () => {
     const idle = find(hudModel(input()), 'Building')
-    expect(idle).toMatchObject({ cost: '1', ready: true, armed: false })
+    expect(idle).toMatchObject({ cost: '1', block: null, armed: false })
     const raising = find(hudModel(input({ raising: true, quote: 1200 })), 'Building')
-    expect(raising).toMatchObject({ cost: '1,200 · 1', ready: true, armed: true })
+    expect(raising).toMatchObject({ cost: '1,200 · 1', block: null, armed: true })
   })
 
   it('arms the structure tile of the placing type', () => {
@@ -208,9 +210,9 @@ describe('hud tiles with a yard selected', () => {
     job(UnitTypeId.Scout, 7),
   ]
 
-  it('shows only the train tiles of that yard, counted from its own jobs', () => {
+  it('opens the tab of its train tiles, counted from its own jobs', () => {
     const model = hudModel(input({ units: [factory], yard: factory, queue }))
-    expect(shown(model).filter((label) => !label.startsWith('Queued'))).toEqual(['Scout', 'Med Tank', 'Heavy Tank', 'Artillery'])
+    expect(shown(model)).toEqual(['Scout', 'Med Tank', 'Heavy Tank', 'Artillery'])
     expect(find(model, 'Med Tank')).toMatchObject({ count: 2, progress: 0.4 })
     expect(find(model, 'Scout')).toMatchObject({ count: 1, progress: 0 })
     expect(find(model, 'Heavy Tank')).toMatchObject({ count: 0, progress: 0 })
@@ -233,56 +235,129 @@ describe('hud tiles with a yard selected', () => {
       Array.from({ length: count }, (_, bay) => unit(10 + bay, UnitTypeId.Jet, { home: { x: airport.tileX, y: airport.tileY }, bay }))
     const elsewhere = job(UnitTypeId.Jet, 2)
     const jet = (units: UnitSnapshot[], jobs: TrainJob[]) => find(hudModel(input({ units: [airport, ...units], yard: airport, queue: jobs })), 'Jet')
-    expect(jet(parked(4), [job(UnitTypeId.Jet, 1), elsewhere]).ready).toBe(true)
-    expect(jet(parked(5), [job(UnitTypeId.Jet, 1), elsewhere]).ready).toBe(false)
-    expect(jet(parked(5), [elsewhere]).ready).toBe(true)
+    expect(jet(parked(4), [job(UnitTypeId.Jet, 1), elsewhere]).block).toBeNull()
+    expect(jet(parked(5), [job(UnitTypeId.Jet, 1), elsewhere]).block).toBe(TileBlock.ApronFull)
+    expect(jet(parked(5), [elsewhere]).block).toBeNull()
   })
 })
 
-describe('hud queued tiles', () => {
-  const queue = [
-    job(UnitTypeId.MedTank, 1, 0.5),
-    job(UnitTypeId.Scout, 1),
-    job(UnitTypeId.MedTank, 2, 0.25),
-    job(UnitTypeId.MedTank, 2),
-    job(UnitTypeId.Jet, 3, 0.1),
-  ]
-
-  it('shows one tile per type with jobs, counting every yard', () => {
-    const factory = unit(1, UnitTypeId.Factory)
-    const model = hudModel(input({ units: [factory], yard: factory, queue }))
-    expect(shown(model).filter((label) => label.startsWith('Queued'))).toEqual(['Queued Scout', 'Queued Med Tank', 'Queued Jet'])
-    expect(find(model, 'Queued Med Tank')).toMatchObject({ count: 3, progress: 0.5, ready: true, slot: null })
-    expect(find(model, 'Queued Scout')).toMatchObject({ count: 1, progress: 0 })
-    expect(model.queued).toBe(true)
+describe('hud queue chips', () => {
+  it('list the structure sites per type, then the jobs per type across every yard, with count and head progress', () => {
+    const units = [
+      unit(1, UnitTypeId.Factory),
+      unit(2, UnitTypeId.Turret, { progress: 0.2 }),
+      unit(3, UnitTypeId.Factory, { progress: 0.1 }),
+      unit(4, UnitTypeId.Turret, { progress: 0.6 }),
+      unit(5, UnitTypeId.MedTank, { progress: 0.5 }),
+    ]
+    const queue = [
+      job(UnitTypeId.MedTank, 1, 0.5),
+      job(UnitTypeId.Scout, 1),
+      job(UnitTypeId.MedTank, 7, 0.25),
+      job(UnitTypeId.MedTank, 7),
+      job(UnitTypeId.Jet, 9, 0.1),
+    ]
+    const chips = hudModel(input({ units, queue })).queue.map((chip) => [chip.kind, UNIT_TYPES[chip.type].label, chip.count, chip.progress])
+    expect(chips).toEqual([
+      [TileKind.Structure, 'Factory', 1, 0.1],
+      [TileKind.Structure, 'Turret', 2, 0.6],
+      [TileKind.Train, 'Scout', 1, 0],
+      [TileKind.Train, 'Med Tank', 3, 0.5],
+      [TileKind.Train, 'Jet', 1, 0.1],
+    ])
   })
 
-  it('hides the queued split while no job exists', () => {
-    expect(hudModel(input()).queued).toBe(false)
+  it('are empty while nothing is in production', () => {
+    expect(hudModel(input({ units: [unit(1, UnitTypeId.Factory)] })).queue).toEqual([])
   })
 })
 
 describe('hud tile badge', () => {
   it('shows for more than one, or for one that has not started', () => {
     const factory = unit(1, UnitTypeId.Factory)
-    const queue = [job(UnitTypeId.MedTank, 1, 0.4), job(UnitTypeId.Scout, 2, 0.6), job(UnitTypeId.Artillery, 2)]
+    const queue = [job(UnitTypeId.MedTank, 1, 0.4), job(UnitTypeId.Scout, 1), job(UnitTypeId.Artillery, 2, 0.6)]
     const model = hudModel(input({ units: [factory], yard: factory, queue }))
-    expect(find(model, 'Queued Scout')).toMatchObject({ count: 1, badge: false })
-    expect(find(model, 'Queued Artillery')).toMatchObject({ count: 1, badge: true })
+    expect(find(model, 'Scout')).toMatchObject({ count: 1, badge: true })
     expect(find(model, 'Med Tank')).toMatchObject({ count: 1, badge: false })
     const pair = hudModel(input({ units: [factory], yard: factory, queue: [job(UnitTypeId.MedTank, 1, 0.4), job(UnitTypeId.MedTank, 1)] }))
     expect(find(pair, 'Med Tank')).toMatchObject({ count: 2, badge: true })
   })
 })
 
-describe('hud F-slots', () => {
-  it('number the visible non-queue tiles from 1 in order', () => {
-    const model = hudModel(input({ units: [unit(1, UnitTypeId.Factory, { progress: 0.5 })], queue: [job(UnitTypeId.Scout, 1)] }))
-    const slots = model.tiles.filter((tile) => tile.slot !== null).map((tile) => [name(tile), tile.slot])
-    expect(slots).toEqual([['Factory', 1], ['Turret', 2], ['Building', 3]])
-    expect(find(model, 'Queued Scout')).toMatchObject({ visible: true, slot: null })
+describe('hud build tabs', () => {
+  it('put structures and the city house on Base, factory units on Land, Jet and Gunship on Air and Cruiser on Sea, numbering each tab from F1', () => {
+    const model = hudModel(input({ units: [unit(1, UnitTypeId.Factory, { progress: 0.5 })] }))
+    const slots = model.tiles.map((tile) => [tile.tab, name(tile), tile.slot])
+    expect(slots).toEqual([
+      [BuildTab.Base, 'Factory', 1],
+      [BuildTab.Base, 'Turret', 2],
+      [BuildTab.Base, 'Airport', 3],
+      [BuildTab.Base, 'Helipad', 4],
+      [BuildTab.Base, 'Shipyard', 5],
+      [BuildTab.Base, 'Building', 6],
+      [BuildTab.Land, 'Scout', 1],
+      [BuildTab.Land, 'Med Tank', 2],
+      [BuildTab.Land, 'Heavy Tank', 3],
+      [BuildTab.Land, 'Artillery', 4],
+      [BuildTab.Air, 'Jet', 1],
+      [BuildTab.Air, 'Gunship', 2],
+      [BuildTab.Sea, 'Cruiser', 1],
+    ])
   })
 
+  it('open Land for a selected factory, Air for an airport or helipad, Sea for a shipyard, and Base otherwise', () => {
+    const opened = (typeId: UnitTypeId) => {
+      const selected = unit(1, typeId, { progress: 0.5 })
+      return hudModel(input({ units: [selected], selected: [1], yard: selected })).tab
+    }
+    const yards = [UnitTypeId.Factory, UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard]
+    expect(yards.map(opened)).toEqual([BuildTab.Land, BuildTab.Air, BuildTab.Air, BuildTab.Sea])
+    expect(hudModel(input({ units: [unit(1, UnitTypeId.MedTank)], selected: [1] })).tab).toBe(BuildTab.Base)
+  })
+})
+
+describe('hud tile reasons', () => {
+  it('mark a structure Needs a factory before Needs population', () => {
+    const block = (units: UnitSnapshot[], label: string) => find(hudModel(input({ towns: [], units })), label).block
+    expect(block([], 'Airport')).toBe(TileBlock.NeedsFactory)
+    expect(block([], 'Turret')).toBe(TileBlock.NeedsPopulation)
+    expect(block([unit(1, UnitTypeId.Factory)], 'Airport')).toBe(TileBlock.NeedsPopulation)
+  })
+
+  it('mark a train tile Select a factory, an airport, a helipad or a shipyard unless its yard is the selected one', () => {
+    const factory = unit(1, UnitTypeId.Factory)
+    const trains = (fields: Parameters<typeof input>[0]) => {
+      const model = hudModel(input({ units: [factory], ...fields }))
+      return ['Scout', 'Jet', 'Gunship', 'Cruiser'].map((label) => {
+        const tile = find(model, label)
+        return [label, tile.block, tile.kind === TileKind.Train ? tile.yard : null]
+      })
+    }
+    expect(trains({ towns: [] })).toEqual([
+      ['Scout', TileBlock.SelectFactory, null],
+      ['Jet', TileBlock.SelectAirport, null],
+      ['Gunship', TileBlock.SelectHelipad, null],
+      ['Cruiser', TileBlock.SelectShipyard, null],
+    ])
+    expect(trains({ selected: [1], yard: factory }).slice(0, 2)).toEqual([
+      ['Scout', null, 1],
+      ['Jet', TileBlock.SelectAirport, null],
+    ])
+  })
+
+  it('then mark it Not finished while its yard is building, Needs population, then Apron full for a jet', () => {
+    const jet = (progress: number, towns: Town[]) => {
+      const airport = unit(1, UnitTypeId.Airport, { progress })
+      const parked = Array.from({ length: 6 }, (_, bay) => unit(10 + bay, UnitTypeId.Jet, { home: { x: airport.tileX, y: airport.tileY }, bay }))
+      return find(hudModel(input({ towns, units: [airport, ...parked], selected: [1], yard: airport })), 'Jet').block
+    }
+    expect(jet(0.5, [])).toBe(TileBlock.NotFinished)
+    expect(jet(1, [])).toBe(TileBlock.NeedsPopulation)
+    expect(jet(1, [town(ME, 40)])).toBe(TileBlock.ApronFull)
+  })
+})
+
+describe('hud F-slots', () => {
   it('reads F1 and up from a key code', () => {
     expect(functionSlot('F1')).toBe(1)
     expect(functionSlot('F12')).toBe(12)
@@ -296,8 +371,8 @@ describe('hud city hall', () => {
     const hall = town(ME, 6)
     hall.state.focus = -2
     const model = hudModel(input({ towns: [hall], units: [unit(1, UnitTypeId.Factory)], queue: [job(UnitTypeId.Scout, 1)], hall: 0 }))
+    expect(model.tab).toBeNull()
     expect(shown(model)).toEqual([])
-    expect(model.tiles.every((tile) => tile.slot === null)).toBe(true)
     expect(model.hall).toEqual({ focus: -2, label: 'Money ×4' })
     expect(hudModel(input()).hall).toBeNull()
   })

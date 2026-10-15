@@ -10,7 +10,7 @@ let mock = ''
 const SCENES = ['base', 'armed', 'factory', 'airport', 'hall', 'army', 'spectate', 'strained', 'menu', 'help', 'outcome', 'trace']
 
 const SHOWN: Partial<Record<string, string[]>> = {
-  base: ['Menu', 'Help', 'minimap-marks', 'Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building'],
+  base: ['Menu', 'Help', 'minimap-marks', 'Base', 'Land', 'Air', 'Sea', 'Factory', 'Turret'],
   hall: ['City focus'],
   spectate: ['Menu', 'Help', 'minimap-marks', 'Ada', 'Bo', 'Cy', 'Dee'],
   menu: ['Music On', 'music-volume', 'Sounds On', 'sounds-volume', 'Input On', 'Changelog', 'Full screen', 'Surrender'],
@@ -184,6 +184,31 @@ describe('HUD layout', () => {
       })
     })
     expect(scroller).toEqual({ plates: 8, last: 'Leave', overflowY: 'auto', before: true, after: true })
+  })
+
+  it('iPhone 15 landscape: the strained scene scrolls the Base tiles and the Queue chips inside the build scroller', async () => {
+    const scroller = await withPage(SCREENS[3][1], async (page) => {
+      await open(page, 'strained')
+      return page.evaluate(() => {
+        const scroll = document.querySelector('#build-scroll')
+        const tiles = [...document.querySelectorAll('#build-scroll .tile:not([hidden])')]
+        const chips = [...document.querySelectorAll('#build-scroll .chip')]
+        const first = tiles[0]
+        const last = chips.at(-1)
+        if (!scroll || !first || !last) return null
+        const inside = (element: Element) => {
+          const box = scroll.getBoundingClientRect()
+          const rect = element.getBoundingClientRect()
+          return rect.top >= box.top - 0.5 && rect.bottom <= box.bottom + 0.5
+        }
+        const before = [inside(first), inside(last)]
+        scroll.scrollTop = scroll.scrollHeight
+        const after = [inside(first), inside(last)]
+        const tab = document.querySelector('[role="tab"][aria-selected="true"]')?.textContent
+        return { tab, tiles: tiles.length, chips: chips.length, overflowY: getComputedStyle(scroll).overflowY, before, after }
+      })
+    })
+    expect(scroller).toEqual({ tab: 'Base', tiles: 6, chips: 12, overflowY: 'auto', before: [true, false], after: [false, true] })
   })
 
   it.each(SCREENS)('%s: the sheet shows over the match chrome, and over the lobby without it', async (_, options) => {
