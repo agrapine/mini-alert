@@ -39,23 +39,10 @@ class FakeSource {
 }
 
 class FakeContext {
-  static made: FakeContext[] = []
-  state = 'suspended'
   currentTime = 0
   destination = {}
-  resumes = 0
   gains: FakeGain[] = []
   sources: FakeSource[] = []
-
-  constructor() {
-    FakeContext.made.push(this)
-  }
-
-  resume() {
-    this.resumes += 1
-    this.state = 'running'
-    return Promise.resolve()
-  }
 
   decodeAudioData(data: FakeBuffer) {
     return Promise.resolve(data)
@@ -82,57 +69,30 @@ async function fetchSample(url: string) {
   return { arrayBuffer: async () => ({ url, duration: TAKES.horns.includes(url) ? HORN_S : LINE_S }) }
 }
 
-function gestures() {
-  const listeners = new Map<string, () => void>()
-  return {
-    addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
-    dispatch: (type: string) => listeners.get(type)?.(),
-  }
-}
-
 function rolls(...values: number[]) {
   const random = vi.spyOn(Math, 'random')
   for (const value of values) random.mockReturnValueOnce(value)
 }
 
-async function unlocked(alarm = new Alarm()) {
-  const target = gestures()
-  alarm.listen(target)
-  target.dispatch('pointerup')
+async function connected(alarm = new Alarm()) {
+  const context = new FakeContext()
+  alarm.connect(context as unknown as AudioContext)
   await new Promise((resolve) => setTimeout(resolve))
-  return { alarm, context: FakeContext.made[0] }
+  return { alarm, context }
 }
 
 beforeEach(() => {
-  vi.stubGlobal('AudioContext', FakeContext)
   vi.stubGlobal('fetch', fetchSample)
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
-  FakeContext.made = []
 })
 
 describe('alarm', () => {
-  it('starts audio on the release of a touch or on a key, until it runs', () => {
-    const alarm = new Alarm()
-    const target = gestures()
-    alarm.listen(target)
-    target.dispatch('pointerdown')
-    expect(FakeContext.made).toHaveLength(0)
-    target.dispatch('pointerup')
-    const context = FakeContext.made[0]
-    expect(context.resumes).toBe(1)
-    context.state = 'suspended'
-    target.dispatch('keydown')
-    target.dispatch('pointerup')
-    expect(context.resumes).toBe(2)
-    expect(FakeContext.made).toHaveLength(1)
-  })
-
   it('plays one sample per contact: a horn, or the line for a base or a unit', async () => {
-    const { alarm, context } = await unlocked()
+    const { alarm, context } = await connected()
     rolls(0, 0, 0.5, 0, 0.5, 0)
     alarm.sound(ContactKind.Base)
     context.currentTime = 10
@@ -149,7 +109,7 @@ describe('alarm', () => {
   it('draws the horn and the line for what was hit equally often, each from every one of its takes', async () => {
     const files = readdirSync(new URL('../../assets/alarm/', import.meta.url))
     const named = (name: string) => files.filter((file) => file.startsWith(`${name}-`))
-    const { alarm, context } = await unlocked()
+    const { alarm, context } = await connected()
     const steps = 20
     for (const [kind, line] of [
       [ContactKind.Base, 'base'],
@@ -172,7 +132,7 @@ describe('alarm', () => {
   })
 
   it('never starts over an alarm still sounding', async () => {
-    const { alarm, context } = await unlocked()
+    const { alarm, context } = await connected()
     rolls(0.5, 0, 0, 0)
     alarm.sound(ContactKind.Base)
     context.currentTime = LINE_S - 0.1
@@ -187,7 +147,7 @@ describe('alarm', () => {
   })
 
   it('stops a sounding alarm when Sounds is turned off, and plays nothing until it is back on', async () => {
-    const { alarm, context } = await unlocked()
+    const { alarm, context } = await connected()
     alarm.sound(ContactKind.Base)
     alarm.setOn(false)
     expect(context.sources.map((source) => source.stopped)).toEqual([true])
@@ -201,7 +161,7 @@ describe('alarm', () => {
   it('plays through a gain at the Sounds volume, set before audio starts or while an alarm sounds', async () => {
     const alarm = new Alarm()
     alarm.setVolume(0.3)
-    const { context } = await unlocked(alarm)
+    const { context } = await connected(alarm)
     const [gain] = context.gains
     expect(gain.gain.value).toBe(0.3)
     expect(gain.output).toBe(context.destination)
@@ -211,14 +171,7 @@ describe('alarm', () => {
     expect(gain.gain.value).toBe(0.65)
   })
 
-  it('stays silent without Web Audio', () => {
-    vi.unstubAllGlobals()
-    const alarm = new Alarm()
-    const target = gestures()
-    alarm.listen(target)
-    expect(() => {
-      target.dispatch('pointerup')
-      alarm.sound(ContactKind.Base)
-    }).not.toThrow()
+  it('stays silent until audio unlocks', () => {
+    expect(() => new Alarm().sound(ContactKind.Base)).not.toThrow()
   })
 })

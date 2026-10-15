@@ -13,6 +13,7 @@ import {
   type WaitingRoom,
   type Faction,
 } from '../shared/lobby.ts'
+import { mulberry32 } from '../shared/noise.ts'
 import { ClientMessageKind, ServerEventKind, type ServerEvent, type ServerFrame } from '../shared/protocol.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { Game } from './game.ts'
@@ -306,6 +307,17 @@ describe('lobby', () => {
     let edgeLand = 0
     for (let x = 0; x < preview.width; x++) if (terrain[x] !== Terrain.Water) edgeLand += 1
     expect(edgeLand).toBeGreaterThan(preview.width / 2)
+  })
+
+  it('draws the same map in lobbies that share a random source', async () => {
+    const terrains: string[] = []
+    for (const lobby of [new Lobby(mulberry32(7)), new Lobby(mulberry32(7))]) {
+      const sock = fake()
+      lobby.onLobby(lobby.connect(sock), { kind: LobbyClientKind.CreateGame })
+      await settled()
+      terrains.push(latest<MapPreview>(sock, LobbyServerKind.Preview).terrain)
+    }
+    expect(terrains[1]).toBe(terrains[0])
   })
 
   it('pauses AI and mechanics while nobody is in a live match, then resumes', async () => {
