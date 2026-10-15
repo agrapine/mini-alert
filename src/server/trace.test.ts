@@ -27,8 +27,8 @@ describe('server tick trace', () => {
     traceTally({
       samples: [
         { slot: TraceSlot.Ai, ms: 0 },
-        { slot: TraceSlot.Units, ms: 2 },
-        { slot: TraceSlot.Path, ms: 5 },
+        { slot: TraceSlot.Units, ms: 5 },
+        { slot: TraceSlot.Path, ms: 2 },
         { slot: TraceSlot.Net, ms: 0.004 },
         { slot: TraceSlot.Other, ms: 0.5 },
         { slot: TraceSlot.Idle, ms: 25 },
@@ -38,15 +38,15 @@ describe('server tick trace', () => {
     traceTally({
       samples: [
         { slot: TraceSlot.Ai, ms: 0 },
-        { slot: TraceSlot.Units, ms: 4 },
-        { slot: TraceSlot.Path, ms: 3 },
+        { slot: TraceSlot.Units, ms: 3 },
+        { slot: TraceSlot.Path, ms: 4 },
         { slot: TraceSlot.Net, ms: 0.004 },
         { slot: TraceSlot.Other, ms: 0.3 },
         { slot: TraceSlot.Idle, ms: 23 },
       ],
       budget: 40,
     })
-    expect(traceDrain()).toBe('trace path 4.00 ms, units 3.00 ms, other 0.40 ms, idle 60.0%')
+    expect(traceDrain()).toBe('trace units 4.00 ms, path 3.00 ms, other 0.40 ms, idle 60.0%')
   })
 
   it('logs nothing without a trace report, as with TRACE off', () => {
