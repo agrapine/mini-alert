@@ -1,5 +1,5 @@
 import type { Faction } from '../shared/lobby.ts'
-import { Locomotion, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
+import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { BuildTab, focusLabel, HealthBand, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type SelectedRow, type Selection } from './hud-model.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
@@ -428,7 +428,7 @@ export class HudView {
     const name = tile.kind === TileKind.City ? 'Building' : UNIT_TYPES[tile.type].label
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = `tile ${tileClass(tile.kind === TileKind.City ? null : tile.type)}`
+    button.className = 'tile'
     button.title = name
     const pie = document.createElement('span')
     pie.className = 'pie'
@@ -502,13 +502,10 @@ export class HudView {
 
 function paintTile(node: TileNode, tile: HudTile) {
   node.tile = tile
-  const amount = fraction(tile.progress)
-  node.pie.style.setProperty('--p', String(amount))
-  node.pie.classList.toggle('on', amount > 0)
+  node.pie.style.setProperty('--p', String(fraction(tile.progress)))
   node.badge.hidden = !tile.badge
   setText(node.badge, tile.badge ? String(tile.count) : '')
   node.button.classList.toggle('ready', tile.block === null)
-  node.button.classList.toggle('live', tile.count > 0 || tile.progress > 0 || tile.armed)
   node.button.classList.toggle('armed', tile.armed)
   setText(node.cost, tile.cost)
   setText(node.state, stateLine(tile))
@@ -565,15 +562,6 @@ function factionMark(faction: Faction): [HTMLElement, HTMLElement] {
 
 function setText(element: HTMLElement, text: string) {
   if (element.textContent !== text) element.textContent = text
-}
-
-function tileClass(id: UnitTypeId | null): 'structure' | 'vehicle' | 'air' | 'boat' {
-  if (id === null) return 'structure'
-  const type = UNIT_TYPES[id]
-  if (type.topSpeed <= 0) return 'structure'
-  if (type.locomotion === Locomotion.Plane || type.locomotion === Locomotion.Rotor) return 'air'
-  if (type.locomotion === Locomotion.Hull) return 'boat'
-  return 'vehicle'
 }
 
 function cssColor(color: number): string {
