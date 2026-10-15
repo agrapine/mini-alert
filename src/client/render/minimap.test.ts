@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { WorldSnapshot } from '../../shared/protocol.ts'
 import { Terrain } from '../../shared/tiles.ts'
-import { BLIP_COLORS, drawBlips, Minimap, type Blip, type BlipCanvas, type MinimapCommand } from './minimap.ts'
+import { BLIP_COLORS, drawBlips, drawDots, Minimap, type Blip, type BlipCanvas, type DotUnit, type MinimapCommand } from './minimap.ts'
 import { ContactKind } from './radar.ts'
 
 const WORLD_WIDTH = 40
@@ -229,5 +229,65 @@ describe('minimap blips', () => {
     for (let now = 10; now < 4000; now += 10) expect(frame(blips, now, true)).toEqual(held)
     expect(frame(blips, 4000, true)).toEqual([])
     expect(blips).toEqual([])
+  })
+})
+
+const ALERT_RED = '#ff2a1a'
+const SELECTED = '#f0d060'
+const OWNER_COLORS = [0, 0x2f7edb, 0xd64545, 0x3cde73]
+
+function troop(id: number, ownerId: number, x: number, z: number): DotUnit {
+  return { id, ownerId, color: OWNER_COLORS[ownerId], x, z }
+}
+
+function dots(units: DotUnit[], viewer: number | null, selected: number[] = []): Arc[] {
+  const ctx = new FakeCanvas()
+  drawDots(ctx, units, new Set(selected), viewer, 2, 3)
+  return ctx.marks as Arc[]
+}
+
+function at(marks: Arc[], unit: DotUnit): Arc[] {
+  return marks.filter((mark) => mark.x === unit.x * 2 && mark.y === unit.z * 3)
+}
+
+function fillColor(unit: DotUnit): string {
+  return `#${unit.color.toString(16).padStart(6, '0')}`
+}
+
+describe('minimap dots', () => {
+  it('rings every dot hostile to the viewer in alert red over a dark shade, following the faction viewed', () => {
+    const own = troop(1, 1, 10, 10)
+    const red = troop(2, 2, 40, 20)
+    const green = troop(3, 3, 70, 30)
+    const units = [own, red, green]
+
+    const mine = dots(units, 1)
+    expect(at(mine, own)).toEqual([expect.objectContaining({ shape: 'fill', color: fillColor(own) })])
+    for (const enemy of [red, green]) {
+      expect(at(mine, enemy)).toHaveLength(3)
+      const [fill, shade, ring] = at(mine, enemy)
+      expect(fill).toMatchObject({ shape: 'fill', color: fillColor(enemy) })
+      expect(shade).toMatchObject({ shape: 'stroke', r: ring.r, color: 'rgba(0, 0, 0, 0.6)' })
+      expect(ring).toMatchObject({ shape: 'stroke', color: ALERT_RED })
+      expect(ring.r).toBeGreaterThan(fill.r)
+    }
+
+    const viewed = dots(units, 2)
+    const ringed = (marks: Arc[]) => units.filter((unit) => at(marks, unit).some((mark) => mark.color === ALERT_RED))
+    expect(ringed(viewed)).toEqual([own, green])
+    expect(ringed(dots(units, null))).toEqual([])
+  })
+
+  it('draws selected dots last, larger and ringed in gold', () => {
+    const picked = troop(1, 1, 10, 10)
+    const idle = troop(4, 1, 20, 10)
+    const enemy = troop(2, 2, 40, 20)
+    const marks = dots([picked, idle, enemy], 1, [picked.id])
+    const [bare] = at(marks, idle)
+    expect(marks.slice(-2)).toEqual(at(marks, picked))
+    const [fill, ring] = at(marks, picked)
+    expect(fill).toMatchObject({ shape: 'fill', color: fillColor(picked) })
+    expect(fill.r).toBeGreaterThan(bare.r)
+    expect(ring).toMatchObject({ shape: 'stroke', r: fill.r, color: SELECTED })
   })
 })

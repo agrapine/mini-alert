@@ -482,7 +482,7 @@ export class GameView {
       this.minimap?.blip(contact.x, contact.z, contact.kind)
       this.alert?.(contact.kind)
     }
-    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, rally)
+    this.minimap?.draw(living, selectedIds, playerId, this.stage.groundViewport(), this.fog?.mask, cities, rally)
     this.stage.draw()
   }
 

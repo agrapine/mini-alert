@@ -90,7 +90,7 @@ function showRadar(fixture: HudFixture) {
   const minimap = new Minimap(one('#minimap'), one<HTMLCanvasElement>('#minimap-map'), one<HTMLCanvasElement>('#minimap-marks'), radarWorld(), log('jump'))
   minimap.setCommand(log('command'))
   const selected = new Set(fixture.selected)
-  const draw = () => minimap.draw(fixture.input.units, selected, RADAR_VIEW)
+  const draw = () => minimap.draw(fixture.input.units, selected, fixture.input.playerId, RADAR_VIEW)
   draw()
   window.addEventListener('resize', draw)
 }

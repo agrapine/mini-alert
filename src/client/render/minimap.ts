@@ -1,10 +1,14 @@
 import type { CityState, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { NEUTRAL_CITY, type CityLayout } from '../../shared/cities.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
+import { hostile } from '../../shared/players.ts'
 import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 import { ContactKind } from './radar.ts'
 
 const DOT = 3.25
+const ENEMY_RING = DOT + 1
+const ALERT_RED = '#ff2a1a'
+const SHADE = 'rgba(0, 0, 0, 0.6)'
 const FOG_REPAINT_MS = 200
 const BLIP_MS = 4000
 const BLIP_CLOSE_MS = 1000
@@ -19,9 +23,8 @@ const BLIP_RING_CLOSED = BLIP_MARK + 3
 const BLIP_PULSE_SPREAD = 18
 const BLIP_STILL_RING = 14
 const BLIP_EDGE = 4
-const BLIP_SHADE = 'rgba(0, 0, 0, 0.6)'
 export const BLIP_COLORS: Record<ContactKind, string> = {
-  [ContactKind.Base]: '#ff2a1a',
+  [ContactKind.Base]: ALERT_RED,
   [ContactKind.Unit]: '#ffb21e',
 }
 
@@ -42,6 +45,13 @@ export type BlipCanvas = Pick<
   | 'strokeStyle'
   | 'lineWidth'
 >
+
+export type DotCanvas = Pick<
+  CanvasRenderingContext2D,
+  'beginPath' | 'arc' | 'fill' | 'stroke' | 'fillStyle' | 'strokeStyle' | 'lineWidth'
+>
+
+export type DotUnit = Pick<UnitSnapshot, 'id' | 'ownerId' | 'color' | 'x' | 'z'>
 
 export type MinimapCommand = (
   tile: TileCoord,
@@ -159,6 +169,7 @@ export class Minimap {
   draw(
     units: readonly UnitSnapshot[],
     selectedIds: ReadonlySet<number>,
+    viewer: number | null,
     viewport: readonly { x: number; z: number }[],
     fog?: Float32Array,
     cities: readonly (CityState | null)[] = [],
@@ -185,14 +196,7 @@ export class Minimap {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
     this.strokeViewport(ctx, viewport, width, height)
-    const rest: UnitSnapshot[] = []
-    const picked: UnitSnapshot[] = []
-    for (const unit of units) {
-      if (selectedIds.has(unit.id)) picked.push(unit)
-      else rest.push(unit)
-    }
-    for (const unit of rest) this.dot(ctx, unit, width, height, false)
-    for (const unit of picked) this.dot(ctx, unit, width, height, true)
+    drawDots(ctx, units, selectedIds, viewer, width / this.world.width, height / this.world.height)
     drawBlips(ctx, this.blips, width, height, now, this.still.matches)
     if (rally) this.diamond(ctx, this.toPixel({ x: rally.x + 0.5, z: rally.y + 0.5 }, width, height))
   }
@@ -278,24 +282,6 @@ export class Minimap {
     ctx.fill()
     ctx.lineWidth = 1.5
     ctx.strokeStyle = '#f6f1dc'
-    ctx.stroke()
-  }
-
-  private dot(
-    ctx: CanvasRenderingContext2D,
-    unit: UnitSnapshot,
-    width: number,
-    height: number,
-    selected: boolean,
-  ) {
-    const point = this.toPixel({ x: unit.x, z: unit.z }, width, height)
-    ctx.beginPath()
-    ctx.arc(point.x, point.y, selected ? DOT + 1.4 : DOT, 0, Math.PI * 2)
-    ctx.fillStyle = cssColor(unit.color)
-    ctx.fill()
-    if (!selected) return
-    ctx.lineWidth = 1.25
-    ctx.strokeStyle = '#f0d060'
     ctx.stroke()
   }
 
@@ -395,6 +381,47 @@ function paintInto(target: Uint8ClampedArray, world: WorldSnapshot) {
   }
 }
 
+/** Draws each unit as a dot in its owner's colour, the selected ones on top; a dot hostile to `viewer` is ringed in alert red. */
+export function drawDots(
+  ctx: DotCanvas,
+  units: readonly DotUnit[],
+  selectedIds: ReadonlySet<number>,
+  viewer: number | null,
+  scaleX: number,
+  scaleY: number,
+) {
+  for (const unit of units) {
+    if (!selectedIds.has(unit.id)) dot(ctx, unit, viewer, scaleX, scaleY, false)
+  }
+  for (const unit of units) {
+    if (selectedIds.has(unit.id)) dot(ctx, unit, viewer, scaleX, scaleY, true)
+  }
+}
+
+function dot(ctx: DotCanvas, unit: DotUnit, viewer: number | null, scaleX: number, scaleY: number, selected: boolean) {
+  const x = unit.x * scaleX
+  const y = unit.z * scaleY
+  ctx.beginPath()
+  ctx.arc(x, y, selected ? DOT + 1.4 : DOT, 0, Math.PI * 2)
+  ctx.fillStyle = cssColor(unit.color)
+  ctx.fill()
+  if (selected) {
+    ctx.lineWidth = 1.25
+    ctx.strokeStyle = '#f0d060'
+    ctx.stroke()
+    return
+  }
+  if (viewer === null || !hostile(viewer, unit.ownerId)) return
+  ctx.beginPath()
+  ctx.arc(x, y, ENEMY_RING, 0, Math.PI * 2)
+  ctx.lineWidth = 2.5
+  ctx.strokeStyle = SHADE
+  ctx.stroke()
+  ctx.lineWidth = 1.25
+  ctx.strokeStyle = ALERT_RED
+  ctx.stroke()
+}
+
 /** Draws every live blip and drops the expired ones; `still` holds each ring and marker without motion. */
 export function drawBlips(
   ctx: BlipCanvas,
@@ -446,7 +473,7 @@ function blipRing(ctx: BlipCanvas, x: number, y: number, radius: number, color: 
   ctx.beginPath()
   ctx.arc(x, y, radius, 0, Math.PI * 2)
   ctx.lineWidth = 5
-  ctx.strokeStyle = BLIP_SHADE
+  ctx.strokeStyle = SHADE
   ctx.stroke()
   ctx.lineWidth = 2.5
   ctx.strokeStyle = color
@@ -460,7 +487,7 @@ function blipMarker(ctx: BlipCanvas, x: number, y: number, radius: number, color
   ctx.fillStyle = color
   ctx.fill()
   ctx.lineWidth = 1.5
-  ctx.strokeStyle = BLIP_SHADE
+  ctx.strokeStyle = SHADE
   ctx.stroke()
   ctx.beginPath()
   ctx.arc(x, y, radius * 0.45, 0, Math.PI * 2)
