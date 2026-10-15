@@ -1,3 +1,4 @@
+import { LAKE_DEFAULT, Landform, clampLakes } from '../../shared/lobby.ts'
 import type { MapPoint } from '../../shared/protocol.ts'
 import { Terrain } from '../../shared/tiles.ts'
 import { mulberry32, valueNoise } from './noise.ts'
@@ -35,7 +36,14 @@ export type Island = {
   droppedSites: Site[]
 }
 
-export function generateIsland(seed: number, width: number, height: number): Island {
+export type MapGenOptions = {
+  landform?: Landform
+  lakes?: number
+}
+
+export function generateIsland(seed: number, width: number, height: number, options: MapGenOptions = {}): Island {
+  const landform = options.landform ?? Landform.Island
+  const lakes = clampLakes(options.lakes ?? LAKE_DEFAULT)
   const rng = mulberry32(seed)
   const region = new Int16Array(width * height)
   const sites = Array.from({ length: siteCount(width, height) }, () => ({
@@ -61,13 +69,15 @@ export function generateIsland(seed: number, width: number, height: number): Isl
   }
 
   const dropped = new Uint8Array(sites.length)
-  for (let x = 0; x < width; x++) {
-    dropped[region[x]] = 1
-    dropped[region[(height - 1) * width + x]] = 1
-  }
-  for (let y = 0; y < height; y++) {
-    dropped[region[y * width]] = 1
-    dropped[region[y * width + width - 1]] = 1
+  if (landform === Landform.Island) {
+    for (let x = 0; x < width; x++) {
+      dropped[region[x]] = 1
+      dropped[region[(height - 1) * width + x]] = 1
+    }
+    for (let y = 0; y < height; y++) {
+      dropped[region[y * width]] = 1
+      dropped[region[y * width + width - 1]] = 1
+    }
   }
   for (let i = 0; i < region.length; i++) {
     if (dropped[region[i]]) region[i] = -1
@@ -130,7 +140,8 @@ export function generateIsland(seed: number, width: number, height: number): Isl
 
   paintRoads(terrain, width, height, roads)
   const distance = roadDistance(terrain, width, height)
-  paintBiomes(terrain, width, height, distance, seed)
+  const reach = lakeReach(lakes)
+  paintBiomes(terrain, width, height, distance, seed, reach)
   for (const town of towns) {
     terrain[Math.floor(town.y) * width + Math.floor(town.x)] = Terrain.Town
   }
@@ -141,7 +152,18 @@ export function generateIsland(seed: number, width: number, height: number): Isl
   for (let i = 0; i < region.length; i++) if (region[i] >= 0) used[region[i]] = 1
   const keptSites = sites.filter((_, index) => used[index] === 1)
   const droppedSites = sites.filter((_, index) => dropped[index] === 1)
-  const shifts = fitShifts(terrain, width, height, seed, keptSites, droppedSites, roads)
+  const shifts = fitShifts(
+    terrain,
+    width,
+    height,
+    seed,
+    keptSites,
+    droppedSites,
+    roads,
+    reach?.low ?? 0.48,
+    reach?.high ?? 0.56,
+    reach?.scale ?? 0.08,
+  )
 
   return {
     seed,
@@ -415,21 +437,14 @@ function bordersWithin(
   return componentCount(edges, count) === 1
 }
 
-function roadPolyline(
-  from: MapPoint,
-  to: MapPoint,
-  rng: () => number,
-  terrain: Uint8Array,
-  width: number,
-  height: number,
-): MapPoint[] {
+function bendPoints(from: MapPoint, to: MapPoint, rng: () => number): MapPoint[] {
   const dx = to.x - from.x
   const dy = to.y - from.y
   const len = Math.hypot(dx, dy) || 1
   const px = -dy / len
   const py = dx / len
   const bend = Math.min(6, len * 0.28)
-  const line = [
+  return [
     from,
     {
       x: from.x + dx * 0.33 + px * (rng() * 2 - 1) * bend,
@@ -441,6 +456,17 @@ function roadPolyline(
     },
     to,
   ]
+}
+
+function roadPolyline(
+  from: MapPoint,
+  to: MapPoint,
+  rng: () => number,
+  terrain: Uint8Array,
+  width: number,
+  height: number,
+): MapPoint[] {
+  const line = bendPoints(from, to, rng)
   if (samplesStayOnLand(line, terrain, width, height)) return line
   const path = landPath(
     terrain,
@@ -578,7 +604,28 @@ function roadDistance(terrain: Uint8Array, width: number, height: number): Int16
   return dist
 }
 
-function paintBiomes(terrain: Uint8Array, width: number, height: number, distance: Int16Array, seed: number) {
+type LakeReach = { low: number; high: number; gap: number; scale: number }
+
+function lakeReach(amount: number): LakeReach | null {
+  if (amount <= 0) return null
+  if (amount === LAKE_DEFAULT) return { low: 0.48, high: 0.56, gap: 5, scale: 0.08 }
+  const extra = Math.max(0, amount - LAKE_DEFAULT)
+  return {
+    low: 0.52 - 0.16 * amount,
+    high: 0.52 + 0.16 * amount,
+    gap: Math.max(2, Math.round(5 - extra * 4)),
+    scale: 0.08 / (1 + extra * 2.5),
+  }
+}
+
+function paintBiomes(
+  terrain: Uint8Array,
+  width: number,
+  height: number,
+  distance: Int16Array,
+  seed: number,
+  reach: LakeReach | null,
+) {
   const candidates: number[] = []
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -586,7 +633,8 @@ function paintBiomes(terrain: Uint8Array, width: number, height: number, distanc
       if (terrain[i] !== Terrain.Land) continue
       const noise = valueNoise(x, y, seed)
       const dist = distance[i]
-      if (dist >= 5 && noise > 0.48 && noise < 0.56) candidates.push(i)
+      const lake = reach ? valueNoise(x, y, seed, reach.scale) : 0
+      if (reach && dist >= reach.gap && lake > reach.low && lake < reach.high) candidates.push(i)
       else if (dist >= 3 && noise > 0.6) terrain[i] = Terrain.Forest
       else if (dist >= 0 && dist <= 2 && noise > 0.74) terrain[i] = Terrain.Flowers
     }

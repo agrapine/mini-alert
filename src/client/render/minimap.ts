@@ -5,6 +5,8 @@ import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 
 const DOT = 3.25
 const FOG_REPAINT_MS = 200
+const BLIP_MS = 1500
+const BLIP_HOLD_MS = 1100
 
 export type MinimapCommand = (
   tile: TileCoord,
@@ -26,6 +28,7 @@ export class Minimap {
   private fogSettled = false
   private fogPaintedAt = -Infinity
   private cityHash = 0
+  private readonly blips: { x: number; z: number; born: number }[] = []
 
   constructor(
     private readonly root: HTMLElement,
@@ -69,6 +72,10 @@ export class Minimap {
 
   setCommand(command: MinimapCommand) {
     this.command = command
+  }
+
+  blip(x: number, z: number) {
+    this.blips.push({ x, z, born: performance.now() })
   }
 
   dispose() {
@@ -119,7 +126,6 @@ export class Minimap {
     viewport: readonly { x: number; z: number }[],
     fog?: Float32Array,
     cities: readonly (CityState | null)[] = [],
-    primaryFactoryId = 0,
     rally: TileCoord | null = null,
   ) {
     this.cityStates = cities
@@ -151,8 +157,7 @@ export class Minimap {
     }
     for (const unit of rest) this.dot(ctx, unit, width, height, false)
     for (const unit of picked) this.dot(ctx, unit, width, height, true)
-    const primary = units.find((unit) => unit.id === primaryFactoryId)
-    if (primary) this.star(ctx, this.toPixel({ x: primary.x, z: primary.z }, width, height))
+    this.drawBlips(ctx, width, height, now)
     if (rally) this.diamond(ctx, this.toPixel({ x: rally.x + 0.5, z: rally.y + 0.5 }, width, height))
   }
 
@@ -258,26 +263,30 @@ export class Minimap {
     ctx.stroke()
   }
 
-  private star(ctx: CanvasRenderingContext2D, point: { x: number; y: number }) {
-    ctx.save()
-    ctx.translate(point.x, point.y)
-    ctx.beginPath()
-    let rot = -Math.PI / 2
-    const step = Math.PI / 5
-    ctx.moveTo(Math.cos(rot) * 7, Math.sin(rot) * 7)
-    for (let i = 0; i < 5; i++) {
-      rot += step
-      ctx.lineTo(Math.cos(rot) * 3, Math.sin(rot) * 3)
-      rot += step
-      ctx.lineTo(Math.cos(rot) * 7, Math.sin(rot) * 7)
+  private drawBlips(ctx: CanvasRenderingContext2D, width: number, height: number, now: number) {
+    for (let i = this.blips.length - 1; i >= 0; i--) {
+      const blip = this.blips[i]
+      const age = now - blip.born
+      if (age >= BLIP_MS) {
+        this.blips.splice(i, 1)
+        continue
+      }
+      const point = this.toPixel({ x: blip.x, z: blip.z }, width, height)
+      const grow = Math.min(1, age / BLIP_HOLD_MS)
+      const alpha = age < BLIP_HOLD_MS ? 1 : 1 - (age - BLIP_HOLD_MS) / (BLIP_MS - BLIP_HOLD_MS)
+      const inner = 11
+      const outer = 16 + grow * 14
+      ctx.save()
+      ctx.translate(point.x, point.y)
+      ctx.rotate(Math.PI / 4)
+      ctx.globalAlpha = alpha
+      ctx.lineJoin = 'miter'
+      ctx.strokeStyle = '#ff1a1a'
+      ctx.lineWidth = 5
+      ctx.strokeRect(-inner, -inner, inner * 2, inner * 2)
+      ctx.strokeRect(-outer, -outer, outer * 2, outer * 2)
+      ctx.restore()
     }
-    ctx.closePath()
-    ctx.fillStyle = '#f0d060'
-    ctx.fill()
-    ctx.lineWidth = 1
-    ctx.strokeStyle = '#1a1e12'
-    ctx.stroke()
-    ctx.restore()
   }
 
   private diamond(ctx: CanvasRenderingContext2D, point: { x: number; y: number }) {

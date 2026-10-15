@@ -55,6 +55,6 @@ registerKind({
 registerKind({
   tag: 'game',
   test: (value) => value instanceof Game,
-  skip: ['pathfinder'],
+  skip: ['pathfinder', 'captureSeek', 'captureHits'],
   revive: (fields) => Game.fromState(fields),
 })

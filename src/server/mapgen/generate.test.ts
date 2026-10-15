@@ -3,9 +3,11 @@ import { blockerHoles, blockerTiles, smoothShore } from '../../shared/shore.ts'
 import { isMinimapShore, minimapRgb } from '../../shared/minimap.ts'
 import { isWalkableTerrain, Terrain } from '../../shared/tiles.ts'
 import { CITY_GROW_SECONDS } from '../../shared/cities.ts'
-import { FACTORY, SCOUT, UnitTypeId } from '../../shared/unit-types.ts'
+import { FACTORY, SCOUT, UnitTypeId, yardOf } from '../../shared/unit-types.ts'
 import { createIslandMatch } from '../island-match.ts'
+import { Game } from '../game.ts'
 import { CREDIT_PER_POPULATION } from '../player.ts'
+import { Landform } from '../../shared/lobby.ts'
 import { MAX_HOPS, countyHops, fillWaterCracks, generateIsland } from './generate.ts'
 
 const island = generateIsland(1, 128, 128)
@@ -105,6 +107,43 @@ describe('island generator', () => {
   })
 })
 
+describe('land and lakes', () => {
+  it('fills a landmass to the map edge', () => {
+    const map = generateIsland(1, 64, 64, { landform: Landform.Land })
+    let edge = 0
+    let land = 0
+    for (let x = 0; x < map.width; x++) {
+      edge += 2
+      if (map.terrain[x] !== Terrain.Water) land += 1
+      if (map.terrain[(map.height - 1) * map.width + x] !== Terrain.Water) land += 1
+    }
+    for (let y = 0; y < map.height; y++) {
+      edge += 2
+      if (map.terrain[y * map.width] !== Terrain.Water) land += 1
+      if (map.terrain[y * map.width + map.width - 1] !== Terrain.Water) land += 1
+    }
+    expect(land).toBeGreaterThan(edge * 0.8)
+    expect(solidParts(map.terrain, map.width, map.height)).toBe(1)
+  })
+
+  it('grows longer lakes as the slider rises and leaves them out at zero', () => {
+    const none = generateIsland(1, 64, 64, { lakes: 0 })
+    const base = generateIsland(1, 64, 64)
+    const large = generateIsland(1, 64, 64, { lakes: 1 })
+    expect(countTiles(none.terrain, Terrain.Lake)).toBe(0)
+    const baseLakes = countTiles(base.terrain, Terrain.Lake)
+    const largeLakes = countTiles(large.terrain, Terrain.Lake)
+    expect(baseLakes).toBeGreaterThan(0)
+    expect(largeLakes).toBeGreaterThan(baseLakes)
+    expect(longestRun(large.terrain, large.width, large.height, Terrain.Lake)).toBeGreaterThan(
+      longestRun(base.terrain, base.width, base.height, Terrain.Lake),
+    )
+    for (const town of large.towns) {
+      expect(large.terrain[Math.floor(town.y) * large.width + Math.floor(town.x)]).toBe(Terrain.Town)
+    }
+  })
+})
+
 describe('island match', () => {
   it('spawns both sides on walkable tiles and anchors the spawn buttons', () => {
     const { game, human, ai } = createIslandMatch(1)
@@ -140,13 +179,89 @@ describe('island match', () => {
     game.finishBuild(human.id)
     for (const unit of humans) unit.health = 0
     game.tick(0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
     game.tick(SCOUT.buildTime)
     const spawned = game.units[game.units.length - 1]
     expect(isWalkableTerrain(game.world.terrainAt(spawned.tile.x, spawned.tile.y))).toBe(true)
     expect(spawned.ownerId).toBe(human.id)
   })
 })
+
+function solidParts(terrain: Uint8Array, width: number, height: number): number {
+  return parts(terrain, width, height, (tile) => tile !== Terrain.Water)
+}
+
+function countTiles(terrain: Uint8Array, kind: number): number {
+  let count = 0
+  for (let i = 0; i < terrain.length; i++) if (terrain[i] === kind) count += 1
+  return count
+}
+
+function longestRun(terrain: Uint8Array, width: number, height: number, kind: number): number {
+  const seen = new Uint8Array(terrain.length)
+  let best = 0
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]
+  for (let start = 0; start < terrain.length; start++) {
+    if (seen[start] || terrain[start] !== kind) continue
+    let size = 0
+    const stack = [start]
+    seen[start] = 1
+    while (stack.length > 0) {
+      const cell = stack.pop() ?? 0
+      size += 1
+      const x = cell % width
+      const y = Math.floor(cell / width)
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const next = ny * width + nx
+        if (seen[next] || terrain[next] !== kind) continue
+        seen[next] = 1
+        stack.push(next)
+      }
+    }
+    if (size > best) best = size
+  }
+  return best
+}
+
+function parts(terrain: Uint8Array, width: number, height: number, accept: (tile: number) => boolean): number {
+  const seen = new Uint8Array(terrain.length)
+  let count = 0
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]
+  for (let start = 0; start < terrain.length; start++) {
+    if (seen[start] || !accept(terrain[start])) continue
+    count += 1
+    const stack = [start]
+    seen[start] = 1
+    while (stack.length > 0) {
+      const cell = stack.pop() ?? 0
+      const x = cell % width
+      const y = Math.floor(cell / width)
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const next = ny * width + nx
+        if (seen[next] || !accept(terrain[next])) continue
+        seen[next] = 1
+        stack.push(next)
+      }
+    }
+  }
+  return count
+}
 
 function inside(loop: { x: number; y: number }[], x: number, y: number): boolean {
   let c = false
@@ -226,6 +341,11 @@ describe('fillWaterCracks', () => {
     }
   })
 })
+
+function train(game: Game, playerId: number, typeId: UnitTypeId): boolean {
+  const id = game.units.find((unit) => unit.ownerId === playerId && unit.typeId === yardOf(typeId) && unit.health > 0 && unit.progress >= 1)?.id ?? 0
+  return game.trySpawn(playerId, typeId, id)
+}
 
 function oppositeLand(terrain: Uint8Array, width: number, height: number, x: number, y: number): boolean {
   const land = (nx: number, ny: number) => {

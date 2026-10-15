@@ -1,19 +1,21 @@
-import { BoxGeometry, CanvasTexture, Color, DoubleSide, Group, InstancedMesh, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry, Sprite, SpriteMaterial } from 'three'
+import { BoxGeometry, Color, DoubleSide, Group, InstancedMesh, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, RingGeometry } from 'three'
 import type { CityState, MapPoint, ShotEvent, ShotHit, UnitSnapshot, WorldSnapshot } from '../../shared/protocol.ts'
 import { citySightOrigin, type CityLayout } from '../../shared/cities.ts'
 import { collectFriends, type CitySight, type SightSource } from '../../shared/vision.ts'
-import { UNIT_TYPES, UnitTypeId, buildStage, spanOf, type WeaponKind } from '../../shared/unit-types.ts'
+import { UNIT_TYPES, buildStage, spanOf, Locomotion, type WeaponKind } from '../../shared/unit-types.ts'
 import type { ExpectedSite } from '../replica.ts'
 import type { TileCoord } from '../../shared/tiles.ts'
 import { Fog } from './fog.ts'
 import { CityLayer } from './cities.ts'
 import { Minimap, type MinimapCommand } from './minimap.ts'
+import { createRadarWatch, radarContact } from './radar.ts'
 import { PropField } from './props.ts'
 import { Stage, cameraYaw } from './stage.ts'
 import { Particles } from './particles.ts'
 import { ShotLayer } from './shots.ts'
 import { TILE_TOP } from './terrain.ts'
 import { buildSurface } from './island.ts'
+import { ScarLayer } from './scars.ts'
 import { createUnitMesh, releaseMesh, scorchUnit, syncUnitMesh, unitSpan } from './units/vehicle.ts'
 
 const WRECK_HOLD = 4
@@ -33,7 +35,6 @@ export class GameView {
   private readonly units = new Map<number, Group>()
   private readonly selectionRings: Mesh[] = []
   private readonly hoverRings: Mesh[] = []
-  private readonly orderRings: Mesh[] = []
   private readonly rangeRings: Mesh[] = []
   private readonly sightRings: Mesh[] = []
   private readonly rangeMark: Mesh
@@ -49,7 +50,6 @@ export class GameView {
   private readonly livingById = new Map<number, UnitSnapshot>()
   private readonly shownSelection: UnitSnapshot[] = []
   private readonly selectedIds = new Set<number>()
-  private readonly goalUnits: UnitSnapshot[] = []
   private readonly hoveredUnits: UnitSnapshot[] = []
   private readonly friendBuffer: SightSource[] = []
   private readonly citySights: CitySight[] = []
@@ -63,17 +63,20 @@ export class GameView {
   private readonly expectedSites: Mesh[] = []
   private readonly shots: ShotLayer
   private readonly particles: Particles
+  private readonly scars = new ScarLayer()
   private readonly wrecks: Wreck[] = []
   private readonly pings: { mesh: Mesh; age: number }[] = []
-  private readonly primaryMark: Sprite
+  private readonly radar = createRadarWatch()
   private readonly rallyMark: Group
+  private readonly hallRing: Mesh
   private shotDt = 0
   private pendingCleared: readonly TileCoord[] = []
 
   constructor(canvas: HTMLCanvasElement, mapWidth: number, mapHeight: number) {
     this.stage = new Stage(canvas, mapWidth, mapHeight)
-    this.shots = new ShotLayer(this.stage.scene)
+    this.shots = new ShotLayer(this.stage.scene, (dirX, dirZ) => this.stage.pixelsPerUnit(dirX, dirZ))
     this.particles = new Particles(this.stage.scene)
+    this.stage.scene.add(this.scars.root)
     this.rangeMark = new Mesh(
       new RingGeometry(0.86, 1, 72),
       new MeshBasicMaterial({
@@ -98,10 +101,21 @@ export class GameView {
     )
     this.sightMark.rotation.x = -Math.PI / 2
     this.sightMark.visible = false
-    this.primaryMark = primaryIcon()
-    this.stage.scene.add(this.primaryMark)
     this.rallyMark = rallyFlag()
     this.stage.scene.add(this.rallyMark)
+    this.hallRing = new Mesh(
+      new RingGeometry(1.28, 1.48, 40),
+      new MeshBasicMaterial({ color: 0xf0d060, transparent: true, opacity: 0.55, depthWrite: false, side: DoubleSide }),
+    )
+    this.hallRing.rotation.x = -Math.PI / 2
+    this.hallRing.visible = false
+    this.stage.scene.add(this.hallRing)
+  }
+
+  showHall(at: { x: number; z: number } | null) {
+    this.hallRing.visible = at !== null
+    if (!at) return
+    this.hallRing.position.set(at.x, TILE_TOP + 0.08, at.z)
   }
 
   mountTerrain(world: WorldSnapshot, revision: number, knownTiles: number) {
@@ -109,6 +123,7 @@ export class GameView {
     const map = document.querySelector<HTMLCanvasElement>('#minimap-map')
     const marks = document.querySelector<HTMLCanvasElement>('#minimap-marks')
     this.fog = new Fog(this.stage.scene, world.width, world.height)
+    this.fog.seed(world.known)
     const sea = new Mesh(
       new PlaneGeometry(world.width, world.height),
       new MeshStandardMaterial({ color: new Color(0x7fcee8), roughness: 0.4, metalness: 0 }),
@@ -117,6 +132,7 @@ export class GameView {
     sea.position.set(world.width / 2, 0, world.height / 2)
     this.stage.scene.add(sea)
     this.presentSurface(world)
+    this.scars.sync(world)
     this.builtTerrain = revision
     if (root && map && marks) {
       this.minimap = new Minimap(root, map, marks, world, (x, z) => this.focus(x, z))
@@ -132,8 +148,10 @@ export class GameView {
     this.builtTerrain = revision
     this.sinceSurface = 0
     this.presentSurface(world)
+    this.scars.sync(world)
     this.minimap?.retile(world)
     this.noteProps(world, knownTiles)
+    this.props?.hideStale(world)
   }
 
   syncCities(layouts: readonly (CityLayout | null)[], revision: number) {
@@ -190,8 +208,9 @@ export class GameView {
     this.stage.resize()
   }
 
-  forgetVision() {
+  forgetVision(known?: Uint8Array) {
     this.fog?.reset()
+    if (known) this.fog?.seed(known)
   }
 
   setMinimapCommand(command: MinimapCommand) {
@@ -204,9 +223,6 @@ export class GameView {
 
   dispose() {
     this.minimap?.dispose()
-    const material = this.primaryMark.material
-    material.map?.dispose()
-    material.dispose()
     this.stage.dispose()
   }
 
@@ -312,10 +328,11 @@ export class GameView {
     const hits: number[] = []
     for (const unit of units) {
       if (unit.ownerId !== ownerId || UNIT_TYPES[unit.typeId].topSpeed <= 0) continue
-      const center = this.stage.project(unit.x, unit.z)
+      const y = selectHeight(unit)
+      const center = this.stage.project(unit.x, unit.z, y)
       const mesh = this.units.get(unit.id)
       const span = mesh ? unitSpan(mesh) : 0.7
-      const edge = this.stage.project(unit.x + span / 2, unit.z)
+      const edge = this.stage.project(unit.x + span / 2, unit.z, y)
       const radius = Math.max(6, Math.hypot(edge.x - center.x, edge.y - center.y))
       if (circleHitsRect(center.x, center.y, radius, left, top, right, bottom)) hits.push(unit.id)
     }
@@ -328,6 +345,23 @@ export class GameView {
 
   pickTile(clientX: number, clientY: number): TileCoord | null {
     return this.stage.pickTile(clientX, clientY)
+  }
+
+  pickCityBuilding(clientX: number, clientY: number): TileCoord | null {
+    const root = this.cities?.root
+    if (!root) return null
+    return this.stage.pickPlot(root, clientX, clientY)
+  }
+
+  /** One fading ring per path end. The same tile is marked once when a group shares it. */
+  pingMoves(goals: readonly TileCoord[]) {
+    const seen = new Set<string>()
+    for (const goal of goals) {
+      const key = `${goal.x},${goal.y}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      this.ping(goal.x + 0.5, goal.y + 0.5, false)
+    }
   }
 
   ping(x: number, z: number, attack: boolean) {
@@ -355,7 +389,6 @@ export class GameView {
     playerId: number | null = null,
     cities: readonly (CityState | null)[] = [],
     layouts: readonly (CityLayout | null)[] = [],
-    primaryFactoryId = 0,
     rally: TileCoord | null = null,
     cleared: readonly TileCoord[] = [],
     yields: readonly MapPoint[] = [],
@@ -415,13 +448,6 @@ export class GameView {
     this.placeRings(this.selectionRings, this.stage.selection, showSelection ? selected : [])
     const showRanges = showSelection && this.showRanges && selected.length === 1
     this.placeRanges(showRanges ? selected : [])
-    const goals = this.goalUnits
-    goals.length = 0
-    if (showSelection) {
-      for (const unit of selected) if (unit.goal) goals.push(unit)
-    }
-    this.placeOrders(goals)
-    this.placePrimary(living, primaryFactoryId)
     this.placeRally(rally)
 
     const hovered = this.hoveredUnits
@@ -439,13 +465,16 @@ export class GameView {
     this.shots.strike(hits, impact)
     this.shots.advance(this.shotDt, impact)
     this.particles.advance(this.shotDt)
+    this.scars.advance(this.shotDt)
     if (playerId === null) this.friendBuffer.length = 0
     else collectFriends(living, playerId, this.ownedCitySights(playerId, cities, layouts), this.friendBuffer)
     this.fog?.update(this.shotDt, this.friendBuffer)
     this.fog?.setView(cameraYaw)
     this.cities?.present(layouts, cities)
     this.clearGround(cleared)
-    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, primaryFactoryId, rally)
+    const contact = radarContact(this.radar, performance.now(), playerId, units, cities)
+    if (contact) this.minimap?.blip(contact.x, contact.z)
+    this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, rally)
     this.stage.draw()
   }
 
@@ -571,33 +600,10 @@ export class GameView {
     }
   }
 
-  private placePrimary(units: readonly UnitSnapshot[], primaryFactoryId: number) {
-    const factory = units.find((unit) => unit.id === primaryFactoryId && unit.typeId === UnitTypeId.Factory)
-    this.primaryMark.visible = factory !== undefined
-    if (!factory) return
-    this.primaryMark.position.set(factory.x, TILE_TOP + 2.6, factory.z)
-  }
-
   private placeRally(rally: TileCoord | null) {
     this.rallyMark.visible = rally !== null
     if (!rally) return
     this.rallyMark.position.set(rally.x + 0.5, TILE_TOP, rally.y + 0.5)
-  }
-
-  private placeOrders(units: readonly UnitSnapshot[]) {
-    this.stage.orderMark.visible = false
-    const rings = growRings(this.orderRings, this.stage.orderMark, units.length, this.stage.scene)
-    for (let i = 0; i < rings.length; i++) {
-      const ring = rings[i]
-      const goal = units[i]?.goal
-      if (!goal) {
-        ring.visible = false
-        continue
-      }
-      ring.visible = true
-      ring.scale.set(1, 1, 1)
-      ring.position.set(goal.x + 0.5, TILE_TOP + 0.06, goal.y + 0.5)
-    }
   }
 }
 
@@ -642,32 +648,6 @@ function circleHitsRect(
   return dx * dx + dy * dy <= radius * radius
 }
 
-function primaryIcon(): Sprite {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const ctx = canvas.getContext('2d')
-  if (ctx) {
-    ctx.translate(32, 32)
-    ctx.beginPath()
-    starPath(ctx, 5, 26, 11)
-    ctx.fillStyle = '#f0d060'
-    ctx.fill()
-    ctx.lineWidth = 4
-    ctx.strokeStyle = '#1a1e12'
-    ctx.stroke()
-  }
-  const material = new SpriteMaterial({
-    map: new CanvasTexture(canvas),
-    transparent: true,
-    depthWrite: false,
-  })
-  const sprite = new Sprite(material)
-  sprite.scale.set(1.5, 1.5, 1)
-  sprite.visible = false
-  return sprite
-}
-
 function rallyFlag(): Group {
   const group = new Group()
   const pole = new Mesh(
@@ -685,21 +665,14 @@ function rallyFlag(): Group {
   return group
 }
 
-function starPath(ctx: CanvasRenderingContext2D, spikes: number, outer: number, inner: number) {
-  let rot = -Math.PI / 2
-  const step = Math.PI / spikes
-  ctx.moveTo(Math.cos(rot) * outer, Math.sin(rot) * outer)
-  for (let i = 0; i < spikes; i++) {
-    rot += step
-    ctx.lineTo(Math.cos(rot) * inner, Math.sin(rot) * inner)
-    rot += step
-    ctx.lineTo(Math.cos(rot) * outer, Math.sin(rot) * outer)
-  }
-  ctx.closePath()
-}
-
 function placeRing(ring: Mesh, unit: UnitSnapshot, mesh: Group | undefined) {
   const span = mesh ? unitSpan(mesh) : 0.7
   ring.scale.set(span / 0.72, span / 0.72, 1)
-  ring.position.set(unit.x, TILE_TOP + 0.06, unit.z)
+  ring.position.set(unit.x, selectHeight(unit), unit.z)
+}
+
+function selectHeight(unit: UnitSnapshot): number {
+  const type = UNIT_TYPES[unit.typeId]
+  if (type.locomotion !== Locomotion.Plane && type.locomotion !== Locomotion.Rotor) return TILE_TOP + 0.06
+  return TILE_TOP + (unit.altitude ?? 0) + type.hull.y * 0.5
 }

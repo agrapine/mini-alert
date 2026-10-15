@@ -68,9 +68,10 @@ describe('player commands', () => {
     growPop(game, human.id, FACTORY.supply + SCOUT.supply + MED_TANK.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
+    const factory = game.units[0]
     const before = game.units.length
 
-    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout })
+    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout, yardId: factory.id })
     game.tick(SCOUT.buildTime)
     const spawned = game.units[game.units.length - 1]
     expect(spawned?.ownerId).toBe(human.id)
@@ -78,7 +79,7 @@ describe('player commands', () => {
     expect(spawned.tile.x < 4 || spawned.tile.x > 5 || spawned.tile.y < 4 || spawned.tile.y > 5).toBe(true)
     expect(spawned.path.length).toBeGreaterThan(0)
 
-    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.MedTank })
+    humanPort.send({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.MedTank, yardId: factory.id })
     game.tick(MED_TANK.buildTime)
     const second = game.units[game.units.length - 1]
     expect(second?.ownerId).toBe(human.id)

@@ -4,6 +4,8 @@ import { Cell } from '../../shared/astar.ts'
 import { cellAt, findRoute, type RouteMap } from '../../shared/route.ts'
 import type { Unit } from '../units/unit.ts'
 import type { World } from '../world.ts'
+import { __TRACE__, traceBegin, traceEnd } from '../trace.ts'
+import { TraceSlot } from '../../shared/trace.ts'
 
 const EMPTY = 0
 
@@ -61,7 +63,10 @@ export class PathFinder implements RouteMap {
   }
 
   findPath(start: TileCoord, goal: TileCoord, ignoreUnitId: number, domain = MoveDomain.Ground): TileCoord[] | null {
-    return findRoute(this, start, goal, ignoreUnitId, domain)
+    __TRACE__ && traceBegin(TraceSlot.Path)
+    const path = findRoute(this, start, goal, ignoreUnitId, domain)
+    __TRACE__ && traceEnd()
+    return path
   }
 
   movable(x: number, y: number): boolean {

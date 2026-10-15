@@ -14,7 +14,8 @@ import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { WeaponKind } from '../../shared/unit-types.ts'
 import { TILE_TOP } from './terrain.ts'
 
-const TRACER_LIFE = 0.12
+const TRACER_PX = 10
+const TRACER_PX_PER_SEC = 2000
 const SHOT_Y = TILE_TOP + 0.45
 
 type LiveShot = {
@@ -22,58 +23,104 @@ type LiveShot = {
   object: Line | Mesh | Group
   age: number
   flight: number
+  traveled: number
+  lengthPx: number
+  speedPx: number
   originX: number
   originZ: number
   aimX: number
   aimZ: number
+  /** Bullet impact is in view, so the spark waits for the tracer to arrive. */
+  spark: boolean
+  /** Shown on the arrival frame, then removed. */
+  expire: boolean
 }
 
 export class ShotLayer {
   private readonly live: LiveShot[] = []
 
-  constructor(private readonly scene: Scene) {}
+  constructor(
+    private readonly scene: Scene,
+    private readonly pixelsPerUnit: (dirX: number, dirZ: number) => number,
+  ) {}
 
   spawn(events: readonly ShotEvent[]) {
     for (const event of events) {
-      const object = event.kind === WeaponKind.Bullet ? tracer() : event.kind === WeaponKind.Rocket ? rocket() : shell()
+      const bullet = event.kind === WeaponKind.Bullet
+      const object = bullet ? tracer() : event.kind === WeaponKind.Rocket ? rocket() : shell()
       this.scene.add(object)
       const shot: LiveShot = {
         kind: event.kind,
         object,
         age: 0,
         flight: event.flight,
+        traveled: 0,
+        lengthPx: bullet ? TRACER_PX * vary() : TRACER_PX,
+        speedPx: bullet ? TRACER_PX_PER_SEC * vary() : TRACER_PX_PER_SEC,
         originX: event.x,
         originZ: event.z,
         aimX: event.aimX,
         aimZ: event.aimZ,
+        spark: false,
+        expire: false,
       }
-      place(shot)
+      if (bullet) placeTracer(shot, this.pixelsPerUnit)
+      else place(shot)
       this.live.push(shot)
     }
   }
 
   strike(hits: readonly ShotHit[], onImpact?: (x: number, z: number, kind: WeaponKind) => void) {
     for (const hit of hits) {
+      if (hit.kind === WeaponKind.Bullet) {
+        const index = this.live.findIndex(
+          (shot) =>
+            shot.kind === WeaponKind.Bullet &&
+            !shot.spark &&
+            Math.hypot(shot.aimX - hit.aimX, shot.aimZ - hit.aimZ) < 0.75,
+        )
+        if (index >= 0) this.live[index].spark = true
+        else onImpact?.(hit.aimX, hit.aimZ, hit.kind)
+        continue
+      }
       onImpact?.(hit.aimX, hit.aimZ, hit.kind)
       if (!ballistic(hit.kind)) continue
       const index = this.live.findIndex(
         (shot) => shot.kind === hit.kind && Math.hypot(shot.aimX - hit.aimX, shot.aimZ - hit.aimZ) < 0.75,
       )
       if (index < 0) continue
-      this.scene.remove(this.live[index].object)
-      this.live.splice(index, 1)
+      drop(this.scene, this.live, index)
     }
   }
 
   advance(dt: number, onImpact?: (x: number, z: number, kind: WeaponKind) => void) {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const shot = this.live[i]
+      if (shot.expire) {
+        drop(this.scene, this.live, i)
+        continue
+      }
       shot.age += dt
-      const done = shot.kind === WeaponKind.Bullet ? shot.age >= TRACER_LIFE : shot.age >= shot.flight + 0.4
-      if (done) {
+      if (shot.kind === WeaponKind.Bullet) {
+        const dx = shot.aimX - shot.originX
+        const dz = shot.aimZ - shot.originZ
+        const dist = Math.hypot(dx, dz)
+        if (dist > 1e-4) {
+          shot.traveled = Math.min(
+            dist,
+            shot.traveled + tracerStep(dx / dist, dz / dist, dt, shot.speedPx, this.pixelsPerUnit),
+          )
+        }
+        placeTracer(shot, this.pixelsPerUnit)
+        if (shot.traveled >= dist) {
+          if (shot.spark) onImpact?.(shot.aimX, shot.aimZ, shot.kind)
+          shot.expire = true
+        }
+        continue
+      }
+      if (shot.age >= shot.flight + 0.4) {
         if (ballistic(shot.kind)) onImpact?.(shot.aimX, shot.aimZ, shot.kind)
-        this.scene.remove(shot.object)
-        this.live.splice(i, 1)
+        drop(this.scene, this.live, i)
         continue
       }
       place(shot)
@@ -81,10 +128,18 @@ export class ShotLayer {
   }
 }
 
+function drop(scene: Scene, live: LiveShot[], index: number) {
+  scene.remove(live[index].object)
+  live.splice(index, 1)
+}
+
 function tracer(): Line {
   const geometry = new BufferGeometry()
   geometry.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3))
-  return new Line(geometry, new LineBasicMaterial({ color: 0xffe7a3 }))
+  const line = new Line(geometry, new LineBasicMaterial({ color: 0xffe7a3, depthTest: false, depthWrite: false }))
+  line.frustumCulled = false
+  line.renderOrder = 2
+  return line
 }
 
 function shell(): Mesh {
@@ -104,18 +159,51 @@ function rocket(): Group {
   return group
 }
 
+function vary(): number {
+  return 0.9 + Math.random() * 0.2
+}
+
+function tracerStep(
+  dirX: number,
+  dirZ: number,
+  dt: number,
+  speedPx: number,
+  pixelsPerUnit: (dirX: number, dirZ: number) => number,
+): number {
+  const per = pixelsPerUnit(dirX, dirZ)
+  if (per <= 1e-3) return (40 * speedPx) / TRACER_PX_PER_SEC * dt
+  return (speedPx / per) * dt
+}
+
 function ballistic(kind: WeaponKind): boolean {
   return kind === WeaponKind.Shell || kind === WeaponKind.Rocket
 }
 
-function place(shot: LiveShot) {
-  if (shot.object instanceof Line) {
-    const position = shot.object.geometry.getAttribute('position')
+function placeTracer(shot: LiveShot, pixelsPerUnit: (dirX: number, dirZ: number) => number) {
+  if (!(shot.object instanceof Line)) return
+  const dx = shot.aimX - shot.originX
+  const dz = shot.aimZ - shot.originZ
+  const dist = Math.hypot(dx, dz)
+  const position = shot.object.geometry.getAttribute('position')
+  if (dist < 1e-4) {
     position.setXYZ(0, shot.originX, SHOT_Y, shot.originZ)
-    position.setXYZ(1, shot.aimX, SHOT_Y, shot.aimZ)
+    position.setXYZ(1, shot.originX, SHOT_Y, shot.originZ)
     position.needsUpdate = true
     return
   }
+  const dirX = dx / dist
+  const dirZ = dz / dist
+  const head = Math.min(dist, shot.traveled)
+  const per = pixelsPerUnit(dirX, dirZ)
+  const streak = Math.min(head, per > 1e-3 ? shot.lengthPx / per : 0.25 * (shot.lengthPx / TRACER_PX))
+  const headX = shot.originX + dirX * head
+  const headZ = shot.originZ + dirZ * head
+  position.setXYZ(0, headX - dirX * streak, SHOT_Y, headZ - dirZ * streak)
+  position.setXYZ(1, headX, SHOT_Y, headZ)
+  position.needsUpdate = true
+}
+
+function place(shot: LiveShot) {
   const speed = shot.kind === WeaponKind.Rocket ? ROCKET_SPEED : 1
   const accel = shot.kind === WeaponKind.Rocket ? ROCKET_ACCEL : 0
   const t = flightProgress(shot.age, shot.flight, speed, accel)

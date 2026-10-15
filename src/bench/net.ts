@@ -94,7 +94,6 @@ const EVENT_NAMES: Record<number, string> = {
   [ServerEventKind.Credits]: 'credits',
   [ServerEventKind.Training]: 'training',
   [ServerEventKind.Rally]: 'rally',
-  [ServerEventKind.Primary]: 'primary',
   [ServerEventKind.Yields]: 'yields',
 }
 
@@ -565,7 +564,13 @@ function simulate(spec: CaseSpec, clock: { now: number }, realNow: () => number)
       else commander.orderMove(remote.enemyTown)
     } else if (spec.scenario === Scenario.Economy) {
       remote.actAt += TRAIN_CHECK_MS
-      if (replica.queue().length < TRAIN_QUEUE) commander.spawn(UnitTypeId.Scout)
+      const factory = replica.units.find(
+        (unit) => unit.ownerId === replica.playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0 && unit.progress >= 1,
+      )
+      if (factory && replica.queue().length < TRAIN_QUEUE) {
+        commander.select(factory.id)
+        commander.spawn(UnitTypeId.Scout)
+      }
     } else if (churn) {
       remote.actAt += CHURN_EVERY_MS
       churnAct(remote)

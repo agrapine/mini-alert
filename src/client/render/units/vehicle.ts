@@ -24,6 +24,10 @@ import { createTurret } from './turret.ts'
 export function createUnitMesh(unit: UnitSnapshot): Group {
   const group = meshFor(unit)
   addHealthBar(group, UNIT_TYPES[unit.typeId].maxHealth)
+  const weapon = UNIT_TYPES[unit.typeId].weapon
+  if (weapon.magazine > 1 && (UNIT_TYPES[unit.typeId].locomotion === Locomotion.Plane || UNIT_TYPES[unit.typeId].locomotion === Locomotion.Rotor)) {
+    addAmmoBar(group)
+  }
   return group
 }
 
@@ -63,6 +67,7 @@ export function syncUnitMesh(group: Group, unit: UnitSnapshot, selected: boolean
   const turret = group.getObjectByName('turret')
   if (turret) turret.rotation.y = wrapAngle(unit.turretYaw - unit.facing)
   syncHealthBar(group, unit, showBars)
+  syncAmmoBar(group, unit, selected && showBars)
   if (group.userData.paint === unit.color && group.userData.selected === selected) return
   group.userData.paint = unit.color
   group.userData.selected = selected
@@ -96,6 +101,11 @@ export function scorchUnit(group: Group) {
   if (bar) {
     bar.removeFromParent()
     releaseMesh(bar)
+  }
+  const ammo = group.getObjectByName('ammo-bar')
+  if (ammo) {
+    ammo.removeFromParent()
+    releaseMesh(ammo)
   }
   group.traverse((obj) => {
     if (!(obj instanceof Mesh)) return
@@ -152,6 +162,49 @@ function addHealthBar(group: Group, maxHealth: number) {
   bar.add(back, fill)
   group.add(bar)
   group.userData.maxHealth = maxHealth
+}
+
+function addAmmoBar(group: Group) {
+  const span = meshNumber(group, 'span', 0.7)
+  const bodyHeight = meshNumber(group, 'bodyHeight', 0.44)
+  const width = span < 0.7 ? span * 0.9 : Math.max(0.72, span * 0.55)
+  const height = 0.045
+  const bar = new Group()
+  bar.name = 'ammo-bar'
+  bar.position.y = -bodyHeight / 2 - 0.08
+  const back = new Mesh(
+    new PlaneGeometry(width, height),
+    new MeshBasicMaterial({ color: 0x1a1c14, side: DoubleSide }),
+  )
+  back.userData.healthBar = true
+  const fill = new Mesh(
+    new PlaneGeometry(width, height),
+    new MeshBasicMaterial({ color: 0xe6c15a, side: DoubleSide }),
+  )
+  fill.name = 'ammo-fill'
+  fill.position.z = 0.01
+  fill.userData.healthBar = true
+  fill.userData.barWidth = width
+  bar.add(back, fill)
+  group.add(bar)
+}
+
+function syncAmmoBar(group: Group, unit: UnitSnapshot, show: boolean) {
+  const bar = group.getObjectByName('ammo-bar')
+  if (!bar) return
+  const magazine = UNIT_TYPES[unit.typeId].weapon.magazine
+  bar.visible = show && magazine > 1
+  if (!bar.visible) return
+  bar.rotation.set(0, 0, 0)
+  bar.rotateY(cameraYaw - unit.facing)
+  bar.rotateX(-PITCH)
+  const fill = group.getObjectByName('ammo-fill')
+  if (!(fill instanceof Mesh)) return
+  const rounds = unit.rounds ?? magazine
+  const ratio = magazine <= 0 ? 0 : Math.max(0, Math.min(1, rounds / magazine))
+  const width = typeof fill.userData.barWidth === 'number' ? fill.userData.barWidth : 0.72
+  fill.scale.x = Math.max(ratio, 0.001)
+  fill.position.x = ((ratio - 1) * width) / 2
 }
 
 function syncHealthBar(group: Group, unit: UnitSnapshot, show: boolean) {

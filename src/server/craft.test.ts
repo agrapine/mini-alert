@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { bayTile, Flight } from '../shared/flight.ts'
-import { AIRPORT, CRUISER, JET, SHIPYARD, UnitTypeId, WeaponKind } from '../shared/unit-types.ts'
+import { AIRPORT, CRUISER, JET, SHIPYARD, UnitTypeId, WeaponKind, yardOf } from '../shared/unit-types.ts'
 import { CREDIT_PER_POPULATION } from './player.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { Game } from './game.ts'
@@ -30,12 +30,12 @@ describe('craft', () => {
     const human = game.addPlayer()
     seat(game, human.id, 10, 8)
     padPop(game, human.id, AIRPORT.supply + JET.supply)
-    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(false)
+    expect(train(game, human.id, UnitTypeId.Jet)).toBe(false)
     expect(game.placeBuilding(human.id, UnitTypeId.Airport, { x: 4, y: 6 })).toBe(true)
     game.finishBuild(human.id)
     const airport = game.units.find((unit) => unit.typeId === UnitTypeId.Airport)
     expect(airport).toBeDefined()
-    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Jet)).toBe(true)
     game.tick(JET.buildTime)
     const jet = game.units.find((unit) => unit.typeId === UnitTypeId.Jet)
     expect(jet).toBeDefined()
@@ -73,7 +73,7 @@ describe('craft', () => {
     expect(game.placeBuilding(human.id, UnitTypeId.Shipyard, { x: 6, y: 6 })).toBe(false)
     expect(game.placeBuilding(human.id, UnitTypeId.Shipyard, { x: 12, y: 3 })).toBe(true)
     game.finishBuild(human.id)
-    expect(game.trySpawn(human.id, UnitTypeId.Cruiser)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Cruiser)).toBe(true)
     game.tick(20)
     const ship = game.units.find((unit) => unit.typeId === UnitTypeId.Cruiser)
     expect(ship).toBeDefined()
@@ -145,8 +145,8 @@ describe('craft', () => {
     const airport = game.units.find((unit) => unit.typeId === UnitTypeId.Airport)
     expect(airport).toBeDefined()
     if (!airport) return
-    for (let i = 0; i < 6; i++) expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(false)
+    for (let i = 0; i < 6; i++) expect(train(game, human.id, UnitTypeId.Jet)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Jet)).toBe(false)
     game.tick(40)
     const jets = game.units.filter((unit) => unit.typeId === UnitTypeId.Jet)
     expect(jets).toHaveLength(6)
@@ -184,7 +184,7 @@ describe('craft', () => {
     expect(Math.hypot(left.pos.x - right.pos.x, left.pos.z - right.pos.z)).toBeGreaterThan(0.8)
     left.health = 0
     game.tick(STEP)
-    expect(game.trySpawn(human.id, UnitTypeId.Jet)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Jet)).toBe(true)
   })
 
   it('holds jet rockets until the plane is in the air', () => {
@@ -206,4 +206,34 @@ describe('craft', () => {
     jet.facing = 0
     expect(game.tick(STEP).some((shot) => shot.kind === WeaponKind.Rocket)).toBe(true)
   })
+
+  it('assigns jets with no airport when one finishes', () => {
+    const game = new Game(new World(28, 16))
+    const human = game.addPlayer()
+    seat(game, human.id, 10, 8)
+    padPop(game, human.id, AIRPORT.supply)
+    const flying = game.spawn(human, UnitTypeId.Jet, { x: 20, y: 4 }, 0)
+    flying.flight = Flight.Cruise
+    flying.altitude = 2.6
+    const parked = game.spawn(human, UnitTypeId.Jet, { x: 18, y: 8 }, 0)
+    expect(game.placeBuilding(human.id, UnitTypeId.Airport, { x: 4, y: 6 })).toBe(true)
+    game.finishBuild(human.id)
+    const airport = game.units.find((unit) => unit.typeId === UnitTypeId.Airport)
+    expect(airport).toBeDefined()
+    if (!airport) return
+    expect(flying.home).toEqual({ x: airport.tile.x, y: airport.tile.y })
+    expect(flying.bay).toBeGreaterThanOrEqual(0)
+    expect(flying.returning).toBe(false)
+    expect(parked.home).toEqual({ x: airport.tile.x, y: airport.tile.y })
+    expect(parked.returning).toBe(true)
+    expect(parked.bay).not.toBe(flying.bay)
+  })
 })
+
+function train(game: Game, playerId: number, typeId: UnitTypeId, yardId?: number): boolean {
+  const id =
+    yardId ??
+    game.units.find((unit) => unit.ownerId === playerId && unit.typeId === yardOf(typeId) && unit.health > 0 && unit.progress >= 1)?.id ??
+    0
+  return game.trySpawn(playerId, typeId, id)
+}

@@ -7,7 +7,7 @@ import type { Terrain, TileCoord } from '../../shared/tiles.ts'
 import { MoveDomain, spanOf, UNIT_TYPES, UnitTypeId } from '../../shared/unit-types.ts'
 import { cursorFor } from './cursor.ts'
 import { bindGroupKeys } from './groups.ts'
-import { bindPanKeys } from './keys.ts'
+import { bindPanKeys, typing } from './keys.ts'
 import { PanButton, PanDrag } from './pan.ts'
 
 const DRAG_SELECT_PX = 8
@@ -360,8 +360,11 @@ export function bindInput(
       refreshCursor(event.clientX, event.clientY)
       return
     }
-    const tile = view.pickTile(event.clientX, event.clientY)
-    applyClick(tile, picked, replica, player, view, event)
+    let tile = view.pickTile(event.clientX, event.clientY)
+    const plot = view.pickCityBuilding(event.clientX, event.clientY)
+    if ((event.ctrlKey || event.metaKey) && player.commanding() && plot) tile = plot
+    const hallTile = plot ?? tile
+    applyClick(tile, picked, replica, player, view, event, hallTile ? replica.ownedHall(hallTile) : null)
     lastPick = picked && picked.ownerId === replica.playerId
       ? { typeId: picked.typeId, at: event.timeStamp, x: event.clientX, y: event.clientY }
       : null
@@ -400,6 +403,10 @@ export function bindInput(
 
   window.addEventListener('keydown', (event) => {
     syncRanges(event)
+    if (!typing(event) && event.key.toLowerCase() === 'z' && !event.repeat) {
+      event.preventDefault()
+      view.pingMoves(player.orderReturn())
+    }
     if (event.code !== 'Space') return
     if (document.body.classList.contains('lobby')) return
     const target = event.target
@@ -446,7 +453,7 @@ export function orderAt(
   }
   const standing = replica.occupant(tile)
   const target = standing && (standing.ownerId !== replica.playerId || replica.homePad(standing, player.selected()))
-  applyClick(tile, target ? standing : undefined, replica, player, view, mods)
+  applyClick(tile, target ? standing : undefined, replica, player, view, mods, replica.ownedHall(tile))
 }
 
 function placeAt(tile: TileCoord, replica: Replica, player: Commander, view: GameView) {
@@ -476,13 +483,18 @@ function applyClick(
   player: Commander,
   view: GameView,
   mods: ClickMods,
+  hall: number | null = null,
 ) {
   const standing = picked ?? (tile ? replica.occupant(tile) : undefined)
-  const shellGround = (mods.ctrlKey || mods.metaKey) && player.commanding() && tile !== null
+  const force = (mods.ctrlKey || mods.metaKey) && player.commanding()
   const ownUnit = picked !== undefined && picked.ownerId === replica.playerId
+  const ownStanding = standing !== undefined && standing.ownerId === replica.playerId
   if (ownUnit && mods.shiftKey) {
     player.toggle(picked.id)
-  } else if (shellGround && tile && !ownUnit) {
+  } else if (force && ownStanding && standing) {
+    player.orderAttack(standing.id)
+    view.ping(standing.x, standing.z, true)
+  } else if (force && tile) {
     player.orderAttackGround(tile)
     view.ping(tile.x + 0.5, tile.y + 0.5, true)
   } else if (standing && standing.ownerId !== replica.playerId && player.commanding()) {
@@ -490,16 +502,16 @@ function applyClick(
     view.ping(standing.x, standing.z, true)
   } else if (picked && picked.ownerId === replica.playerId && replica.homePad(picked, player.selected())) {
     const pad = { x: picked.tileX, y: picked.tileY }
-    player.orderMove(pad)
-    view.ping(pad.x + 0.5, pad.y + 0.5, false)
+    view.pingMoves(player.orderMove(pad))
   } else if (picked && picked.ownerId === replica.playerId) {
     player.select(picked.id)
+  } else if (hall !== null) {
+    player.selectCity(hall)
   } else if (tile && player.factorySelected() && replica.isOpen(tile, [])) {
     player.setRally(tile)
     view.ping(tile.x + 0.5, tile.y + 0.5, false)
   } else if (tile && player.commanding() && replica.canCommand(tile, player.selected())) {
-    player.orderMove(tile)
-    view.ping(tile.x + 0.5, tile.y + 0.5, false)
+    view.pingMoves(player.orderMove(tile))
   }
 }
 

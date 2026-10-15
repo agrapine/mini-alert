@@ -20,18 +20,10 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
+import { CITY_CATALOG, eachBuildingTile, HALL_SCALE, HALL_SPAN, NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
 import type { CityState } from '../../shared/protocol.ts'
 import { TILE_TOP } from './terrain.ts'
 
-import buildingAUrl from '../../../assets/city/building-a.obj?url'
-import buildingBUrl from '../../../assets/city/building-b.obj?url'
-import buildingCUrl from '../../../assets/city/building-c.obj?url'
-import buildingDUrl from '../../../assets/city/building-d.obj?url'
-import buildingEUrl from '../../../assets/city/building-e.obj?url'
-import buildingFUrl from '../../../assets/city/building-f.obj?url'
-import buildingGUrl from '../../../assets/city/building-g.obj?url'
-import buildingHUrl from '../../../assets/city/building-h.obj?url'
 import roadStraightUrl from '../../../assets/city/road-straight.obj?url'
 import roadCornerUrl from '../../../assets/city/road-corner.obj?url'
 import roadSplitUrl from '../../../assets/city/road-split.obj?url'
@@ -42,18 +34,20 @@ import streetlightUrl from '../../../assets/city/streetlight.obj?url'
 import signalAUrl from '../../../assets/city/signal-a.obj?url'
 import signalBUrl from '../../../assets/city/signal-b.obj?url'
 import signalCUrl from '../../../assets/city/signal-c.obj?url'
-import textureUrl from '../../../assets/city/texture.png?url'
+import streetTextureUrl from '../../../assets/city/texture.png?url'
+import buildingTextureUrl from '../../../assets/kenney-industrial/colormap.png?url'
 
-const BUILDING_URLS = [
-  buildingAUrl,
-  buildingBUrl,
-  buildingCUrl,
-  buildingDUrl,
-  buildingEUrl,
-  buildingFUrl,
-  buildingGUrl,
-  buildingHUrl,
-]
+const modelFiles = import.meta.glob('../../../assets/kenney-industrial/*.obj', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+})
+
+/** World units per Kenney unit. 0.36 fits the largest plant inside one tile. */
+const CITY_MODEL_UNIT = 0.36
+/** Size of city buildings relative to that fit. 1.25 sits them closer to the street meshes. */
+export const CITY_BUILDING_SCALE = 1.6
+const KENNEY_SCALE = CITY_MODEL_UNIT * CITY_BUILDING_SCALE
 
 const STREET_URLS = [
   roadStraightUrl,
@@ -68,7 +62,7 @@ const STREET_URLS = [
   signalCUrl,
 ]
 
-type Fit = 'building' | 'road' | 'prop'
+type Fit = 'road' | 'prop'
 
 type CityView = {
   layout: CityLayout
@@ -76,6 +70,7 @@ type CityView = {
   owner: { value: number }
   team: Vector3
   buildingMaterial: MeshStandardMaterial
+  roadMaterial: MeshStandardMaterial
   cluster: Group
   track: Mesh
   trackMaterial: MeshBasicMaterial
@@ -86,8 +81,7 @@ type CityView = {
 
 type Kit = {
   streetsMaterial: MeshStandardMaterial
-  neutralMaterial: MeshStandardMaterial
-  texture: MeshStandardMaterial['map']
+  buildingTexture: MeshStandardMaterial['map']
   swatches: DataTexture
   buildings: BufferGeometry[]
   streets: BufferGeometry[]
@@ -101,15 +95,17 @@ export class CityLayer {
   private kit: Kit | null = null
 
   async load() {
-    const texture = await new TextureLoader().loadAsync(textureUrl)
-    texture.colorSpace = SRGBColorSpace
-    texture.flipY = true
-    const streetsMaterial = new MeshStandardMaterial({ map: texture, roughness: 0.82, metalness: 0 })
+    const streetTexture = await new TextureLoader().loadAsync(streetTextureUrl)
+    streetTexture.colorSpace = SRGBColorSpace
+    streetTexture.flipY = true
+    const buildingTexture = await new TextureLoader().loadAsync(buildingTextureUrl)
+    buildingTexture.colorSpace = SRGBColorSpace
+    buildingTexture.flipY = true
+    const streetsMaterial = new MeshStandardMaterial({ map: streetTexture, roughness: 0.82, metalness: 0 })
     const swatches = swatchTexture()
-    const buildings = await Promise.all(BUILDING_URLS.map((url) => loadFitted(url, 'building')))
+    const buildings = await Promise.all(CITY_CATALOG.map((entry) => loadKenney(catalogUrl(entry.name))))
     const streets = await Promise.all(STREET_URLS.map((url, index) => loadFitted(url, index >= StreetKind.Lamp ? 'prop' : 'road')))
-    const neutralMaterial = teamMaterial(texture, swatches, { value: 0 }, new Vector3(1, 1, 1))
-    this.kit = { streetsMaterial, neutralMaterial, texture, swatches, buildings, streets }
+    this.kit = { streetsMaterial, buildingTexture, swatches, buildings, streets }
     this.present(this.pendingLayouts, this.pendingStates)
   }
 
@@ -143,7 +139,8 @@ export class CityLayer {
   private makeView(layout: CityLayout, kit: Kit): CityView {
     const owner = { value: 0 }
     const team = new Vector3(1, 1, 1)
-    const buildingMaterial = teamMaterial(kit.texture, kit.swatches, owner, team)
+    const buildingMaterial = teamMaterial(kit.buildingTexture, kit.swatches, owner, team)
+    const roadMaterial = roadMaterialOf(kit.streetsMaterial.map, owner, team)
     const cluster = new Group()
     const trackMaterial = new MeshBasicMaterial({
       color: NEUTRAL_CITY,
@@ -177,13 +174,14 @@ export class CityLayer {
       siteKey: '',
       owner,
       team,
+      buildingMaterial,
+      roadMaterial,
       cluster,
       track,
       trackMaterial,
       ring,
       ringMaterial,
       shown: 0,
-      buildingMaterial,
     }
   }
 
@@ -195,23 +193,44 @@ export class CityLayer {
       view.cluster.remove(child)
       if (child instanceof Mesh) child.geometry.dispose()
     }
-    const streets: BufferGeometry[] = []
+    const roads: BufferGeometry[] = []
+    const props: BufferGeometry[] = []
     const teams: BufferGeometry[] = []
     const keeps: BufferGeometry[] = []
+    const teamPlots: { x: number; y: number }[] = []
+    const keepPlots: { x: number; y: number }[] = []
     for (const street of view.layout.streets) {
       const model = kit.streets[street.kind] ?? kit.streets[0]
       const lift = street.kind >= StreetKind.Lamp ? 0.06 : 0.015
-      streets.push(placeGeometry(model, street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz, street.yaw * (Math.PI / 2)))
+      const geometry = placeGeometry(model, street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz, street.yaw * (Math.PI / 2))
+      if (street.kind >= StreetKind.Lamp) props.push(geometry)
+      else roads.push(geometry)
     }
     for (const building of view.layout.buildings) {
       const model = kit.buildings[building.model] ?? kit.buildings[0]
-      const geometry = placeGeometry(model, building.x + 0.5, TILE_TOP + 0.06, building.y + 0.5, building.yaw * (Math.PI / 2))
-      if (building.keep) keeps.push(geometry)
-      else teams.push(geometry)
+      const span = building.keep ? HALL_SPAN : 1
+      const geometry = placeGeometry(
+        model,
+        building.x + span / 2,
+        TILE_TOP + 0.06,
+        building.y + span / 2,
+        building.yaw * (Math.PI / 2),
+        building.keep ? HALL_SCALE : 1,
+      )
+      const plots: { x: number; y: number }[] = []
+      eachBuildingTile(building, (x, y) => plots.push({ x, y }))
+      if (building.keep) {
+        keeps.push(geometry)
+        keepPlots.push(...plots)
+      } else {
+        teams.push(geometry)
+        teamPlots.push(...plots)
+      }
     }
-    addMerged(view.cluster, streets, kit.streetsMaterial)
-    addMerged(view.cluster, teams, view.buildingMaterial)
-    addMerged(view.cluster, keeps, kit.neutralMaterial)
+    addMerged(view.cluster, roads, view.roadMaterial)
+    addMerged(view.cluster, props, kit.streetsMaterial)
+    addMerged(view.cluster, teams, view.buildingMaterial, teamPlots)
+    addMerged(view.cluster, keeps, view.buildingMaterial, keepPlots)
     const center = blobCenter(view.layout)
     const reach = Math.max(view.layout.span, Math.ceil(Math.sqrt(view.layout.tiles.length)))
     if (view.ring.userData.reach !== reach) {
@@ -290,6 +309,7 @@ function teamMaterial(
   team: Vector3,
 ): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ map, roughness: 0.82, metalness: 0 })
+  material.customProgramCacheKey = () => 'city-swatch'
   material.onBeforeCompile = (shader) => {
     shader.uniforms.cityOwner = owner
     shader.uniforms.teamColor = { value: team }
@@ -315,6 +335,36 @@ function teamMaterial(
           if (cityOwner > 0.5 && abs(dest - cell) > 0.5) {
             float shade = max(sampledDiffuseColor.r, max(sampledDiffuseColor.g, sampledDiffuseColor.b));
             sampledDiffuseColor.rgb = teamColor * shade;
+          }
+          diffuseColor *= sampledDiffuseColor;
+        #endif`,
+      )
+  }
+  return material
+}
+
+function roadMaterialOf(map: MeshStandardMaterial['map'], owner: { value: number }, team: Vector3): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({ map, roughness: 0.82, metalness: 0 })
+  material.customProgramCacheKey = () => 'city-road-paint'
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.cityOwner = owner
+    shader.uniforms.teamColor = { value: team }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        uniform float cityOwner;
+        uniform vec3 teamColor;`,
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#ifdef USE_MAP
+          vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+          if (cityOwner > 0.5) {
+            float shade = max(sampledDiffuseColor.r, max(sampledDiffuseColor.g, sampledDiffuseColor.b));
+            float chroma = shade - min(sampledDiffuseColor.r, min(sampledDiffuseColor.g, sampledDiffuseColor.b));
+            float paint = max(smoothstep(0.08, 0.2, chroma), smoothstep(0.35, 0.55, shade));
+            sampledDiffuseColor.rgb = mix(teamColor * shade, sampledDiffuseColor.rgb, paint);
           }
           diffuseColor *= sampledDiffuseColor;
         #endif`,
@@ -350,22 +400,35 @@ function cell(col: number, row: number): number {
   return col + row * 8
 }
 
+function catalogUrl(name: string): string {
+  for (const path in modelFiles) {
+    if (path.endsWith(`/${name}.obj`)) return modelFiles[path]
+  }
+  throw new Error(`missing city model ${name}`)
+}
+
 const placeMatrix = new Matrix4()
 const placePosition = new Vector3()
 const placeQuaternion = new Quaternion()
 const placeScale = new Vector3(1, 1, 1)
 const placeUp = new Vector3(0, 1, 0)
 
-function placeGeometry(source: BufferGeometry, x: number, y: number, z: number, yaw: number): BufferGeometry {
+function placeGeometry(source: BufferGeometry, x: number, y: number, z: number, yaw: number, scale = 1): BufferGeometry {
   placePosition.set(x, y, z)
   placeQuaternion.setFromAxisAngle(placeUp, yaw)
+  placeScale.set(scale, scale, scale)
   placeMatrix.compose(placePosition, placeQuaternion, placeScale)
   const geometry = source.clone()
   geometry.applyMatrix4(placeMatrix)
   return geometry
 }
 
-function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandardMaterial) {
+function addMerged(
+  group: Group,
+  parts: BufferGeometry[],
+  material: MeshStandardMaterial,
+  plots?: readonly { x: number; y: number }[],
+) {
   if (parts.length === 0) return
   let geometry = parts[0]
   if (parts.length > 1) {
@@ -374,18 +437,34 @@ function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandard
       for (const part of parts) part.dispose()
       geometry = merged
     } else {
-      for (const part of parts) group.add(staticMesh(part, material))
+      for (const part of parts) group.add(staticMesh(part, material, plots))
       return
     }
   }
-  group.add(staticMesh(geometry, material))
+  group.add(staticMesh(geometry, material, plots))
 }
 
-function staticMesh(geometry: BufferGeometry, material: MeshStandardMaterial): Mesh {
+function staticMesh(
+  geometry: BufferGeometry,
+  material: MeshStandardMaterial,
+  plots?: readonly { x: number; y: number }[],
+): Mesh {
   geometry.computeBoundingSphere()
   const mesh = new Mesh(geometry, material)
   mesh.matrixAutoUpdate = false
+  if (plots) mesh.userData.plots = plots
   return mesh
+}
+
+async function loadKenney(url: string): Promise<BufferGeometry> {
+  const root = await new OBJLoader().loadAsync(url)
+  root.updateMatrixWorld(true)
+  const raw = new Box3().setFromObject(root)
+  const center = raw.getCenter(new Vector3())
+  root.scale.setScalar(KENNEY_SCALE)
+  root.position.set(-center.x * KENNEY_SCALE, -raw.min.y * KENNEY_SCALE, -center.z * KENNEY_SCALE)
+  root.updateMatrixWorld(true)
+  return mergedGeometry(root)
 }
 
 async function loadFitted(url: string, mode: Fit): Promise<BufferGeometry> {
@@ -394,11 +473,14 @@ async function loadFitted(url: string, mode: Fit): Promise<BufferGeometry> {
   const raw = new Box3().setFromObject(root)
   const size = raw.getSize(new Vector3())
   const center = raw.getCenter(new Vector3())
-  const scale =
-    mode === 'building' ? 0.82 / Math.max(size.x, size.z) : mode === 'road' ? 1 / Math.max(size.x, size.z) : 1.35 / Math.max(size.y, 0.001)
+  const scale = mode === 'road' ? 1 / Math.max(size.x, size.z) : 1.35 / Math.max(size.y, 0.001)
   root.scale.setScalar(scale)
   root.position.set(-center.x * scale, -raw.min.y * scale, -center.z * scale)
   root.updateMatrixWorld(true)
+  return mergedGeometry(root)
+}
+
+function mergedGeometry(root: Group): BufferGeometry {
   const parts: BufferGeometry[] = []
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return

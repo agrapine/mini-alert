@@ -9,12 +9,12 @@ export const enum ClientMessageKind {
   PlaceBuilding = 4,
   CancelSpawn = 5,
   CancelBuilding = 6,
-  SetPrimary = 7,
   SetRally = 8,
   OrderAttackGround = 9,
   PlaceCity = 10,
   RequestSnapshot = 11,
   Ping = 12,
+  SetCityFocus = 13,
 }
 
 export const enum ServerEventKind {
@@ -31,8 +31,8 @@ export const enum ServerEventKind {
   Credits = 11,
   Training = 12,
   Rally = 13,
-  Primary = 14,
   Yields = 15,
+  Trace = 16,
 }
 
 export type OrderMove = {
@@ -44,6 +44,7 @@ export type OrderMove = {
 export type OrderSpawn = {
   kind: ClientMessageKind.Spawn
   typeId: UnitTypeId
+  yardId: number
 }
 
 export type OrderAttack = {
@@ -67,16 +68,12 @@ export type PlaceBuilding = {
 export type CancelSpawn = {
   kind: ClientMessageKind.CancelSpawn
   typeId: UnitTypeId
+  yardId: number
 }
 
 export type CancelBuilding = {
   kind: ClientMessageKind.CancelBuilding
   typeId: UnitTypeId
-}
-
-export type SetPrimary = {
-  kind: ClientMessageKind.SetPrimary
-  unitId: number
 }
 
 export type SetRally = {
@@ -97,6 +94,12 @@ export type Ping = {
   kind: ClientMessageKind.Ping
 }
 
+export type SetCityFocus = {
+  kind: ClientMessageKind.SetCityFocus
+  index: number
+  focus: number
+}
+
 export type ClientMessage =
   | OrderMove
   | OrderSpawn
@@ -105,11 +108,11 @@ export type ClientMessage =
   | PlaceBuilding
   | CancelSpawn
   | CancelBuilding
-  | SetPrimary
   | SetRally
   | PlaceCity
   | RequestSnapshot
   | Ping
+  | SetCityFocus
 
 export type WelcomeEvent = {
   kind: ServerEventKind.Welcome
@@ -173,6 +176,7 @@ export type UnitSnapshot = {
   altitude?: number
   orbit?: TileCoord | null
   bay?: number
+  rounds?: number
 }
 
 export type ShotEvent = {
@@ -194,6 +198,7 @@ export type ShotHit = {
 export type TrainJob = {
   typeId: UnitTypeId
   progress: number
+  yardId: number
 }
 
 export type CitySite = {
@@ -211,6 +216,8 @@ export type CityState = {
   challengerId: number
   challengerColor: number
   grown: number
+  /** -2..2. Missing on older snapshots means the center step. */
+  focus?: number
   ruins: TileCoord[]
   sites: CitySite[]
 }
@@ -278,14 +285,20 @@ export type RallyEvent = {
   rally: TileCoord | null
 }
 
-export type PrimaryEvent = {
-  kind: ServerEventKind.Primary
-  primaryFactoryId: number
-}
-
 export type YieldsEvent = {
   kind: ServerEventKind.Yields
   yields: MapPoint[]
+}
+
+export type TraceSample = {
+  slot: number
+  ms: number
+}
+
+export type TraceEvent = {
+  kind: ServerEventKind.Trace
+  budget: number
+  samples: TraceSample[]
 }
 
 export type SnapshotEvent = {
@@ -295,7 +308,6 @@ export type SnapshotEvent = {
   cities: CityRecord[]
   credits: number
   training: TrainJob[]
-  primaryFactoryId: number
   rally: TileCoord | null
 }
 
@@ -313,8 +325,8 @@ export type ServerEvent =
   | CreditsEvent
   | TrainingEvent
   | RallyEvent
-  | PrimaryEvent
   | YieldsEvent
+  | TraceEvent
 
 export type ServerFrame = {
   tick: number

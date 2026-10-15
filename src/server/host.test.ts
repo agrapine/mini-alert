@@ -4,7 +4,7 @@ import { canPlaceCityBuilding } from '../shared/cities.ts'
 import { Flight } from '../shared/flight.ts'
 import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, wrapAngle, type MotionState } from '../shared/motion.ts'
 import { ClientMessageKind, ServerEventKind, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
-import { Terrain } from '../shared/tiles.ts'
+import { Terrain, scarStrength } from '../shared/tiles.ts'
 import { JET, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
@@ -259,6 +259,30 @@ describe('host snapshots', () => {
     expect((echo.get(standing.id) as UnitSnapshot).x - rest).toBeGreaterThan(0.3)
   })
 
+  it('sends tiles explored before a reload in the next sync', () => {
+    const game = new Game(new World(64, 64))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 8, y: 8 })
+    const host = new ServerHost(game)
+    const first: ServerFrame[] = []
+    const play = host.attach(player.id, true, (frame) => first.push(frame))
+    play.sync()
+    const started = explored(first)
+    game.orderMove(player.id, [scout.id], { x: 48, y: 48 })
+    for (let i = 0; i < 900 && Math.hypot(scout.pos.x - 8.5, scout.pos.z - 8.5) < SCOUT.weapon.sight + 6; i++) {
+      host.tick(SIM_STEP)
+    }
+    const seen = explored(first)
+    expect(seen.size).toBeGreaterThan(started.size)
+    expect(Math.hypot(scout.pos.x - 8.5, scout.pos.z - 8.5)).toBeGreaterThan(SCOUT.weapon.sight + 4)
+    play.close()
+    const reloaded: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => reloaded.push(frame)).sync()
+    const snapshot = events(reloaded).find((event) => event.kind === ServerEventKind.Snapshot)
+    const again = new Set(snapshot?.map.cells.map((cell) => `${cell.x},${cell.y}`))
+    expect([...seen].filter((tile) => !again.has(tile))).toEqual([])
+  })
+
   it('explores terrain two tiles past sight without revealing units there', () => {
     const game = new Game(new World(64, 64))
     const player = game.addPlayer()
@@ -457,6 +481,26 @@ describe('host snapshots', () => {
       expect(patch.map.coast).toEqual([])
       expect(patch.map.roads).toEqual([])
     }
+  })
+
+  it('patches a scarred tile', () => {
+    const tiles = new Uint8Array(24 * 24).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(24, 24, tiles))
+    const player = game.addPlayer()
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 10, y: 8 }, 0)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    frames.length = 0
+    play.command({ kind: ClientMessageKind.OrderAttackGround, unitIds: [tank.id], tile: { x: 10, y: 10 } }, 1, host.tickNo)
+    let marked = false
+    for (let i = 0; i < 1500 && !marked; i++) {
+      host.tick(SIM_STEP)
+      const cells = events(frames).flatMap((event) => (event.kind === ServerEventKind.MapPatch ? event.map.cells : []))
+      marked = cells.some((cell) => cell.x === 10 && cell.y === 10 && scarStrength(cell.terrain) > 0)
+    }
+    expect(marked).toBe(true)
   })
 
   it('answers a snapshot request at the server tick and the client keeps that path', () => {

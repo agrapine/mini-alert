@@ -54,7 +54,6 @@ function welcomed(replica: Replica, units: UnitSnapshot[]): Replica {
         cities: [],
         credits: 0,
         training: [],
-        primaryFactoryId: 0,
         rally: null,
       },
     ],
@@ -466,9 +465,9 @@ describe('replica drawing', () => {
 
   it('shows an expected unit in the queue until its command is acknowledged', () => {
     const replica = joined(scout(2.5, []))
-    replica.expectTraining(5, UnitTypeId.MedTank)
+    replica.expectTraining(5, UnitTypeId.MedTank, 2)
     replica.apply({ tick: 10, ack: 4, events: [] })
-    expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, progress: 0 }])
+    expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, yardId: 2, progress: 0 }])
     replica.apply({ tick: 10, ack: 5, events: [] })
     expect(replica.queue()).toEqual([])
   })
@@ -478,7 +477,7 @@ describe('replica drawing', () => {
     const update = (tick: number, progress: number) => ({
       tick,
       ack: 0,
-      events: [{ kind: ServerEventKind.Training as const, training: [{ typeId: UnitTypeId.Scout, progress }] }],
+      events: [{ kind: ServerEventKind.Training as const, training: [{ typeId: UnitTypeId.Scout, progress, yardId: 4 }] }],
     })
     replica.apply(update(10, 0.1))
     replica.apply(update(16, 0.2))

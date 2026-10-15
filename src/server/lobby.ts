@@ -1,12 +1,17 @@
 import { Buffer } from 'node:buffer'
 import { randomBytes } from 'node:crypto'
 import {
+  DEFAULT_LANDFORM,
   DEFAULT_MAP_SIZE,
+  LAKE_DEFAULT,
   AI_PACE_DEFAULT,
   clampAiPace,
+  clampLakes,
+  isLandform,
   isMapSize,
   LobbyClientKind,
   LobbyServerKind,
+  Landform,
   MapSize,
   RoomStatus,
   SlotKind,
@@ -23,7 +28,7 @@ import {
   type WaitingRoom,
 } from '../shared/lobby.ts'
 import { PLAYER_COLORS } from '../shared/players.ts'
-import type { ClientMessage, MapPoint, ServerFrame } from '../shared/protocol.ts'
+import { ServerEventKind, type ClientMessage, type MapPoint, type ServerFrame, type TraceSample } from '../shared/protocol.ts'
 import { AiPlayer } from '../ai/player.ts'
 import type { RemotePlay } from './host.ts'
 import { ServerHost } from './host.ts'
@@ -80,6 +85,8 @@ type GameRoom = {
   hostId: number
   status: RoomStatus
   mapSize: MapSize
+  landform: Landform
+  lakes: number
   slots: Slot[]
   memberIds: number[]
   chat: ChatLine[]
@@ -176,6 +183,8 @@ export class Lobby {
     const room = body as unknown as GameRoom
     room.generating = false
     room.match = null
+    if (!isLandform(room.landform)) room.landform = DEFAULT_LANDFORM
+    room.lakes = clampLakes(room.lakes)
     if (saved) {
       if (!(saved.sim instanceof Game) || !Array.isArray(saved.factions) || !(saved.owners instanceof Map)) return false
       room.match = this.boot(saved.sim, saved.factions, saved.owners, room.aiPace)
@@ -274,6 +283,8 @@ export class Lobby {
     else if (message.kind === LobbyClientKind.SetSlotAi) this.fillAi(client, message.index)
     else if (message.kind === LobbyClientKind.ClearSlot) this.clearSlot(client, message.index)
     else if (message.kind === LobbyClientKind.SetMapSize) this.resize(client, message.size)
+    else if (message.kind === LobbyClientKind.SetLandform) this.setLandform(client, message.landform)
+    else if (message.kind === LobbyClientKind.SetLakes) this.setLakes(client, message.lakes)
     else if (message.kind === LobbyClientKind.StartGame) this.start(client)
     else if (message.kind === LobbyClientKind.Chat) this.say(client, message.text)
     else if (message.kind === LobbyClientKind.ViewAs) this.viewAs(client, message.playerId)
@@ -303,6 +314,20 @@ export class Lobby {
       if (!this.games.has(game.id) || !game.match) continue
       if (this.liveHumans(game) === 0) continue
       game.match.host.tick(dt)
+    }
+  }
+
+  pushTrace(samples: TraceSample[], budget: number) {
+    const frame: ServerFrame = {
+      tick: 0,
+      ack: 0,
+      events: [{ kind: ServerEventKind.Trace, samples, budget }],
+    }
+    for (const member of this.members.values()) {
+      if (!member.socket || member.gameId === null) continue
+      const game = this.games.get(member.gameId)
+      if (!game || game.status !== RoomStatus.Playing) continue
+      member.socket.sendGame(frame)
     }
   }
 
@@ -406,6 +431,28 @@ export class Lobby {
     this.queueGenerate(game, () => {
       game.mapSize = previousSize
       game.slots = previousSlots
+    })
+  }
+
+  private setLandform(client: Member, landform: unknown) {
+    const game = this.waitingGame(client)
+    if (!game || game.hostId !== client.id || typeof landform !== 'number' || !isLandform(landform) || landform === game.landform) return
+    const previous = game.landform
+    game.landform = landform
+    this.queueGenerate(game, () => {
+      game.landform = previous
+    })
+  }
+
+  private setLakes(client: Member, value: unknown) {
+    const game = this.waitingGame(client)
+    if (!game || game.hostId !== client.id || typeof value !== 'number') return
+    const lakes = clampLakes(value)
+    if (lakes === game.lakes) return
+    const previous = game.lakes
+    game.lakes = lakes
+    this.queueGenerate(game, () => {
+      game.lakes = previous
     })
   }
 
@@ -723,6 +770,8 @@ export class Lobby {
       hostId: host.id,
       status: RoomStatus.Waiting,
       mapSize,
+      landform: DEFAULT_LANDFORM,
+      lakes: LAKE_DEFAULT,
       slots: Array.from({ length: slotsForSize(mapSize) }, openSlot),
       memberIds: [],
       chat: [],
@@ -770,7 +819,7 @@ export class Lobby {
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const seed = Math.floor(Math.random() * 0x7fffffff) + 1
-        const next = generateIsland(seed, game.mapSize, game.mapSize)
+        const next = generateIsland(seed, game.mapSize, game.mapSize, { landform: game.landform, lakes: game.lakes })
         island = next
         if (next.towns.length >= need) break
       } catch {
@@ -858,6 +907,8 @@ export class Lobby {
         id: game.id,
         status: game.status,
         mapSize: game.mapSize,
+        landform: game.landform,
+        lakes: game.lakes,
         slots: this.slotViews(game),
         waiting: this.waitingPeople(game).map((person) => person.name),
       })
@@ -880,6 +931,8 @@ export class Lobby {
       hostId: game.hostId,
       status: game.status,
       mapSize: game.mapSize,
+      landform: game.landform,
+      lakes: game.lakes,
       slots: this.slotViews(game),
       waiting: this.waitingPeople(game),
       chat: game.chat.slice(),

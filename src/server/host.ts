@@ -24,6 +24,8 @@ import type { AiPlayer } from '../ai/player.ts'
 import { Replica } from '../client/replica.ts'
 import type { Game } from './game.ts'
 import type { Player } from './player.ts'
+import { __TRACE__, traceBegin, traceEnd } from './trace.ts'
+import { TraceSlot } from '../shared/trace.ts'
 
 const PROGRESS_STEPS = 40
 const LEDGER_TICKS = 6
@@ -81,6 +83,7 @@ type Memory = {
   layer: StaticLayer | null
   parking: Parking
   felledSeen: number
+  scarredSeen: number
   /** Tiles explored or changed since the last map patch went out. */
   unsentTiles: Set<number>
   seen: Set<number>
@@ -88,6 +91,7 @@ type Memory = {
   motionTick: Map<number, number>
   health: Map<number, number>
   progress: Map<number, number>
+  rounds: Map<number, number>
   cityCore: Map<number, string>
   cityProgress: Map<number, number>
   cityShape: Map<number, string>
@@ -98,7 +102,6 @@ type Memory = {
   trainingKinds: string | null
   training: string | null
   rally: string | null
-  primary: number | null
   lastSnapshotTick: number
   lastSnapshotAt: number
   lastSentTick: number
@@ -130,6 +133,8 @@ export class ServerHost {
   private cityBounds: Bounds[] | null = null
   private layers = new Map<number, StaticLayer>()
   private checkedLayers: Map<number, StaticLayer> | null = null
+  /** Tiles each owner has explored. A closed session keeps this so the next sync can send it. */
+  private exploredMaps = new Map<number, Uint8Array>()
   private parkings = new Map<number, Parking>()
   private checkedParkings: Set<Parking> | null = null
 
@@ -197,6 +202,7 @@ export class ServerHost {
     this.ais = []
     this.sessions.length = 0
     this.memory.clear()
+    this.exploredMaps.clear()
   }
 
   silence(playerId: number) {
@@ -210,12 +216,15 @@ export class ServerHost {
 
   tick(dt: number) {
     if (this.stopped) return
+    __TRACE__ && traceBegin(TraceSlot.Ai)
     for (const ai of this.ais) ai.update(dt)
+    __TRACE__ && traceEnd()
     const shots = this.game.tick(dt)
     const hits = this.game.takeHits()
     const yields = this.game.takeYields()
     this.game.takeDeaths()
     this.tickNo += 1
+    __TRACE__ && traceBegin(TraceSlot.Net)
     this.drop()
     const living = this.game.unitSnapshots()
     this.park(living)
@@ -226,6 +235,7 @@ export class ServerHost {
       }
       this.pushTick(session, living, shots, hits, yields)
     }
+    __TRACE__ && traceEnd()
   }
 
   private onCommand(session: Session, message: ClientMessage, tick?: number) {
@@ -253,19 +263,19 @@ export class ServerHost {
     } else if (message.kind === ClientMessageKind.OrderAttackGround) {
       this.game.orderAttackGround(playerId, message.unitIds, message.tile)
     } else if (message.kind === ClientMessageKind.Spawn) {
-      this.game.trySpawn(playerId, message.typeId)
+      this.game.trySpawn(playerId, message.typeId, message.yardId)
     } else if (message.kind === ClientMessageKind.CancelSpawn) {
-      this.game.cancelTraining(playerId, message.typeId)
+      this.game.cancelTraining(playerId, message.typeId, message.yardId)
     } else if (message.kind === ClientMessageKind.PlaceBuilding) {
       this.game.placeBuilding(playerId, message.typeId, message.tile)
     } else if (message.kind === ClientMessageKind.PlaceCity) {
       this.game.placeCityBuilding(playerId, message.tile)
     } else if (message.kind === ClientMessageKind.CancelBuilding) {
       this.game.cancelBuild(playerId, message.typeId)
-    } else if (message.kind === ClientMessageKind.SetPrimary) {
-      this.game.setPrimary(playerId, message.unitId)
     } else if (message.kind === ClientMessageKind.SetRally) {
       this.game.setRally(playerId, message.tile)
+    } else if (message.kind === ClientMessageKind.SetCityFocus) {
+      this.game.setCityFocus(playerId, message.index, message.focus)
     }
   }
 
@@ -290,12 +300,13 @@ export class ServerHost {
     const units = living.filter((unit) => this.knows(memory, unit, width))
     const visible = this.visibleCities(memory)
     const cities: CityRecord[] = visible.map((city) => ({ index: city.index, state: city.state.state, layout: city.layout.layout }))
+    __TRACE__ && traceBegin(TraceSlot.Map)
     const map = this.mapOf(memory)
+    __TRACE__ && traceEnd()
     const training = this.game.trainingFor(session.playerId)
     const rally = this.game.rally(session.playerId)
-    const primary = this.game.primaryFactory(session.playerId)
     const credits = this.game.player(session.playerId)?.credits ?? 0
-    this.remember(memory, units, visible, credits, training, rally, primary)
+    this.remember(memory, units, visible, credits, training, rally)
     memory.lastSnapshotTick = this.tickNo
     memory.lastSnapshotAt = performance.now()
     memory.ackSent = session.ack
@@ -311,7 +322,6 @@ export class ServerHost {
           cities,
           credits,
           training,
-          primaryFactoryId: primary,
           rally,
         },
       ],
@@ -340,7 +350,9 @@ export class ServerHost {
     const held = shadow ? new Map(shadow.units.map((unit) => [unit.id, unit])) : null
     const events: ServerEvent[] = []
     const ledger: Deferred[] = []
+    __TRACE__ && traceBegin(TraceSlot.Map)
     const patch = this.changedMap(memory, fresh)
+    __TRACE__ && traceEnd()
     if (patch) ledger.push({ event: { kind: ServerEventKind.MapPatch, map: patch }, commit: () => memory.unsentTiles.clear() })
     this.changedCities(memory, events, ledger)
 
@@ -359,12 +371,15 @@ export class ServerHost {
         memory.motionTick.set(unit.id, this.tickNo)
       }
       const answered = ordered.has(unit.id) && unit.ownerId === session.playerId
-      if (freshUnit || answered || (mobile && routeChanged) || (held && drifted(held.get(unit.id), unit))) {
+      const carried = unit.rounds ?? 0
+      const roundsChanged = memory.rounds.get(unit.id) !== carried
+      if (freshUnit || answered || (mobile && routeChanged) || roundsChanged || (held && drifted(held.get(unit.id), unit))) {
         events.push({ kind: ServerEventKind.UnitMotion, unit })
         commitMotion()
       } else if (due && (held ? unit.path.length > 0 || unit.speed !== 0 : mobile)) {
         ledger.push({ event: { kind: ServerEventKind.UnitMotion, unit }, commit: commitMotion })
       }
+      if (freshUnit || roundsChanged) memory.rounds.set(unit.id, carried)
       if (memory.health.get(unit.id) !== unit.health) {
         if (!freshUnit) events.push({ kind: ServerEventKind.UnitHealth, id: unit.id, health: unit.health })
         memory.health.set(unit.id, unit.health)
@@ -387,6 +402,7 @@ export class ServerHost {
       memory.motionTick.delete(id)
       memory.health.delete(id)
       memory.progress.delete(id)
+      memory.rounds.delete(id)
     }
     for (const shot of shots) {
       if (!this.shotVisible(memory, shot, living, session.playerId, width, height)) continue
@@ -436,11 +452,6 @@ export class ServerHost {
       memory.rally = rallyKey
       events.push({ kind: ServerEventKind.Rally, rally })
     }
-    const primary = this.game.primaryFactory(session.playerId)
-    if (memory.primary !== primary) {
-      memory.primary = primary
-      events.push({ kind: ServerEventKind.Primary, primaryFactoryId: primary })
-    }
   }
 
   private remember(
@@ -450,7 +461,6 @@ export class ServerHost {
     credits: number,
     training: ReturnType<Game['trainingFor']>,
     rally: TileCoord | null,
-    primary: number,
   ) {
     memory.seen.clear()
     for (const unit of units) {
@@ -459,6 +469,7 @@ export class ServerHost {
       memory.motionTick.set(unit.id, this.tickNo)
       memory.health.set(unit.id, unit.health)
       memory.progress.set(unit.id, unit.progress)
+      memory.rounds.set(unit.id, unit.rounds ?? 0)
     }
     memory.cityCore.clear()
     memory.cityProgress.clear()
@@ -472,25 +483,34 @@ export class ServerHost {
     memory.trainingKinds = trainingKinds(training)
     memory.training = JSON.stringify(training)
     memory.rally = rally ? `${rally.x},${rally.y}` : ''
-    memory.primary = primary
+  }
+
+  private exploredOf(playerId: number): Uint8Array {
+    let map = this.exploredMaps.get(playerId)
+    if (map) return map
+    map = new Uint8Array(this.game.world.width * this.game.world.height)
+    this.exploredMaps.set(playerId, map)
+    return map
   }
 
   private blank(playerId: number): Memory {
     const tiles = this.game.world.width * this.game.world.height
     return {
       owner: playerId,
-      explored: new Uint8Array(tiles),
+      explored: new Uint8Array(this.exploredOf(playerId)),
       visible: new Uint32Array(tiles),
       sight: 1,
       layer: null,
       parking: this.parkingOf(playerId),
       felledSeen: 0,
+      scarredSeen: 0,
       unsentTiles: new Set(),
       seen: new Set(),
       route: new Map(),
       motionTick: new Map(),
       health: new Map(),
       progress: new Map(),
+      rounds: new Map(),
       cityCore: new Map(),
       cityProgress: new Map(),
       cityShape: new Map(),
@@ -500,7 +520,6 @@ export class ServerHost {
       trainingKinds: null,
       training: null,
       rally: null,
-      primary: null,
       lastSnapshotTick: -SNAPSHOT_COOLDOWN,
       lastSnapshotAt: -SNAPSHOT_COOLDOWN_MS,
       lastSentTick: this.tickNo,
@@ -513,9 +532,11 @@ export class ServerHost {
     const { width, height } = this.game.world
     const fresh: TileCoord[] = []
     const sight = ++memory.sight
+    __TRACE__ && traceBegin(TraceSlot.VisionCopy)
     const layer = this.staticLayer(memory.owner, units)
     const parking = memory.parking
     this.unparkMoved(parking, units)
+    __TRACE__ && traceEnd()
     // A changed layer rescans every source, so the tiles it newly lights explore their margins in source order.
     const whole = memory.layer !== layer
     memory.layer = layer
@@ -531,9 +552,11 @@ export class ServerHost {
         const near = ny * width + nx
         if (memory.explored[near] === 1) continue
         memory.explored[near] = 1
+        this.exploredOf(memory.owner)[near] = 1
         fresh.push({ x: nx, y: ny })
       }
     }
+    __TRACE__ && traceBegin(TraceSlot.VisionFriends)
     const friends: SightSource[] = []
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0 || unit.progress < 1) continue
@@ -546,6 +569,8 @@ export class ServerHost {
         if (city.ownerId === memory.owner) friends.push({ x: city.x, z: city.z, sight: CITY_SIGHT })
       }
     }
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionStamp)
     for (const friend of friends) {
       const reach = Math.ceil(friend.sight)
       const originX = Math.floor(friend.x)
@@ -559,6 +584,8 @@ export class ServerHost {
         }
       }
     }
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.VisionFoot)
     for (const unit of units) {
       if (unit.ownerId !== memory.owner || unit.health <= 0) continue
       if (!whole && (isStructure(unit) || parking.poses.get(unit.id)?.parked)) continue
@@ -567,6 +594,7 @@ export class ServerHost {
         for (let x = Math.max(0, unit.tileX); x < Math.min(width, unit.tileX + span.x); x++) see(x, y)
       }
     }
+    __TRACE__ && traceEnd()
     return fresh
   }
 
@@ -710,9 +738,12 @@ export class ServerHost {
   private visibleCities(memory: Memory): VisibleCity[] {
     const records: VisibleCity[] = []
     const { width } = this.game.world
+    __TRACE__ && traceBegin(TraceSlot.CityStates)
     const states = (this.states ??= this.game.cityStates())
     const layouts = (this.layouts ??= this.game.cityLayouts())
     const keys = (this.stateKeys ??= states.map(stateKey))
+    __TRACE__ && traceEnd()
+    __TRACE__ && traceBegin(TraceSlot.CityClip)
     for (let index = 0; index < states.length; index++) {
       let layout = memory.layoutClips.get(index)
       if (layout?.source !== layouts[index]) {
@@ -729,6 +760,7 @@ export class ServerHost {
       }
       records.push({ index, layout, state })
     }
+    __TRACE__ && traceEnd()
     return records
   }
 
@@ -762,6 +794,7 @@ export class ServerHost {
   }
 
   private changedCities(memory: Memory, events: ServerEvent[], ledger: Deferred[]) {
+    __TRACE__ && traceBegin(TraceSlot.CityKey)
     const live = new Set<number>()
     for (const city of this.visibleCities(memory)) {
       const { index } = city
@@ -791,6 +824,7 @@ export class ServerHost {
       memory.cityProgress.delete(index)
       memory.cityShape.delete(index)
     }
+    __TRACE__ && traceEnd()
   }
 
   private mapOf(memory: Memory): MapData {
@@ -804,6 +838,7 @@ export class ServerHost {
     }
     const felled = this.game.felled()
     memory.felledSeen = felled.length
+    memory.scarredSeen = this.game.scarred().length
     return {
       width,
       height,
@@ -826,6 +861,12 @@ export class ServerHost {
       if (memory.explored[index] === 1) wanted.add(index)
     }
     memory.felledSeen = felled.length
+    const scarred = this.game.scarred()
+    for (let i = memory.scarredSeen; i < scarred.length; i++) {
+      const index = scarred[i].y * width + scarred[i].x
+      if (memory.explored[index] === 1) wanted.add(index)
+    }
+    memory.scarredSeen = scarred.length
     if (wanted.size === 0) return null
     const cells = []
     for (const index of wanted) {
@@ -879,7 +920,7 @@ function clipState(state: CityState, explored: Uint8Array, width: number): CityS
 function coreKey(state: CityState): string {
   const ruins = state.ruins.map((tile) => `${tile.x},${tile.y}`).join('.')
   const sites = state.sites.map((site) => `${site.at}:${site.x},${site.y},${site.model},${site.yaw}`).join(';')
-  return `${state.ownerId}:${state.challengerId}:${state.grown}:${ruins}:${sites}`
+  return `${state.ownerId}:${state.challengerId}:${state.grown}:${state.focus ?? 0}:${ruins}:${sites}`
 }
 
 function stateKey(state: CityState): string {
@@ -955,7 +996,7 @@ function orderedUnits(message: ClientMessage): ReadonlySet<number> {
 }
 
 function trainingKinds(training: readonly TrainJob[]): string {
-  return training.map((job) => job.typeId).join(',')
+  return training.map((job) => `${job.yardId}:${job.typeId}`).join(',')
 }
 
 function drifted(held: UnitSnapshot | undefined, unit: UnitSnapshot): boolean {

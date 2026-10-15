@@ -16,7 +16,7 @@ The run stops when one bot is left with units or cities, when `--minutes` of sim
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--seed` | random | Map seed. Printed in the summary so a game can be repeated. |
+| `--seed` | random | Map seed. Printed in the summary so a game can be repeated. Tiny maps sometimes collapse; the harness then tries the next seeds and reports the one it used. |
 | `--size` | `tiny` | `tiny` (64), `small` (128), `medium` (192), or `large` (256). |
 | `--players` | 2 | AI seats. Capped by the map (2, 4, 6, or 8). |
 | `--minutes` | 20 | Simulated minutes before the match is called. |

@@ -23,7 +23,7 @@ fog and orders as a live match. Time is simulated one step at a time with no
 wall-clock wait.
 
 Options:
-  --seed <n>       Map seed. Default: random
+  --seed <n>       Map seed. Default: random. A collapsed map tries the next seeds.
   --size <name>    tiny (64), small (128), medium (192), or large (256). Default: tiny
   --players <n>    AI seats. Default: 2, capped by the map size
   --minutes <n>    Stop after this many simulated minutes. Default: 20
@@ -110,7 +110,9 @@ function parseOptions(): Options {
 }
 
 async function simulate(options: Options, log: WriteStream, tui: boolean): Promise<Summary> {
-  const island = generateIsland(options.seed, options.size, options.size)
+  const rolled = openIsland(options.seed, options.size, options.players)
+  options.seed = rolled.seed
+  const island = rolled.island
   const colors = Array.from({ length: options.players }, (_, index) => ({ ai: true, color: playerColor(index + 1) }))
   const { game, players } = seatIsland(island, colors)
   const host = new ServerHost(game)
@@ -197,6 +199,7 @@ function finish(options: Options, game: Game, seats: readonly Seat[], reason: st
 }
 
 function paint(options: Options, game: Game, seats: readonly Seat[], sim: number, wall: number, lines: readonly string[]) {
+  const width = Math.max(40, process.stdout.columns || 80)
   const header = `RTS  ${clock(sim)}   x${speedup(sim, wall).toFixed(0)}   seed ${options.seed}   ${options.size}x${options.size}   pace ${options.pace.toFixed(2)}`
   const body = seats.flatMap((seat) => {
     const stats = tally(game, seat.id)
@@ -204,7 +207,26 @@ function paint(options: Options, game: Game, seats: readonly Seat[], sim: number
     const row = `${name} ${String(Math.round(stats.credits)).padStart(6)} cr   pop ${String(stats.pop).padStart(3)}   sup ${String(stats.supply).padStart(3)}   cities ${stats.cities}   army ${stats.army}`
     return [row, `        ${thoughtText(seat.bot.lastThought)}`]
   })
-  process.stdout.write(`\x1b[H${[header, '', ...body, '', ...lines].join('\n')}\x1b[J`)
+  const rows = [header, '', ...body, '', ...lines].map((line) => `${fit(line, width)}\x1b[K`)
+  process.stdout.write(`\x1b[H${rows.join('\n')}\x1b[J`)
+}
+
+function fit(line: string, width: number): string {
+  let visible = 0
+  let out = ''
+  for (let i = 0; i < line.length && visible < width; i++) {
+    if (line[i] !== '\x1b') {
+      out += line[i]
+      visible += 1
+      continue
+    }
+    const end = line.indexOf('m', i)
+    if (end < 0) break
+    out += line.slice(i, end + 1)
+    i = end
+  }
+  if (visible >= width) out += '\x1b[0m'
+  return out
 }
 
 function summaryText(summary: Summary): string {
@@ -324,6 +346,19 @@ function stringArg(flag: string, fallback: string): string {
   const index = process.argv.indexOf(flag)
   const value = index >= 0 ? process.argv[index + 1] : undefined
   return value && !value.startsWith('--') ? value : fallback
+}
+
+function openIsland(seed: number, size: number, players: number) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const next = seed + attempt
+    try {
+      const island = generateIsland(next, size, size)
+      if (island.towns.length >= players) return { island, seed: next }
+    } catch {
+      // The coast ate every county but one. The lobby skips these seeds too.
+    }
+  }
+  throw new Error('island collapsed')
 }
 
 function sizeArg(): MapSize {
