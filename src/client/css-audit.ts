@@ -1,4 +1,4 @@
-export const NO_PREFERENCE = '@media (prefers-reduced-motion: no-preference)'
+const NO_PREFERENCE = '@media (prefers-reduced-motion: no-preference)'
 export const AA = 4.5
 
 const MOVING = new Set(['transform', 'opacity'])
