@@ -1,17 +1,27 @@
+import { readdirSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ALARM_LINES, Alarm, KLAXON_MS } from './alarm.ts'
+import { Alarm, TAKES } from './alarm.ts'
 import { ContactKind } from './render/radar.ts'
 
-type Voice = { lang: string }
+const HORN_S = 2
+const LINE_S = 1.5
 
-class FakeUtterance {
-  lang = ''
-  voice: Voice | null = null
-  constructor(readonly text: string) {}
-}
+type FakeBuffer = { url: string; duration: number }
 
-function param() {
-  return { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {} }
+class FakeSource {
+  buffer: FakeBuffer | null = null
+  at: number | null = null
+  stopped = false
+
+  connect() {}
+
+  start(when: number) {
+    this.at = when
+  }
+
+  stop() {
+    this.stopped = true
+  }
 }
 
 class FakeContext {
@@ -19,8 +29,8 @@ class FakeContext {
   state = 'suspended'
   currentTime = 0
   destination = {}
-  horns = 0
   resumes = 0
+  sources: FakeSource[] = []
 
   constructor() {
     FakeContext.made.push(this)
@@ -32,112 +42,139 @@ class FakeContext {
     return Promise.resolve()
   }
 
-  createOscillator() {
-    return {
-      type: '',
-      frequency: param(),
-      connect: <T>(next: T) => next,
-      start: () => {
-        this.horns += 1
-      },
-      stop() {},
-    }
+  decodeAudioData(data: FakeBuffer) {
+    return Promise.resolve(data)
   }
 
-  createBiquadFilter() {
-    return { type: '', frequency: param(), connect: <T>(next: T) => next }
+  createBufferSource() {
+    const source = new FakeSource()
+    this.sources.push(source)
+    return source
   }
 
-  createGain() {
-    return { gain: param(), connect: <T>(next: T) => next }
+  played() {
+    return this.sources.map((source) => [source.buffer?.url, source.at])
   }
 }
 
-function fakeSpeech(voices: Voice[] = []) {
-  const said: FakeUtterance[] = []
+async function fetchSample(url: string) {
+  return { arrayBuffer: async () => ({ url, duration: TAKES.horns.includes(url) ? HORN_S : LINE_S }) }
+}
+
+function gestures() {
+  const listeners = new Map<string, () => void>()
   return {
-    said,
-    speaking: false,
-    pending: false,
-    getVoices: () => voices,
-    speak: (utterance: FakeUtterance) => said.push(utterance),
-    cancel() {},
-    lines: () => said.filter((utterance) => utterance.text !== '').map((utterance) => utterance.text),
+    addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+    dispatch: (type: string) => listeners.get(type)?.(),
   }
 }
 
-function withSpeech(voices: Voice[] = []) {
-  const speech = fakeSpeech(voices)
-  vi.stubGlobal('speechSynthesis', speech)
-  vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance)
-  return speech
+async function unlocked() {
+  const alarm = new Alarm()
+  const target = gestures()
+  alarm.listen(target)
+  target.dispatch('pointerup')
+  await new Promise((resolve) => setTimeout(resolve))
+  return { alarm, context: FakeContext.made[0] }
 }
 
 beforeEach(() => {
-  vi.useFakeTimers()
   vi.stubGlobal('AudioContext', FakeContext)
+  vi.stubGlobal('fetch', fetchSample)
 })
 
 afterEach(() => {
-  vi.useRealTimers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   FakeContext.made = []
 })
 
 describe('alarm', () => {
-  it('starts audio and primes speech once, on the first gesture', () => {
-    const speech = withSpeech()
+  it('starts audio on the release of a touch or on a key, until it runs', () => {
     const alarm = new Alarm()
-    alarm.unlock()
-    alarm.unlock()
+    const target = gestures()
+    alarm.listen(target)
+    target.dispatch('pointerdown')
+    expect(FakeContext.made).toHaveLength(0)
+    target.dispatch('pointerup')
+    const context = FakeContext.made[0]
+    expect(context.resumes).toBe(1)
+    context.state = 'suspended'
+    target.dispatch('keydown')
+    target.dispatch('pointerup')
+    expect(context.resumes).toBe(2)
     expect(FakeContext.made).toHaveLength(1)
-    expect(FakeContext.made[0].resumes).toBe(1)
-    expect(speech.said.map((utterance) => utterance.text)).toEqual([''])
   })
 
-  it('sounds the klaxon, then the line for a base or a unit in an en-JM voice', () => {
-    const jamaican = { lang: 'en-JM' }
-    const speech = withSpeech([{ lang: 'en-US' }, jamaican])
-    const alarm = new Alarm()
-    alarm.unlock()
+  it('plays a horn, then the line for a base or a unit', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const { alarm, context } = await unlocked()
     alarm.sound(ContactKind.Base)
-    expect(FakeContext.made[0].horns).toBe(1)
-    expect(speech.lines()).toEqual([])
-    vi.advanceTimersByTime(KLAXON_MS)
+    context.currentTime = 10
     alarm.sound(ContactKind.Unit)
-    vi.advanceTimersByTime(KLAXON_MS)
-    expect(FakeContext.made[0].horns).toBe(2)
-    expect(speech.lines()).toEqual([ALARM_LINES[ContactKind.Base], ALARM_LINES[ContactKind.Unit]])
-    expect(speech.said.at(-1)?.voice).toBe(jamaican)
+    expect(context.played()).toEqual([
+      [TAKES.horns[0], 0],
+      [TAKES.lines[ContactKind.Base][0], HORN_S],
+      [TAKES.horns[0], 10],
+      [TAKES.lines[ContactKind.Unit][0], 10 + HORN_S],
+    ])
   })
 
-  it('plays nothing once Sounds is off, not even a line already on its way', () => {
-    const speech = withSpeech()
-    const alarm = new Alarm()
-    alarm.unlock()
+  it('draws every horn, and every take of the line for what was hit, at random', async () => {
+    const files = readdirSync(new URL('../../assets/alarm/', import.meta.url))
+    const named = (name: string) => new Set(files.filter((file) => file.startsWith(`${name}-`)))
+    const { alarm, context } = await unlocked()
+    const heard = (from: number, nth: number) =>
+      new Set(context.sources.slice(from).filter((_, i) => i % 2 === nth).map((source) => source.buffer?.url.split('/').pop()))
+    const draws = 40
+    const lines = new Map<ContactKind, Set<string | undefined>>()
+    for (const kind of [ContactKind.Base, ContactKind.Unit]) {
+      const from = context.sources.length
+      for (let draw = 0; draw < draws; draw++) {
+        vi.spyOn(Math, 'random').mockReturnValue(draw / draws)
+        alarm.sound(kind)
+        context.currentTime += HORN_S + LINE_S
+      }
+      lines.set(kind, heard(from, 1))
+    }
+    const horns = heard(0, 0)
+    expect(horns).toEqual(named('horn'))
+    expect(lines.get(ContactKind.Base)).toEqual(named('base'))
+    expect(lines.get(ContactKind.Unit)).toEqual(named('unit'))
+    expect(horns.size + named('base').size + named('unit').size).toBe(files.length)
+  })
+
+  it('never starts over an alarm still sounding', async () => {
+    const { alarm, context } = await unlocked()
+    alarm.sound(ContactKind.Base)
+    context.currentTime = HORN_S + LINE_S - 0.1
     alarm.sound(ContactKind.Unit)
+    expect(context.sources).toHaveLength(2)
+    context.currentTime = HORN_S + LINE_S
+    alarm.sound(ContactKind.Unit)
+    expect(context.sources).toHaveLength(4)
+  })
+
+  it('stops a sounding alarm when Sounds is turned off, and plays nothing until it is back on', async () => {
+    const { alarm, context } = await unlocked()
+    alarm.sound(ContactKind.Base)
     alarm.setOn(false)
-    vi.advanceTimersByTime(KLAXON_MS)
-    alarm.sound(ContactKind.Base)
-    vi.advanceTimersByTime(KLAXON_MS)
-    expect(FakeContext.made[0].horns).toBe(1)
-    expect(speech.lines()).toEqual([])
+    expect(context.sources.map((source) => source.stopped)).toEqual([true, true])
+    alarm.sound(ContactKind.Unit)
+    expect(context.sources).toHaveLength(2)
+    alarm.setOn(true)
+    alarm.sound(ContactKind.Unit)
+    expect(context.sources).toHaveLength(4)
   })
 
-  it('never speaks over a line still being spoken', () => {
-    const speech = withSpeech()
-    speech.speaking = true
+  it('stays silent without Web Audio', () => {
+    vi.unstubAllGlobals()
     const alarm = new Alarm()
-    alarm.sound(ContactKind.Base)
-    vi.advanceTimersByTime(KLAXON_MS)
-    expect(speech.lines()).toEqual([])
-  })
-
-  it('still sounds the klaxon without speech synthesis', () => {
-    const alarm = new Alarm()
-    alarm.unlock()
-    alarm.sound(ContactKind.Base)
-    vi.advanceTimersByTime(KLAXON_MS)
-    expect(FakeContext.made[0].horns).toBe(1)
+    const target = gestures()
+    alarm.listen(target)
+    expect(() => {
+      target.dispatch('pointerup')
+      alarm.sound(ContactKind.Base)
+    }).not.toThrow()
   })
 })

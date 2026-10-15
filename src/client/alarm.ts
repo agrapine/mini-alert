@@ -1,71 +1,87 @@
 import { ContactKind } from './render/radar.ts'
 
-export const ALARM_LINES: Record<ContactKind, string> = {
-  [ContactKind.Base]: 'Wi base a get attack!',
-  [ContactKind.Unit]: 'Unit a get lick!',
+const samples = import.meta.glob('../../assets/alarm/*.mp3', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+})
+
+type Takes<T> = { horns: T[]; lines: Record<ContactKind, T[]> }
+
+export const TAKES: Takes<string> = {
+  horns: takes('horn'),
+  lines: { [ContactKind.Base]: takes('base'), [ContactKind.Unit]: takes('unit') },
 }
 
-const KLAXON_HZ = [784, 587]
-const KLAXON_BEAT_S = 0.22
-const KLAXON_BEATS = 4
-const KLAXON_FADE_S = 0.015
-const KLAXON_VOLUME = 0.15
-const KLAXON_TONE_HZ = 2400
-export const KLAXON_MS = KLAXON_BEAT_S * KLAXON_BEATS * 1000
+/** A touch can start audio only on its release, not its press. */
+const GESTURES = ['pointerup', 'keydown']
 
 export class Alarm {
   private context: AudioContext | null = null
-  private readonly speech = 'speechSynthesis' in globalThis ? speechSynthesis : null
-  private primed = false
+  private buffers: Takes<AudioBuffer> | null = null
+  private playing: AudioBufferSourceNode[] = []
+  private until = 0
   private on = true
+
+  listen(target: Pick<EventTarget, 'addEventListener'>) {
+    for (const gesture of GESTURES) target.addEventListener(gesture, () => this.unlock())
+  }
 
   setOn(on: boolean) {
     this.on = on
-    if (!on) this.speech?.cancel()
-  }
-
-  /** Runs inside a user gesture: browsers start audio, and iOS starts speech, only from one. */
-  unlock() {
-    this.context ??= new AudioContext()
-    if (this.context.state !== 'running') this.context.resume().catch(() => {})
-    if (this.primed || !this.speech) return
-    this.primed = true
-    this.speech.speak(new SpeechSynthesisUtterance(''))
+    if (on) return
+    for (const source of this.playing) source.stop()
+    this.playing = []
+    this.until = 0
   }
 
   sound(kind: ContactKind) {
-    if (!this.on) return
-    if (this.context) klaxon(this.context)
-    setTimeout(() => this.say(ALARM_LINES[kind]), KLAXON_MS)
+    const context = this.context
+    if (!this.on || !context || !this.buffers || context.currentTime < this.until) return
+    const horn = pick(this.buffers.horns)
+    const line = pick(this.buffers.lines[kind])
+    const start = context.currentTime
+    this.playing = [play(context, horn, start), play(context, line, start + horn.duration)]
+    this.until = start + horn.duration + line.duration
   }
 
-  private say(line: string) {
-    const speech = this.speech
-    if (!speech || !this.on || speech.speaking || speech.pending) return
-    const utterance = new SpeechSynthesisUtterance(line)
-    utterance.lang = 'en-JM'
-    utterance.voice = speech.getVoices().find((voice) => /^en[-_]JM$/i.test(voice.lang)) ?? null
-    speech.speak(utterance)
+  private unlock() {
+    if (!this.context) {
+      if (!('AudioContext' in globalThis)) return
+      this.context = new AudioContext()
+      decode(this.context).then((buffers) => {
+        this.buffers = buffers
+      })
+    }
+    if (this.context.state !== 'running') this.context.resume().catch(() => {})
   }
 }
 
-function klaxon(context: AudioContext) {
-  const start = context.currentTime
-  const end = start + KLAXON_BEAT_S * KLAXON_BEATS
-  const horn = context.createOscillator()
-  horn.type = 'sawtooth'
-  for (let beat = 0; beat < KLAXON_BEATS; beat++) {
-    horn.frequency.setValueAtTime(KLAXON_HZ[beat % KLAXON_HZ.length], start + beat * KLAXON_BEAT_S)
-  }
-  const tone = context.createBiquadFilter()
-  tone.type = 'lowpass'
-  tone.frequency.value = KLAXON_TONE_HZ
-  const level = context.createGain()
-  level.gain.setValueAtTime(0, start)
-  level.gain.linearRampToValueAtTime(KLAXON_VOLUME, start + KLAXON_FADE_S)
-  level.gain.setValueAtTime(KLAXON_VOLUME, end - KLAXON_FADE_S)
-  level.gain.linearRampToValueAtTime(0, end)
-  horn.connect(tone).connect(level).connect(context.destination)
-  horn.start(start)
-  horn.stop(end)
+function takes(name: string): string[] {
+  return Object.entries(samples)
+    .filter(([path]) => new RegExp(`/${name}-\\d+\\.mp3$`).test(path))
+    .map((entry) => entry[1])
+}
+
+async function decode(context: AudioContext): Promise<Takes<AudioBuffer>> {
+  const load = (urls: string[]) =>
+    Promise.all(urls.map(async (url) => context.decodeAudioData(await (await fetch(url)).arrayBuffer())))
+  const [horns, base, unit] = await Promise.all([
+    load(TAKES.horns),
+    load(TAKES.lines[ContactKind.Base]),
+    load(TAKES.lines[ContactKind.Unit]),
+  ])
+  return { horns, lines: { [ContactKind.Base]: base, [ContactKind.Unit]: unit } }
+}
+
+function pick<T>(takes: T[]): T {
+  return takes[Math.floor(Math.random() * takes.length)]
+}
+
+function play(context: AudioContext, buffer: AudioBuffer, when: number): AudioBufferSourceNode {
+  const source = context.createBufferSource()
+  source.buffer = buffer
+  source.connect(context.destination)
+  source.start(when)
+  return source
 }

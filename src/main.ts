@@ -88,7 +88,7 @@ bindMenu({
 })
 document.body.classList.add('lobby')
 window.addEventListener('pointerdown', () => music.resume())
-for (const gesture of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(gesture, () => alarm.unlock())
+alarm.listen(window)
 
 let claimedName: string | null = null
 const admin = adminEnabled(location.search)
