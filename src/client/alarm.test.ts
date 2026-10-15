@@ -152,15 +152,18 @@ describe('alarm', () => {
   })
 
   it('never starts over an alarm still sounding', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0)
     const { alarm, context } = await unlocked()
+    rolls(0.5, 0, 0, 0)
     alarm.sound(ContactKind.Base)
-    context.currentTime = HORN_S - 0.1
+    context.currentTime = LINE_S - 0.1
     alarm.sound(ContactKind.Unit)
-    expect(context.sources).toHaveLength(1)
-    context.currentTime = HORN_S
+    expect(context.played()).toEqual([TAKES.lines[ContactKind.Base][0]])
+    context.currentTime = LINE_S
     alarm.sound(ContactKind.Unit)
-    expect(context.sources).toHaveLength(2)
+    expect(context.played()).toEqual([TAKES.lines[ContactKind.Base][0], TAKES.horns[0]])
+    context.currentTime = LINE_S + HORN_S - 0.1
+    alarm.sound(ContactKind.Unit)
+    expect(context.played()).toEqual([TAKES.lines[ContactKind.Base][0], TAKES.horns[0]])
   })
 
   it('stops a sounding alarm when Sounds is turned off, and plays nothing until it is back on', async () => {
