@@ -17,7 +17,7 @@
 - AI opponents train an army again once their factory is up, instead of sitting on their credits.
 - A unit force-attacking one of your own, and a jet with rockets left after losing its airport, stop and turn toward the target on your screen as on the server, instead of being corrected.
 - Ammo counts go only to the unit's owner, except a rocket unit running empty or rearming, halving the extra unit updates ammo counts add in battle.
-- With TRACE=1 the server log shows, once a minute beside the tick rate, the average milliseconds per tick each server system takes, largest first, and how much of the tick stays idle. The deployed server runs with TRACE=1.
+- With TRACE=1 the server log shows, once a minute beside the tick rate, the average milliseconds per tick each server system takes, largest first, and how much of the tick stays idle. The deployed server runs with TRACE=1. The in-game timing pie shows only for admins.
 
 ## 0.6
 - F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.

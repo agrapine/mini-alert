@@ -324,7 +324,7 @@ export class Lobby {
       events: [{ kind: ServerEventKind.Trace, samples, budget }],
     }
     for (const member of this.members.values()) {
-      if (!member.socket || member.gameId === null) continue
+      if (!member.admin || !member.socket || member.gameId === null) continue
       const game = this.games.get(member.gameId)
       if (!game || game.status !== RoomStatus.Playing) continue
       member.socket.sendGame(frame)
