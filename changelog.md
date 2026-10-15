@@ -19,6 +19,7 @@
 - Ammo counts go only to the unit's owner, except a rocket unit running empty or rearming, halving the extra unit updates ammo counts add in battle.
 
 ## 0.6
+- F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.
 - Improved cities, growth, density, growth / income control
 - Unit rebalance
 - Force attack own units
