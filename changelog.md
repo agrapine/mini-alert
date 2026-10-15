@@ -18,6 +18,7 @@
 - A unit force-attacking one of your own, and a jet with rockets left after losing its airport, stop and turn toward the target on your screen as on the server, instead of being corrected.
 - Ammo counts go only to the unit's owner, except a rocket unit running empty or rearming, halving the extra unit updates ammo counts add in battle.
 - With TRACE=1 the server log shows, once a minute beside the tick rate, the average milliseconds per tick each server system takes, largest first, and how much of the tick stays idle. The deployed server runs with TRACE=1. The in-game timing pie shows only for admins.
+- Coming under attack sounds an alarm with the minimap blip: a dancehall air horn, then a Jamaican voice calling "Wi base a get attack!" when a building or city is hit or "Unit a get lick!" when a unit is, each drawn at random from several recorded takes. Settings › Sounds turns it off, cutting short an alarm already sounding, and remembers the choice.
 
 ## 0.6
 - F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.

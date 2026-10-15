@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { musicOn, rememberMusic } from './menu.ts'
+import { rememberSetting, settingOn } from './menu.ts'
 
 function memory(): Storage {
   const items = new Map<string, string>()
@@ -25,13 +25,14 @@ function memory(): Storage {
   }
 }
 
-describe('music setting', () => {
-  it('stays on until it is turned off', () => {
+describe('settings', () => {
+  it('stay on until turned off, each on its own', () => {
     const store = memory()
-    expect(musicOn(store)).toBe(true)
-    rememberMusic(false, store)
-    expect(musicOn(store)).toBe(false)
-    rememberMusic(true, store)
-    expect(musicOn(store)).toBe(true)
+    expect(settingOn('sounds', store)).toBe(true)
+    rememberSetting('sounds', false, store)
+    expect(settingOn('sounds', store)).toBe(false)
+    expect(settingOn('music', store)).toBe(true)
+    rememberSetting('sounds', true, store)
+    expect(settingOn('sounds', store)).toBe(true)
   })
 })
