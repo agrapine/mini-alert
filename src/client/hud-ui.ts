@@ -1,6 +1,7 @@
 import type { Faction } from '../shared/lobby.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { BuildTab, focusLabel, HealthBand, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type SelectedRow, type Selection } from './hud-model.ts'
+import { closeMenu } from './menu.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
 import './console.css'
@@ -170,6 +171,27 @@ const BAND_CLASS: Record<HealthBand, string> = {
   [HealthBand.Critical]: 'bar critical',
 }
 
+const NO_MATCH: HudModel = {
+  army: 0,
+  population: 0,
+  cities: 0,
+  over: false,
+  ping: { state: PingState.None },
+  tiles: [],
+  tab: null,
+  queue: [],
+  selection: { ids: [], hall: null },
+  rows: [],
+  group: null,
+  hall: null,
+}
+
+const NO_CREDITS: CreditReadout = { shown: 0, trend: Trend.Steady }
+
+const NO_TRACE: TracePaint = { samples: [], budget: 0 }
+
+const BALANCED = { focus: 0, label: focusLabel(0) }
+
 export class HudView {
   private readonly battle: HTMLElement
   private readonly credits: HTMLElement
@@ -179,6 +201,7 @@ export class HudView {
   private readonly population: HTMLElement
   private readonly cities: HTMLElement
   private readonly ping: HTMLElement
+  private readonly menu: HTMLElement
   private readonly tablist: HTMLElement
   private readonly tabs: { tab: BuildTab; button: HTMLButtonElement }[]
   private readonly orders: HTMLElement
@@ -203,7 +226,7 @@ export class HudView {
   private readonly chips = new Map<UnitTypeId, ChipNode>()
   private readonly rows = new Map<UnitTypeId, RowNode>()
   private selectionTab: BuildTab | null = null
-  private selection: Selection = { ids: [], hall: null }
+  private selection: Selection = NO_MATCH.selection
   private clicked: { tab: BuildTab; selection: Selection } | null = null
   private open: BuildTab | null = null
 
@@ -225,6 +248,7 @@ export class HudView {
     this.population = find('#population')
     this.cities = find('#cities')
     this.ping = find('#ping')
+    this.menu = find('#menu')
     this.tablist = find('.build-tabs')
     this.tabs = TABS.map(([tab, label]) => {
       const button = document.createElement('button')
@@ -273,6 +297,7 @@ export class HudView {
       if (event.target === this.outcome) this.outcome.hidden = true
     })
     this.trace = bindTrace(find('#trace'))
+    this.clear()
   }
 
   paint(model: HudModel, credits: CreditReadout) {
@@ -289,20 +314,12 @@ export class HudView {
     setText(this.ping, ping.state === PingState.None ? '–' : `${ping.ms} ms`)
     this.ping.classList.toggle('slow', ping.state === PingState.Slow || ping.state === PingState.Bad)
     this.ping.classList.toggle('bad', ping.state === PingState.Bad)
-    this.selectedPanel.hidden = model.rows.length === 0 && model.hall === null
-    this.group.hidden = model.group === null
-    setText(this.group, model.group === null ? '' : `Group ${model.group}`)
-    this.paintRows(model.rows)
-    this.cityFocus.hidden = model.hall === null
-    if (model.hall !== null && document.activeElement !== this.focusRange) {
-      const focus = String(model.hall.focus)
-      if (this.focusRange.value !== focus) this.focusRange.value = focus
-      setText(this.focusLabel, model.hall.label)
-    }
+    this.paintSelected(model.rows, model.group, model.hall)
     for (let i = 0; i < model.tiles.length; i++) {
       const tile = model.tiles[i]
       paintTile(this.tiles[i] ?? this.createTile(tile), tile)
     }
+    for (const node of this.tiles.splice(model.tiles.length)) node.button.remove()
     this.paintQueue(model.queue)
     if (this.clicked && !sameSelection(this.clicked.selection, model.selection)) this.clicked = null
     this.selectionTab = model.tab
@@ -310,8 +327,8 @@ export class HudView {
     this.showTab()
   }
 
-  setBattle(gameId: number) {
-    setText(this.battle, `Battle #${gameId}`)
+  setBattle(gameId: number | null) {
+    setText(this.battle, gameId === null ? '' : `Battle #${gameId}`)
   }
 
   setFactions(factions: readonly Faction[], spectating: boolean, viewedId: number | null) {
@@ -330,7 +347,7 @@ export class HudView {
       }
       this.plates.append(this.leave)
     }
-    this.legend.hidden = false
+    this.legend.hidden = factions.length === 0
     this.legend.replaceChildren()
     for (const faction of factions) {
       const row = document.createElement('div')
@@ -347,10 +364,10 @@ export class HudView {
     }
   }
 
-  showOutcome(title: string, text: string) {
-    this.outcomeTitle.textContent = title
-    this.outcomeText.textContent = text
-    this.outcome.hidden = false
+  setOutcome(outcome: { title: string; text: string } | null) {
+    setText(this.outcomeTitle, outcome?.title ?? '')
+    setText(this.outcomeText, outcome?.text ?? '')
+    this.outcome.hidden = outcome === null
   }
 
   paintTrace(frame: TracePaint) {
@@ -359,13 +376,12 @@ export class HudView {
 
   clear() {
     this.clicked = null
-    this.build.hidden = false
-    this.vision.hidden = true
-    this.plates.replaceChildren()
-    this.legend.hidden = true
-    this.legend.replaceChildren()
-    this.outcome.hidden = true
-    this.trace.hide()
+    this.paint(NO_MATCH, NO_CREDITS)
+    this.setBattle(null)
+    this.setFactions([], false, null)
+    this.setOutcome(null)
+    this.paintTrace(NO_TRACE)
+    closeMenu(this.menu)
   }
 
   /** Presses the tile labelled F<slot>; false when no shown tile carries that label. */
@@ -397,6 +413,20 @@ export class HudView {
       return node.button
     })
     arrange(this.chipRow, buttons)
+  }
+
+  private paintSelected(rows: readonly SelectedRow[], group: number | null, hall: HudModel['hall']) {
+    this.selectedPanel.hidden = rows.length === 0 && hall === null
+    this.group.hidden = group === null
+    setText(this.group, group === null ? '' : `Group ${group}`)
+    this.paintRows(rows)
+    this.cityFocus.hidden = hall === null
+    if (document.activeElement !== this.focusRange) {
+      const { focus, label } = hall ?? BALANCED
+      const value = String(focus)
+      if (this.focusRange.value !== value) this.focusRange.value = value
+      setText(this.focusLabel, label)
+    }
   }
 
   private paintRows(rows: readonly SelectedRow[]) {

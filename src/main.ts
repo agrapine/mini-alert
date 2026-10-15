@@ -306,12 +306,12 @@ function noteOutcome() {
   const mine = factions.find((faction) => faction.playerId === seatId)
   if (mine?.defeated && !toldDefeat) {
     toldDefeat = true
-    hud.showOutcome('Defeated', 'Your forces are gone.')
+    hud.setOutcome({ title: 'Defeated', text: 'Your forces are gone.' })
   }
   const alive = factions.filter((faction) => !faction.defeated)
   if (mine && !mine.defeated && !toldWin && alive.length === 1 && factions.some((faction) => faction.defeated)) {
     toldWin = true
-    hud.showOutcome('Victory', 'You are the last player.')
+    hud.setOutcome({ title: 'Victory', text: 'You are the last player.' })
   }
 }
 

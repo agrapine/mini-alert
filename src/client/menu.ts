@@ -89,10 +89,8 @@ export function bindMenu(actions: MenuActions = {}): void {
     })
   }
 
-  const closeMenu = () => menu.classList.remove('open')
-
   const openSheet = (label: string, markdown: string) => {
-    closeMenu()
+    closeMenu(menu)
     title.textContent = label
     body.innerHTML = renderMarkdown(stripMatchingTitle(markdown, label))
     sheet.hidden = false
@@ -120,13 +118,13 @@ export function bindMenu(actions: MenuActions = {}): void {
       return
     }
     if (opener?.dataset.open === 'fullscreen') {
-      closeMenu()
+      closeMenu(menu)
       if (document.fullscreenElement) void document.exitFullscreen()
       else void document.documentElement.requestFullscreen()
       return
     }
     if (target.closest('[data-dismiss]')) {
-      closeMenu()
+      closeMenu(menu)
       actions.onSurrender?.()
       return
     }
@@ -148,17 +146,21 @@ export function bindMenu(actions: MenuActions = {}): void {
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (!sheet.hidden) closeSheet()
-    else closeMenu()
+    else closeMenu(menu)
   })
 
   window.addEventListener('pointerdown', (event) => {
     if (!menu.classList.contains('open')) return
     const target = event.target
     if (target instanceof Node && menu.contains(target)) return
-    closeMenu()
+    closeMenu(menu)
   })
 
   if (seenVersion() !== version) openSheet('Changelog', changelog)
+}
+
+export function closeMenu(menu: HTMLElement) {
+  menu.classList.remove('open')
 }
 
 export function settingOn(name: string, store: Storage = localStorage): boolean {
