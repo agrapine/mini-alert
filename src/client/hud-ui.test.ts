@@ -285,20 +285,14 @@ describe('hud tiles', () => {
     expect(fired(actions)).toEqual([])
   })
 
-  it('fill the pie of a tile in progress, and keep a tile with work live when it is not ready', () => {
+  it('fill the bar of a tile by its progress, and mark ready only a tile nothing blocks', () => {
     const { root, view } = mount()
-    const pie = (name: string) => {
-      const entry = one(tile(root, name), '.pie')
-      return [entry.style.getPropertyValue('--p'), entry.classList.contains('on')]
-    }
+    const bar = (name: string) => one(tile(root, name), '.pie').style.getPropertyValue('--p')
     paint(view, factoryHud().input)
-    expect([pie('Med Tank'), pie('Heavy Tank')]).toEqual([
-      ['0.4', true],
-      ['0', false],
-    ])
-    expect(classes(tile(root, 'Heavy Tank'))).toEqual(['tile', 'vehicle', 'ready'])
+    expect([bar('Med Tank'), bar('Heavy Tank')]).toEqual(['0.4', '0'])
+    expect(classes(tile(root, 'Heavy Tank'))).toEqual(['tile', 'ready'])
     paint(view, strainedHud().input)
-    expect(classes(tile(root, 'Turret'))).toEqual(['tile', 'structure', 'live'])
+    expect(classes(tile(root, 'Turret'))).toEqual(['tile'])
   })
 
   it('keep their nodes when the same model is painted twice', () => {
