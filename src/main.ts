@@ -1,6 +1,7 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
 import { Commander } from './client/commander.ts'
+import { CreditCounter, focusLabel, functionSlot, hudModel, PingState, TileKind, Trend, type HudInput, type HudTile } from './client/hud-model.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
 import { rememberedName, rememberName } from './client/player-name.ts'
@@ -12,11 +13,10 @@ import { Replica } from './client/replica.ts'
 import { seatLink } from './client/seat.ts'
 import { GameView } from './client/render/view.ts'
 import { bindTrace } from './client/trace-pie.ts'
-import { HALL_SPAN, populationOf } from './shared/cities.ts'
-import { baysFree } from './shared/flight.ts'
+import { HALL_SPAN } from './shared/cities.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
-import { ClientMessageKind, ServerEventKind, type ClientPort, type TrainJob, type UnitSnapshot } from './shared/protocol.ts'
-import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, Locomotion, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf } from './shared/unit-types.ts'
+import { ClientMessageKind, ServerEventKind, type ClientPort } from './shared/protocol.ts'
+import { Locomotion, UNIT_TYPES, UnitTypeId } from './shared/unit-types.ts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
 const lobbyRoot = document.querySelector<HTMLElement>('#lobby')
@@ -286,7 +286,7 @@ function mountWorld() {
   })
   view.resize()
   aimed = false
-  shownCredits = replica.credits
+  creditCounter.snap(replica.credits)
   aimOnce()
   paintVision()
   paintLegend()
@@ -378,30 +378,19 @@ const orders = document.querySelector<HTMLElement>('#orders')
 const cityFocus = document.querySelector<HTMLElement>('#city-focus')
 const cityFocusLabel = document.querySelector<HTMLElement>('#city-focus-label')
 const cityFocusRange = document.querySelector<HTMLInputElement>('#city-focus-range')
-const FOCUS_LABEL = ['Money ×4', 'Money ×2', 'Balanced', 'Growth ×2', 'Growth ×4']
 const fullscreen = document.querySelector<HTMLButtonElement>('#fullscreen')
-const NEEDS_FACTORY = new Set<UnitTypeId>([UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
-const TRAINABLE = [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY, JET, GUNSHIP, CRUISER]
 const tiles: OrderTile[] = []
 let queueSplit: HTMLElement | null = null
 if (orders) {
-  for (const type of [FACTORY, TURRET, AIRPORT, HELIPAD, SHIPYARD]) {
-    tiles.push(createTile(orders, type.id, false, false, type.label, type.cost, () => player.armBuilding(type.id), () => player.cancelBuild(type.id)))
-  }
-  tiles.push(createTile(orders, null, false, false, 'Building', 0, () => player.armCity()))
-  for (const type of TRAINABLE) {
-    tiles.push(createTile(orders, type.id, true, false, type.label, type.cost, () => player.spawn(type.id), () => {
-      const yard = player.productionYard()
-      if (yard) player.cancelSpawn(type.id, yard.id)
-    }))
-  }
-  queueSplit = document.createElement('div')
-  queueSplit.className = 'queue-split'
-  queueSplit.textContent = 'Queued: '
-  queueSplit.hidden = true
-  orders.append(queueSplit)
-  for (const type of TRAINABLE) {
-    tiles.push(createTile(orders, type.id, true, true, type.label, type.cost, () => player.cancelSpawn(type.id), () => player.cancelSpawn(type.id)))
+  for (const tile of hudModel(hudInput()).tiles) {
+    if (tile.kind === TileKind.Queued && !queueSplit) {
+      queueSplit = document.createElement('div')
+      queueSplit.className = 'queue-split'
+      queueSplit.textContent = 'Queued: '
+      queueSplit.hidden = true
+      orders.append(queueSplit)
+    }
+    tiles.push(createTile(orders, tile))
   }
   window.addEventListener('keydown', (event) => {
     if (typing(event) || event.repeat || orders.hidden) return
@@ -416,7 +405,7 @@ if (orders) {
 }
 cityFocusRange?.addEventListener('input', () => {
   const step = Number(cityFocusRange.value)
-  if (cityFocusLabel) cityFocusLabel.textContent = FOCUS_LABEL[step + 2] ?? 'Balanced'
+  if (cityFocusLabel) cityFocusLabel.textContent = focusLabel(step)
   player.setCityFocus(step)
 })
 fullscreen?.addEventListener('click', () => {
@@ -424,119 +413,60 @@ fullscreen?.addEventListener('click', () => {
   else void document.documentElement.requestFullscreen()
 })
 
-const COUNT_SECONDS = 0.15
 const PING_MS = 2000
 const STALL_MS = 6000
-const SLOW_PING_MS = 150
-const BAD_PING_MS = 300
-let shownCredits = replica.credits
+const creditCounter = new CreditCounter()
 
-function heldCities(): { cities: number; population: number } {
-  const playerId = replica.playerId
-  if (playerId === null || !replica.world) return { cities: 0, population: 0 }
-  const settled = replica.settledLayouts()
-  let cities = 0
-  let population = 0
-  for (let i = 0; i < settled.length; i++) {
-    const state = replica.cities[i]
-    const layout = settled[i]
-    if (!state || !layout || state.ownerId !== playerId) continue
-    cities += 1
-    population += populationOf(layout, state.ruins)
+function hudInput(): HudInput {
+  const raising = player.raisingCity()
+  return {
+    playerId: replica.playerId,
+    units: replica.units,
+    queue: replica.queue(),
+    cities: replica.cities,
+    layouts: replica.settledLayouts(),
+    yard: player.productionYard(),
+    placing: player.placingType(),
+    raising,
+    hall: player.selectedCity(),
+    quote: raising ? replica.cityBuildCost(player.aimedTile()) : null,
+    rtt: net.rtt,
+    spectating,
   }
-  return { cities, population }
 }
 
 const refreshHud = (dt: number) => {
-  const target = replica.credits
-  const blend = dt <= 0 ? 1 : 1 - Math.exp(-dt / COUNT_SECONDS)
-  shownCredits += (target - shownCredits) * blend
-  if (Math.abs(target - shownCredits) < 0.5) shownCredits = target
+  creditCounter.ease(replica.credits, dt)
   if (credits) {
-    credits.textContent = Math.round(shownCredits).toLocaleString('en-US')
-    const gap = target - shownCredits
-    credits.classList.toggle('up', gap > 30)
-    credits.classList.toggle('down', gap < -30)
+    credits.textContent = Math.round(creditCounter.shown).toLocaleString('en-US')
+    credits.classList.toggle('up', creditCounter.trend === Trend.Up)
+    credits.classList.toggle('down', creditCounter.trend === Trend.Down)
   }
-  const held = heldCities()
-  const own = replica.units.filter((unit) => unit.ownerId === replica.playerId && unit.health > 0)
-  let army = 0
-  for (const unit of own) army += UNIT_TYPES[unit.typeId].supply
-  let queued = 0
-  const queue = replica.queue()
-  for (const job of queue) queued += UNIT_TYPES[job.typeId].supply
+  const model = hudModel(hudInput())
   if (forces) {
-    forces.textContent = String(army)
-    forces.classList.toggle('over', army > held.population)
+    forces.textContent = String(model.army)
+    forces.classList.toggle('over', model.over)
   }
-  if (population) population.textContent = String(held.population)
-  if (cities) cities.textContent = String(held.cities)
-  const hall = player.selectedCity()
-  if (orders) orders.hidden = hall !== null
-  if (cityFocus) cityFocus.hidden = hall === null
-  if (hall !== null && cityFocusRange && cityFocusLabel && document.activeElement !== cityFocusRange) {
-    const step = replica.cities[hall]?.focus ?? 0
-    cityFocusRange.value = String(step)
-    cityFocusLabel.textContent = FOCUS_LABEL[step + 2] ?? 'Balanced'
+  if (population) population.textContent = String(model.population)
+  if (cities) cities.textContent = String(model.cities)
+  if (orders) orders.hidden = model.hall !== null
+  if (cityFocus) cityFocus.hidden = model.hall === null
+  if (model.hall !== null && cityFocusRange && cityFocusLabel && document.activeElement !== cityFocusRange) {
+    cityFocusRange.value = String(model.hall.focus)
+    cityFocusLabel.textContent = model.hall.label
   }
   if (ping) {
-    const rtt = net.rtt
-    ping.textContent = rtt === null ? '–' : `${Math.round(rtt)} ms`
-    ping.classList.toggle('slow', rtt !== null && rtt > SLOW_PING_MS)
-    ping.classList.toggle('bad', rtt !== null && rtt > BAD_PING_MS)
+    const shown = model.ping
+    ping.textContent = shown.state === PingState.None ? '–' : `${shown.ms} ms`
+    ping.classList.toggle('slow', shown.state === PingState.Slow || shown.state === PingState.Bad)
+    ping.classList.toggle('bad', shown.state === PingState.Bad)
   }
-  const ready = new Set<number>()
-  for (const unit of own) {
-    if (unit.progress >= 1 && UNIT_TYPES[unit.typeId].topSpeed <= 0) ready.add(unit.typeId)
-  }
-  const yard = player.productionYard()
-  const armed = player.placingType()
-  const pending = structureQueue()
-  const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
-  const yardJobs = tallyJobs(queue, yard?.id)
-  const allJobs = tallyJobs(queue)
-  if (queueSplit) queueSplit.hidden = !allJobs.any
-  for (const entry of tiles) {
-    if (entry.queue) {
-      const count = entry.id === null ? 0 : (allJobs.count.get(entry.id) ?? 0)
-      const progress = entry.id === null ? 0 : (allJobs.progress.get(entry.id) ?? 0)
-      paintTile(entry, count, progress, count > 0, count > 0)
-      continue
-    }
-    if (yard) {
-      if (!entry.train || entry.id === null || yardOf(entry.id) !== yard.typeId) {
-        entry.button.hidden = true
-        continue
-      }
-      const count = yardJobs.count.get(entry.id) ?? 0
-      const progress = yardJobs.progress.get(entry.id) ?? 0
-      const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-      const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, queue, yard) > 0)
-      paintTile(entry, count, progress, yard.progress >= 1 && room, true)
-      continue
-    }
-    if (entry.train) {
-      entry.button.hidden = true
-      continue
-    }
-    if (entry.id === null) {
-      entry.cost.textContent = costLine(quoted ?? 0, 1)
-      paintTile(entry, 0, 0, true, true, player.raisingCity())
-      continue
-    }
-    const site = pending.get(entry.id)
-    const gate = !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
-    const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-    paintTile(entry, site?.count ?? 0, site?.progress ?? 0, gate && supplyRoom, gate || (site?.count ?? 0) > 0 || (site?.progress ?? 0) > 0, armed === entry.id)
-  }
-  stampHotkeys(tiles)
+  if (queueSplit) queueSplit.hidden = !model.queued
+  for (let i = 0; i < tiles.length; i++) paintTile(tiles[i], model.tiles[i])
 }
 
 type OrderTile = {
-  id: UnitTypeId | null
-  train: boolean
-  queue: boolean
-  slot: number
+  slot: number | null
   button: HTMLButtonElement
   ring: HTMLElement
   badge: HTMLElement
@@ -546,21 +476,15 @@ type OrderTile = {
   onRemove?: () => void
 }
 
-function createTile(
-  bar: HTMLElement,
-  id: UnitTypeId | null,
-  train: boolean,
-  queue: boolean,
-  name: string,
-  cost: number,
-  onAdd: () => void,
-  onRemove?: () => void,
-): OrderTile {
+function createTile(bar: HTMLElement, tile: HudTile): OrderTile {
+  const queue = tile.kind === TileKind.Queued
+  const name = tile.kind === TileKind.City ? 'Building' : UNIT_TYPES[tile.type].label
+  const { onAdd, onRemove } = tileActions(tile)
   const button = document.createElement('button')
   button.type = 'button'
-  button.className = `tile ${tileKind(id)}`
+  button.className = `tile ${tileClass(tile.kind === TileKind.City ? null : tile.type)}`
   button.title = name
-  button.hidden = queue || train || (id !== null && NEEDS_FACTORY.has(id))
+  button.hidden = !tile.visible
   const pie = document.createElement('span')
   pie.className = 'pie'
   const label = document.createElement('span')
@@ -568,7 +492,7 @@ function createTile(
   label.textContent = name
   const price = document.createElement('span')
   price.className = 'cost'
-  price.textContent = costLine(cost, id === null ? 1 : UNIT_TYPES[id].supply)
+  price.textContent = tile.cost
   const badge = document.createElement('span')
   badge.className = 'badge'
   badge.hidden = true
@@ -588,88 +512,40 @@ function createTile(
     onRemove?.()
   })
   bar.append(button)
-  return { id, train, queue, slot: 0, button, ring: pie, badge, hotkey, cost: price, onAdd, onRemove }
+  return { slot: null, button, ring: pie, badge, hotkey, cost: price, onAdd, onRemove }
 }
 
-/** Visible build and train tiles, left to right, take F1 onward. Queued copies stay unlabeled. */
-function stampHotkeys(entries: readonly OrderTile[]) {
-  let slot = 0
-  for (const entry of entries) {
-    const next = !entry.queue && !entry.button.hidden ? ++slot : 0
-    entry.slot = next
-    const label = next > 0 ? `F${next}` : ''
-    if (entry.hotkey.textContent !== label) entry.hotkey.textContent = label
+function tileActions(tile: HudTile): { onAdd: () => void; onRemove?: () => void } {
+  if (tile.kind === TileKind.City) return { onAdd: () => player.armCity() }
+  const type = tile.type
+  if (tile.kind === TileKind.Structure) return { onAdd: () => player.armBuilding(type), onRemove: () => player.cancelBuild(type) }
+  if (tile.kind === TileKind.Queued) return { onAdd: () => player.cancelSpawn(type), onRemove: () => player.cancelSpawn(type) }
+  return {
+    onAdd: () => player.spawn(type),
+    onRemove: () => {
+      const yard = player.productionYard()
+      if (yard) player.cancelSpawn(type, yard.id)
+    },
   }
 }
 
-function functionSlot(code: string): number | null {
-  const match = /^F(\d+)$/.exec(code)
-  if (!match) return null
-  const slot = Number(match[1])
-  return slot >= 1 ? slot : null
-}
-
-function paintTile(entry: OrderTile, count: number, progress: number, enabled: boolean, visible: boolean, armed = false) {
-  entry.button.hidden = !visible
-  const amount = Math.max(0, Math.min(1, progress))
+function paintTile(entry: OrderTile, tile: HudTile) {
+  entry.button.hidden = !tile.visible
+  const amount = Math.max(0, Math.min(1, tile.progress))
   entry.ring.style.setProperty('--p', String(amount))
   entry.ring.classList.toggle('on', amount > 0)
-  const marked = count > 1 || (count === 1 && amount <= 0)
-  entry.badge.hidden = !marked
-  entry.badge.textContent = marked ? String(count) : ''
-  entry.button.classList.toggle('ready', enabled)
-  entry.button.classList.toggle('live', count > 0 || progress > 0 || armed)
-  entry.button.classList.toggle('armed', armed)
+  entry.badge.hidden = !tile.badge
+  entry.badge.textContent = tile.badge ? String(tile.count) : ''
+  entry.button.classList.toggle('ready', tile.ready)
+  entry.button.classList.toggle('live', tile.count > 0 || tile.progress > 0 || tile.armed)
+  entry.button.classList.toggle('armed', tile.armed)
+  if (entry.cost.textContent !== tile.cost) entry.cost.textContent = tile.cost
+  entry.slot = tile.slot
+  const hotkey = tile.slot === null ? '' : `F${tile.slot}`
+  if (entry.hotkey.textContent !== hotkey) entry.hotkey.textContent = hotkey
 }
 
-function jetApron(own: readonly UnitSnapshot[], training: readonly TrainJob[], airport: UnitSnapshot): number {
-  const parked: { x: number; y: number; bay: number }[] = []
-  for (const unit of own) {
-    if (unit.health <= 0 || unit.typeId !== UnitTypeId.Jet || !unit.home || (unit.bay ?? -1) < 0) continue
-    if (unit.home.x !== airport.tileX || unit.home.y !== airport.tileY) continue
-    parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay ?? -1 })
-  }
-  let queued = 0
-  for (const job of training) if (job.typeId === UnitTypeId.Jet && job.yardId === airport.id) queued += 1
-  return baysFree([{ x: airport.tileX, y: airport.tileY }], parked) - queued
-}
-
-function tallyJobs(jobs: readonly TrainJob[], yardId?: number): { count: Map<UnitTypeId, number>; progress: Map<UnitTypeId, number>; any: boolean } {
-  const count = new Map<UnitTypeId, number>()
-  const progress = new Map<UnitTypeId, number>()
-  const heads = new Set<number>()
-  let any = false
-  for (const job of jobs) {
-    if (yardId !== undefined && job.yardId !== yardId) continue
-    any = true
-    count.set(job.typeId, (count.get(job.typeId) ?? 0) + 1)
-    if (heads.has(job.yardId)) continue
-    heads.add(job.yardId)
-    if (job.progress > (progress.get(job.typeId) ?? 0)) progress.set(job.typeId, job.progress)
-  }
-  return { count, progress, any }
-}
-
-function structureQueue(): Map<UnitTypeId, { count: number; progress: number }> {
-  const queue = new Map<UnitTypeId, { count: number; progress: number }>()
-  for (const unit of replica.units) {
-    if (unit.ownerId !== replica.playerId || unit.health <= 0 || unit.progress >= 1) continue
-    if (UNIT_TYPES[unit.typeId].topSpeed > 0) continue
-    const site = queue.get(unit.typeId) ?? { count: 0, progress: 0 }
-    site.count += 1
-    if (unit.progress > site.progress) site.progress = unit.progress
-    queue.set(unit.typeId, site)
-  }
-  return queue
-}
-
-function costLine(credits: number, supply: number): string {
-  const price = credits > 0 ? credits.toLocaleString('en-US') : ''
-  if (supply <= 0) return price
-  return price ? `${price} · ${supply}` : String(supply)
-}
-
-function tileKind(id: UnitTypeId | null): 'structure' | 'vehicle' | 'air' | 'boat' {
+function tileClass(id: UnitTypeId | null): 'structure' | 'vehicle' | 'air' | 'boat' {
   if (id === null) return 'structure'
   const type = UNIT_TYPES[id]
   if (type.topSpeed <= 0) return 'structure'
