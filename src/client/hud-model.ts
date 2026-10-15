@@ -63,6 +63,7 @@ export type HudModel = {
   ping: Ping
   tiles: HudTile[]
   queued: boolean
+  yard: number | null
   hall: { focus: number; label: string } | null
 }
 
@@ -152,6 +153,7 @@ export function hudModel(input: HudInput): HudModel {
     ping: pingOf(input.rtt),
     tiles,
     queued: input.queue.length > 0,
+    yard: yard === null ? null : yard.id,
     hall: focus === null ? null : { focus, label: focusLabel(focus) },
   }
 }

@@ -157,7 +157,7 @@ export function roomPreview(): MapPreview {
   }
 }
 
-function islandTerrain(x: number, y: number, size: number): Terrain {
+export function islandTerrain(x: number, y: number, size: number): Terrain {
   const edge = Math.hypot(x / size - 0.5, y / size - 0.5) * 2
   const ground = valueNoise(x, y, 11, 0.07) * 0.45 + 0.55 - edge
   if (ground < 0) return Terrain.Water
