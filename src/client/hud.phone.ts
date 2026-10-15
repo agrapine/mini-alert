@@ -9,6 +9,13 @@ let mock = ''
 
 const SCENES = ['base', 'armed', 'factory', 'airport', 'hall', 'army', 'spectate', 'strained', 'menu', 'help', 'outcome', 'trace']
 
+const SHOWN: Partial<Record<string, string[]>> = {
+  base: ['Menu', 'Help', 'minimap-marks', 'Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building'],
+  hall: ['City focus'],
+  spectate: ['Menu', 'Help', 'minimap-marks', 'Ada', 'Bo', 'Cy', 'Dee'],
+  menu: ['Music On', 'music-volume', 'Sounds On', 'sounds-volume', 'Input On', 'Changelog', 'Full screen', 'Surrender'],
+}
+
 const SCREENS: [string, BrowserContextOptions][] = [
   ['1280×720', { viewport: { width: 1280, height: 720 } }],
   ['1024×768', { viewport: { width: 1024, height: 768 } }],
@@ -51,8 +58,9 @@ async function withPage<T>(options: BrowserContextOptions, visit: (page: Page) =
   }
 }
 
-function brokenKernels(): string[] {
+function layout(): { checked: string[]; faults: string[] } {
   const EPS = 0.5
+  const checked: string[] = []
   const faults: string[] = []
   const name = (element: Element | null) =>
     element === null ? 'nothing' : element.getAttribute('aria-label') || element.getAttribute('title') || element.id || element.textContent?.trim() || element.tagName
@@ -77,6 +85,7 @@ function brokenKernels(): string[] {
     const y = rect.top + rect.height / 2
     const seen = [viewport, ...scrollers(control).map((box) => box.getBoundingClientRect())]
     if (!seen.every((box) => x >= box.left && y >= box.top && x < box.right && y < box.bottom)) continue
+    checked.push(name(control))
     const hit = document.elementFromPoint(x, y)
     if (hit && control.contains(hit)) continue
     if (popups.some((popup) => popup.contains(hit) && !popup.contains(control))) continue
@@ -98,6 +107,10 @@ function brokenKernels(): string[] {
     if (rendered(item) && !within(item.getBoundingClientRect(), viewport)) faults.push(`${name(item)} leaves the viewport`)
   }
 
+  for (const element of document.querySelectorAll('#hud [hidden]')) {
+    if (rendered(element)) faults.push(`${name(element)} renders while hidden`)
+  }
+
   if ((document.scrollingElement?.scrollWidth ?? 0) > innerWidth) faults.push('the page scrolls sideways')
   for (const element of document.querySelectorAll('#hud *')) {
     const { overflowX } = getComputedStyle(element)
@@ -107,7 +120,7 @@ function brokenKernels(): string[] {
   const bar = document.querySelector('#menubar')
   const side = document.querySelector('#side')
   const view = document.querySelector('#view')
-  if (!bar || !side || !view) return [...faults, 'the bar, the rail or the view is missing']
+  if (!bar || !side || !view) return { checked, faults: [...faults, 'the bar, the rail or the view is missing'] }
   const barBox = bar.getBoundingClientRect()
   if (bar.scrollWidth > bar.clientWidth) faults.push('the bar overflows')
   for (const element of bar.querySelectorAll('*')) {
@@ -127,16 +140,18 @@ function brokenKernels(): string[] {
   const playfield = { left: 0, top: barBox.bottom, right: side.getBoundingClientRect().left, bottom: innerHeight }
   const off = (Object.keys(playfield) as (keyof typeof playfield)[]).filter((edge) => Math.abs(field[edge] - playfield[edge]) > EPS)
   if (off.length > 0) faults.push(`the view's ${off.join(', ')} miss the playfield`)
-  return faults
+  return { checked, faults }
 }
 
 describe('HUD layout', () => {
-  it.each(SCREENS)('%s: every scene meets the layout kernels', async (_, options) => {
+  it.each(SCREENS)('%s: every scene meets the layout kernels and shows its controls', async (_, options) => {
     const faults = await withPage(options, async (page) => {
       const found: string[] = []
       for (const scene of SCENES) {
         await open(page, scene)
-        found.push(...(await page.evaluate(brokenKernels)).map((fault) => `${scene}: ${fault}`))
+        const { checked, faults } = await page.evaluate(layout)
+        const missing = (SHOWN[scene] ?? []).filter((control) => !checked.includes(control)).map((control) => `${control} is not on screen`)
+        found.push(...[...faults, ...missing].map((fault) => `${scene}: ${fault}`))
       }
       return found
     })
@@ -165,10 +180,10 @@ describe('HUD layout', () => {
         const before = last.getBoundingClientRect().bottom > plates.getBoundingClientRect().bottom
         plates.scrollTop = plates.scrollHeight
         const after = last.getBoundingClientRect().bottom <= plates.getBoundingClientRect().bottom
-        return { plates: plates.querySelectorAll('.faction-plate').length, last: last.textContent, before, after }
+        return { plates: plates.querySelectorAll('.faction-plate').length, last: last.textContent, overflowY: getComputedStyle(plates).overflowY, before, after }
       })
     })
-    expect(scroller).toEqual({ plates: 8, last: 'Leave', before: true, after: true })
+    expect(scroller).toEqual({ plates: 8, last: 'Leave', overflowY: 'auto', before: true, after: true })
   })
 
   it.each(SCREENS)('%s: the sheet shows over the match chrome, and over the lobby without it', async (_, options) => {
