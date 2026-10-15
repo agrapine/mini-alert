@@ -495,6 +495,19 @@ body.match {
   display: none;
 }
 
+.tile .hotkey {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  z-index: 1;
+  color: rgba(228, 230, 212, 0.38);
+  font-size: 8px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
 .tile.ready {
   cursor: pointer;
 }
