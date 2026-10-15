@@ -14,6 +14,8 @@ export const BATTLE = Object.entries(tracks)
 
 export class Music {
   private readonly audio = new Audio()
+  private output: GainNode | null = null
+  private volume = 1
   private queue: string[] = []
   private index = 0
   private mode: 'silent' | 'lobby' | 'match' = 'silent'
@@ -22,6 +24,15 @@ export class Music {
 
   constructor() {
     this.audio.addEventListener('ended', () => this.advance())
+  }
+
+  /** iOS ignores a media element's volume, so once audio unlocks the level lives on a gain the element plays through. */
+  connect(context: AudioContext) {
+    this.output = context.createGain()
+    this.output.gain.value = this.volume
+    this.output.connect(context.destination)
+    context.createMediaElementSource(this.audio).connect(this.output)
+    this.audio.volume = 1
   }
 
   lobby() {
@@ -47,7 +58,9 @@ export class Music {
   }
 
   setVolume(volume: number) {
-    this.audio.volume = volume
+    this.volume = volume
+    if (this.output) this.output.gain.value = volume
+    else this.audio.volume = volume
   }
 
   setMuted(muted: boolean) {

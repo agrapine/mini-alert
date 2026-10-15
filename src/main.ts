@@ -1,6 +1,7 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
 import { Alarm } from './client/alarm.ts'
+import { unlockAudio } from './client/audio.ts'
 import { Commander } from './client/commander.ts'
 import { CreditCounter, focusLabel, functionSlot, hudModel, PingState, TileKind, Trend, type HudInput, type HudTile } from './client/hud-model.ts'
 import { LobbyView } from './client/lobby-ui.ts'
@@ -94,7 +95,7 @@ bindMenu({
 })
 document.body.classList.add('lobby')
 window.addEventListener('pointerdown', () => music.resume())
-alarm.listen(window)
+unlockAudio(window, [music, alarm])
 
 let claimedName: string | null = null
 const admin = adminEnabled(location.search)

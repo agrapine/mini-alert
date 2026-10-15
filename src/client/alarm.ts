@@ -13,11 +13,7 @@ export const TAKES: Takes<string> = {
   lines: { [ContactKind.Base]: takes('base'), [ContactKind.Unit]: takes('unit') },
 }
 
-/** A touch can start audio only on its release, not its press. */
-const GESTURES = ['pointerup', 'keydown']
-
 export class Alarm {
-  private context: AudioContext | null = null
   private output: GainNode | null = null
   private buffers: Takes<AudioBuffer> | null = null
   private playing: AudioBufferSourceNode | null = null
@@ -25,8 +21,13 @@ export class Alarm {
   private on = true
   private volume = 1
 
-  listen(target: Pick<EventTarget, 'addEventListener'>) {
-    for (const gesture of GESTURES) target.addEventListener(gesture, () => this.unlock())
+  connect(context: AudioContext) {
+    this.output = context.createGain()
+    this.output.gain.value = this.volume
+    this.output.connect(context.destination)
+    decode(context).then((buffers) => {
+      this.buffers = buffers
+    })
   }
 
   setVolume(volume: number) {
@@ -48,20 +49,6 @@ export class Alarm {
     const sample = pick(pick([this.buffers.horns, this.buffers.lines[kind]]))
     this.playing = play(output, sample)
     this.until = output.context.currentTime + sample.duration
-  }
-
-  private unlock() {
-    if (!this.context) {
-      if (!('AudioContext' in globalThis)) return
-      this.context = new AudioContext()
-      this.output = this.context.createGain()
-      this.output.gain.value = this.volume
-      this.output.connect(this.context.destination)
-      decode(this.context).then((buffers) => {
-        this.buffers = buffers
-      })
-    }
-    if (this.context.state !== 'running') this.context.resume().catch(() => {})
   }
 }
 
