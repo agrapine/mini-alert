@@ -16,6 +16,7 @@
 - About a third less traffic in battles: scouts and jets, which aim with their whole body, turn toward their target on your screen as on the server, so they are no longer resent every time they turn.
 - AI opponents train an army again once their factory is up, instead of sitting on their credits.
 - A unit force-attacking one of your own, and a jet with rockets left after losing its airport, stop and turn toward the target on your screen as on the server, instead of being corrected.
+- Ammo counts go only to the unit's owner, except a rocket unit running empty or rearming, halving the extra unit updates ammo counts add in battle.
 
 ## 0.6
 - Improved cities, growth, density, growth / income control

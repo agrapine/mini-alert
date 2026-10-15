@@ -198,6 +198,34 @@ describe('host snapshots', () => {
     }
   })
 
+  it("sends each change of a unit's rounds to its owner, and to other players only a rocket unit running empty", () => {
+    const game = new Game(new World(24, 16))
+    const owner = game.addPlayer()
+    const rival = game.addPlayer()
+    const scout = game.spawn(owner, UnitTypeId.Scout, { x: 4, y: 8 })
+    const jet = game.spawn(owner, UnitTypeId.Jet, { x: 5, y: 10 })
+    game.spawn(rival, UnitTypeId.Scout, { x: 15, y: 8 })
+    const host = new ServerHost(game)
+    const frames = new Map<number, ServerFrame[]>()
+    for (const player of [owner, rival]) {
+      const sent: ServerFrame[] = []
+      frames.set(player.id, sent)
+      host.attach(player.id, true, (frame) => sent.push(frame)).sync()
+    }
+    const told = () =>
+      [...frames.values()].map((sent) =>
+        events(sent.splice(0)).flatMap((event) => (event.kind === ServerEventKind.UnitMotion ? [[event.unit.id, event.unit.rounds]] : [])),
+      )
+    told()
+    scout.rounds -= 1
+    jet.rounds -= 1
+    host.tick(SIM_STEP)
+    expect(told()).toEqual([[[scout.id, SCOUT.weapon.magazine - 1], [jet.id, JET.weapon.magazine - 1]], []])
+    jet.rounds = 0
+    host.tick(SIM_STEP)
+    expect(told()).toEqual([[[jet.id, 0]], [[jet.id, 0]]])
+  })
+
   it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
     const game = new Game(new World(32, 20))
     const player = game.addPlayer()
