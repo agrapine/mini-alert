@@ -153,6 +153,51 @@ describe('host snapshots', () => {
     expect(events(frames).filter((event) => event.kind === ServerEventKind.UnitMotion)).toEqual([])
   })
 
+  it('turns a scout toward its own unit it is ordered to attack on its client, tick for tick as the server does', () => {
+    const game = new Game(new World(16, 16))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 }, Math.PI / 2)
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 4, y: 9 })
+    scout.attackId = tank.id
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => frames.push(frame)).sync()
+    const client = new Replica()
+    client.apply(frames[0])
+    for (let i = 0; i < 30; i++) {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      expect(client.unit(scout.id)).toMatchObject({ x: scout.pos.x, z: scout.pos.z, facing: expect.closeTo(scout.facing, 5) })
+    }
+    expect(scout.attackId).toBe(tank.id)
+    expect(scout.facing).toBeCloseTo(Math.atan2(tank.pos.x - scout.pos.x, tank.pos.z - scout.pos.z), 9)
+  })
+
+  it('holds a jet with rockets left and no airport in range of its attack target on its client, tick for tick as the server does', () => {
+    const game = new Game(new World(32, 20))
+    const player = game.addPlayer()
+    const jet = game.spawn(player, UnitTypeId.Jet, { x: 20, y: 10 }, Math.PI / 2)
+    const foe = game.spawn(game.addPlayer(), UnitTypeId.Factory, { x: 12, y: 4 })
+    jet.flight = Flight.Cruise
+    jet.altitude = 2.6
+    jet.speed = JET.topSpeed
+    jet.attackId = foe.id
+    game.tick(SIM_STEP)
+    expect(jet.home).toBeNull()
+    expect(jet.rounds).toBeGreaterThan(0)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => frames.push(frame)).sync()
+    const client = new Replica()
+    client.apply(frames[0])
+    for (let i = 0; i < 30; i++) {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      const { x, z } = jet.pos
+      expect(client.unit(jet.id)).toMatchObject({ x: expect.closeTo(x, 5), z: expect.closeTo(z, 5), facing: expect.closeTo(jet.facing, 5), path: [] })
+    }
+  })
+
   it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
     const game = new Game(new World(32, 20))
     const player = game.addPlayer()

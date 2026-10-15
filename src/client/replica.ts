@@ -1,6 +1,5 @@
 import { buildingCost, canPlaceCityBuilding, cityContains, eachBuildingTile, footprintNearCity, HALL_SPAN, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { Flight } from '../shared/flight.ts'
 import { atRest, flightLine, holdInRange, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
@@ -958,11 +957,11 @@ export class Replica {
     return nearest
   }
 
-  /** The ground point a unit attacks, else its attack target while alive and hostile. */
+  /** The ground point a unit attacks, else its attack target while alive. */
   private attackAim(unit: UnitSnapshot): { x: number; z: number } | null {
     if (unit.attackPoint) return unit.attackPoint
     const target = unit.attackId === null ? undefined : this.unit(unit.attackId)
-    return target && target.health > 0 && target.ownerId !== unit.ownerId ? target : null
+    return target && target.health > 0 ? target : null
   }
 
   private occupancy(): Map<string, number> {
@@ -997,7 +996,7 @@ export class Replica {
       orbitY: unit.orbit?.y,
       bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
-    const aim = type.weapon.turretRate > 0 || mayRearm(type, unit) ? null : this.attackAim(unit)
+    const aim = type.weapon.turretRate > 0 || rearming(type, unit) ? null : this.attackAim(unit)
     if (aim && holdInRange(state, type, aim, dt)) state.loiter = false
     stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
     const span = spanOf(type)
@@ -1188,10 +1187,9 @@ function changesUnits(event: ServerFrame['events'][number]): boolean {
   )
 }
 
-/** Whether the server may be rearming a rocket unit, which it never holds in range: rounds are not on the wire, so every homeless or homebound one counts. */
-function mayRearm(type: UnitType, unit: UnitSnapshot): boolean {
-  if (type.weapon.kind !== WeaponKind.Rocket) return false
-  return !unit.home || unit.returning === true || unit.flight === Flight.Landing || unit.flight === Flight.Taxi
+/** A rocket unit out of rounds, which the server calls home to rearm and never holds in range. */
+function rearming(type: UnitType, unit: UnitSnapshot): boolean {
+  return type.weapon.kind === WeaponKind.Rocket && (unit.rounds ?? type.weapon.magazine) <= 0
 }
 
 function grounded(unit: UnitSnapshot): boolean {
