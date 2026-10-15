@@ -9,7 +9,7 @@ const tracks = import.meta.glob('../../assets/music/*.mp3', {
 })
 
 const LOBBY = [lobby1Url, lobby2Url]
-const BATTLE = Object.entries(tracks)
+export const BATTLE = Object.entries(tracks)
   .filter(([path]) => !/\/lobby\d+\.mp3$/.test(path))
   .map((entry) => entry[1])
 
