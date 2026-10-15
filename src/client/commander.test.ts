@@ -98,6 +98,8 @@ describe('commander groups', () => {
     expect(player.groupOf()).toBe(3)
     replica.units = replica.units.map((other) => (other.id === 2 ? { ...other, health: 0 } : other))
     expect(player.groupOf()).toBe(3)
+    player.selectIds([1, 3])
+    expect(player.groupOf()).toBeNull()
     player.select(1)
     expect(player.groupOf()).toBe(3)
     player.select(null)

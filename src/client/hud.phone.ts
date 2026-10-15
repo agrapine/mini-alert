@@ -123,6 +123,12 @@ function layout(): { checked: string[]; faults: string[] } {
   const side = document.querySelector('#side')
   const view = document.querySelector('#view')
   if (!bar || !side || !view) return { checked, faults: [...faults, 'the bar, the rail or the view is missing'] }
+  for (const element of document.querySelectorAll('#selected *')) {
+    if (element.childElementCount > 0 || controls.includes(element) || !rendered(element)) continue
+    const rect = element.getBoundingClientRect()
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+    if (hit !== view) faults.push(`${name(element)} hits ${name(hit)}`)
+  }
   const barBox = bar.getBoundingClientRect()
   if (bar.scrollWidth > bar.clientWidth) faults.push('the bar overflows')
   for (const element of bar.querySelectorAll('*')) {
