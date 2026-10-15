@@ -90,6 +90,11 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: b
       openSheet('Help', HELP)
       return
     }
+    if (opener?.dataset.open === 'fullscreen') {
+      if (document.fullscreenElement) void document.exitFullscreen()
+      else void document.documentElement.requestFullscreen()
+      return
+    }
     if (target.closest('[data-dismiss]')) {
       closeMenu()
       actions.onSurrender?.()

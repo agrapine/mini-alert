@@ -237,7 +237,7 @@ body.match {
   margin: 14px 0;
 }
 
-#hud {
+#stats {
   position: fixed;
   z-index: 4;
   left: 16px;
@@ -583,12 +583,7 @@ body.match {
 }
 
 body.lobby #view,
-body.lobby #menubar,
-body.lobby #hud,
-body.lobby #side,
-body.lobby #legend,
-body.lobby #outcome,
-body.lobby #trace {
+body.lobby #hud > :not(#sheet) {
   display: none;
 }
 
@@ -604,7 +599,7 @@ body.spectate #orders {
     padding-bottom: max(4px, env(safe-area-inset-bottom));
   }
 
-  #hud {
+  #stats {
     right: 112px;
     gap: 8px 10px;
   }
