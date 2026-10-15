@@ -479,7 +479,7 @@ export class GameView {
     this.clearGround(cleared)
     const contact = radarContact(this.radar, performance.now(), playerId, units, cities)
     if (contact) {
-      this.minimap?.blip(contact.x, contact.z)
+      this.minimap?.blip(contact.x, contact.z, contact.kind)
       this.alert?.(contact.kind)
     }
     this.minimap?.draw(living, selectedIds, this.stage.groundViewport(), this.fog?.mask, cities, rally)
