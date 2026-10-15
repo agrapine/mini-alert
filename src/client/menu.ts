@@ -11,7 +11,7 @@ const HELP = `# Shortcuts
 - **Attack** — click an enemy. Hold Ctrl or ⌘ and click one of your units to fire on it, or click the ground to shell that spot. Units also fire at enemies they can see
 - **Build** — Factory, Turret, Airport, or Helipad goes on open ground beside a city you own. A shipyard goes on water beside a city you own. Building places one of the houses a city grows, only on a tile that city could grow. The price appears when you aim at that city. Right-click cancels
 - **Orders** — the Build panel sorts its tiles into the Base, Land, Air, and Sea tabs. \`F1\`, \`F2\`, and so on press the tiles of the open tab, left to right and top to bottom. Shift with the key drops the latest order of that type
-- **City hall** — click the hall of a city you hold. A slider leans that city toward money or growth
+- **City hall** — click the hall of a city you hold. The Selected panel at the bottom left shows its slider, which leans that city toward money or growth
 - **Train** — select a factory, airport, helipad, or shipyard, and the Build panel opens its tab: Land for a factory, Air for an airport or helipad, Sea for a shipyard. Click a tile to queue it there. The Queue line at the bottom of the panel has a chip for each type in production, from every building; click one to drop the latest order of that type
 - **Waypoint** — with a factory selected, click the ground. Finished units move there
 - **Ranges** — hold Ctrl or ⌘ with one unit selected to show its attack range and sight

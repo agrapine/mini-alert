@@ -40,6 +40,12 @@ export const enum TileBlock {
   ApronFull = 7,
 }
 
+export const enum HealthBand {
+  Healthy = 0,
+  Damaged = 1,
+  Critical = 2,
+}
+
 export type HudInput = {
   playerId: number | null
   units: readonly UnitSnapshot[]
@@ -47,6 +53,7 @@ export type HudInput = {
   cities: readonly (CityState | null)[]
   layouts: readonly (CityLayout | null)[]
   selected: readonly number[]
+  group: number | null
   yard: UnitSnapshot | null
   placing: UnitTypeId | null
   raising: boolean
@@ -81,6 +88,8 @@ export type QueueChip = { kind: TileKind.Structure | TileKind.Train; type: UnitT
 
 export type Selection = { ids: readonly number[]; hall: number | null }
 
+export type SelectedRow = { type: UnitTypeId; count: number; health: number; band: HealthBand; progress: number | null }
+
 export type HudModel = {
   army: number
   population: number
@@ -91,6 +100,8 @@ export type HudModel = {
   tab: BuildTab | null
   queue: QueueChip[]
   selection: Selection
+  rows: SelectedRow[]
+  group: number | null
   hall: { focus: number; label: string } | null
 }
 
@@ -105,6 +116,8 @@ const COUNT_SECONDS = 0.15
 const TREND_GAP = 30
 const SLOW_PING_MS = 150
 const BAD_PING_MS = 300
+const HEALTHY = 0.5
+const DAMAGED = 0.25
 
 export function hudModel(input: HudInput): HudModel {
   const { yard, hall } = input
@@ -181,9 +194,11 @@ export function hudModel(input: HudInput): HudModel {
     over: army > held.population,
     ping: pingOf(input.rtt),
     tiles,
-    tab: hall === null && !input.spectating ? tabOf(yard === null ? null : yard.typeId) : null,
+    tab: input.spectating ? null : tabOf(yard === null ? null : yard.typeId),
     queue,
     selection: { ids: input.selected, hall },
+    rows: input.spectating ? [] : selectedRows(own, input.selected),
+    group: input.group,
     hall: focus === null ? null : { focus, label: focusLabel(focus) },
   }
 }
@@ -250,6 +265,27 @@ function heldCities(input: HudInput): { cities: number; population: number } {
     population += populationOf(layout, state.ruins)
   }
   return { cities, population }
+}
+
+function selectedRows(own: readonly UnitSnapshot[], selected: readonly number[]): SelectedRow[] {
+  const ids = new Set(selected)
+  const rows = new Map<UnitTypeId, { count: number; health: number; max: number; progress: number | null }>()
+  for (const unit of own) {
+    if (!ids.has(unit.id)) continue
+    const row = rows.get(unit.typeId) ?? { count: 0, health: 0, max: 0, progress: null }
+    row.count += 1
+    row.health += unit.health
+    row.max += UNIT_TYPES[unit.typeId].maxHealth
+    if (unit.progress < 1) row.progress = Math.min(row.progress ?? 1, unit.progress)
+    rows.set(unit.typeId, row)
+  }
+  return [...rows]
+    .map(([type, row]) => {
+      const health = row.health / row.max
+      const band = health >= HEALTHY ? HealthBand.Healthy : health >= DAMAGED ? HealthBand.Damaged : HealthBand.Critical
+      return { type, count: row.count, health, band, progress: row.progress }
+    })
+    .sort((a, b) => b.count - a.count || a.type - b.type)
 }
 
 function structureSites(own: readonly UnitSnapshot[]): Tally {

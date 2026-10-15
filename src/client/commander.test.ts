@@ -84,3 +84,23 @@ describe('commander selection', () => {
     expect(ids(player)).toEqual([1])
   })
 })
+
+describe('commander groups', () => {
+  it('names the group whose live members are the selection', () => {
+    const { replica, player } = setup()
+    expect(player.groupOf()).toBeNull()
+    player.selectIds([1, 2])
+    player.assignGroup(3)
+    expect(player.groupOf()).toBe(3)
+    player.toggle(3)
+    expect(player.groupOf()).toBeNull()
+    player.recallGroup(3, false)
+    expect(player.groupOf()).toBe(3)
+    replica.units = replica.units.map((other) => (other.id === 2 ? { ...other, health: 0 } : other))
+    expect(player.groupOf()).toBe(3)
+    player.select(1)
+    expect(player.groupOf()).toBe(3)
+    player.select(null)
+    expect(player.groupOf()).toBeNull()
+  })
+})

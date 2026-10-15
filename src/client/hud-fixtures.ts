@@ -79,6 +79,7 @@ function input(units: UnitSnapshot[], towns: Town[], fields: Partial<HudInput> =
     cities: towns.map((entry) => entry.state),
     layouts: towns.map((entry) => entry.layout),
     selected: [],
+    group: null,
     yard: null,
     placing: null,
     raising: false,
@@ -146,14 +147,14 @@ export function hallHud(): HudFixture {
 }
 
 function armyUnits(): UnitSnapshot[] {
-  const tank = UNIT_TYPES[UnitTypeId.MedTank].maxHealth
+  const health = (typeId: UnitTypeId, share: number) => ({ health: UNIT_TYPES[typeId].maxHealth * share })
   return [
     ...baseUnits(),
-    unit(7, UnitTypeId.MedTank, 44, 41, { health: tank * 0.4 }),
-    unit(8, UnitTypeId.MedTank, 45, 42, { health: tank * 0.2 }),
-    unit(9, UnitTypeId.HeavyTank, 46, 40),
-    unit(10, UnitTypeId.HeavyTank, 47, 41),
-    unit(11, UnitTypeId.Artillery, 44, 44),
+    unit(7, UnitTypeId.MedTank, 44, 41, health(UnitTypeId.MedTank, 0.4)),
+    unit(8, UnitTypeId.MedTank, 45, 42, health(UnitTypeId.MedTank, 0.2)),
+    unit(9, UnitTypeId.HeavyTank, 46, 40, health(UnitTypeId.HeavyTank, 0.4)),
+    unit(10, UnitTypeId.HeavyTank, 47, 41, health(UnitTypeId.HeavyTank, 0.2)),
+    unit(11, UnitTypeId.Artillery, 44, 44, health(UnitTypeId.Artillery, 0.15)),
     unit(12, UnitTypeId.Scout, 47, 46),
     unit(13, UnitTypeId.Scout, 48, 45),
     unit(14, UnitTypeId.Gunship, 49, 43),
@@ -165,7 +166,7 @@ const ARMY_SELECTION = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
 export function armyHud(): HudFixture {
   return {
-    input: input(armyUnits(), baseTowns(), { rtt: 210, selected: ARMY_SELECTION }),
+    input: input(armyUnits(), baseTowns(), { rtt: 210, selected: ARMY_SELECTION, group: 1 }),
     credits: { shown: 4_870, trend: Trend.Up },
     factions: factions(4),
   }

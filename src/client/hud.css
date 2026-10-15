@@ -53,6 +53,7 @@ body {
 #queue-label,
 .chip .count,
 #city-focus-label,
+#group,
 .legend-row .tag {
   font-family: var(--con-mono);
   font-weight: 600;
@@ -80,7 +81,8 @@ body {
   margin: 0;
 }
 
-.readout-label {
+.readout-label,
+#group {
   font-size: 10px;
   line-height: 1;
   color: var(--con-dim);
@@ -345,11 +347,6 @@ body {
   z-index: 26;
 }
 
-#sheet[hidden],
-#outcome[hidden] {
-  display: none;
-}
-
 .sheet-card,
 .outcome-card {
   box-sizing: border-box;
@@ -481,10 +478,6 @@ body {
   background: var(--con-steel);
 }
 
-.hud-panel[hidden] {
-  display: none;
-}
-
 #radar-panel {
   display: block;
   flex: none;
@@ -599,11 +592,15 @@ body {
   align-content: start;
 }
 
+#sheet[hidden],
+#outcome[hidden],
+.hud-panel[hidden],
 .build-tabs[hidden],
 #orders[hidden],
 .tile[hidden],
 .tile .badge[hidden],
 #queue[hidden],
+#selected-rows:empty,
 #city-focus[hidden],
 #legend[hidden],
 #trace[hidden] {
@@ -639,7 +636,11 @@ body {
   background: var(--con-void);
 }
 
-.tile .name {
+.tile .name,
+.tile .state,
+.faction-plate .name,
+.legend-row .name {
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -655,11 +656,7 @@ body {
 }
 
 .tile .state {
-  max-width: 100%;
   min-height: 1em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 10px;
   line-height: 1;
   letter-spacing: 0.04em;
@@ -755,15 +752,68 @@ body {
   display: none;
 }
 
+#selected {
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  max-width: min(420px, 100% - var(--rail) - 16px - env(safe-area-inset-left));
+}
+
+#group {
+  margin-left: auto;
+}
+
+#selected-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px;
+}
+
+.unit-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+  width: 120px;
+  font: 600 13px/1 var(--con-sans);
+  white-space: nowrap;
+}
+
+.unit-row .state {
+  font: 600 11px/1 var(--con-mono);
+  color: var(--con-amber);
+}
+
+.health {
+  grid-column: 1 / -1;
+  height: 4px;
+  background: var(--con-edge);
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  background: var(--con-radar);
+  transform: scaleX(var(--h));
+  transform-origin: left;
+}
+
+.bar.damaged {
+  background: var(--con-amber);
+}
+
+.bar.critical {
+  background: var(--con-alert);
+}
+
 #city-focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 200px;
+  padding: 10px;
   font: 12px/1.3 var(--con-sans);
 }
 
-#city-focus-name,
-#city-focus-label {
+#city-focus p {
   margin: 0;
 }
 
@@ -781,6 +831,7 @@ body {
   margin: 0;
   accent-color: var(--con-radar);
   cursor: pointer;
+  pointer-events: auto;
 }
 
 #plates {
@@ -805,14 +856,6 @@ body {
   color: var(--con-radar);
 }
 
-.faction-plate .name,
-.legend-row .name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 #plates .plate {
   flex: none;
   min-height: 36px;
@@ -826,23 +869,27 @@ body {
   border-radius: 1px;
 }
 
-#legend {
+#legend,
+#selected {
   position: fixed;
   z-index: 4;
-  top: calc(var(--bar) + 8px);
   left: calc(8px + env(safe-area-inset-left));
-  max-width: 240px;
   box-sizing: border-box;
+  color: var(--con-ink);
+  pointer-events: none;
+  user-select: none;
+}
+
+#legend {
+  top: calc(var(--bar) + 8px);
+  max-width: 240px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px 10px;
   background: var(--con-steel);
   border: 1px solid var(--con-edge);
-  color: var(--con-ink);
   font: 12px/1.3 var(--con-sans);
-  pointer-events: none;
-  user-select: none;
 }
 
 .legend-row {
@@ -1032,7 +1079,7 @@ body {
     padding: 4px calc(4px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) 4px;
   }
 
-  .hud-panel {
+  #side .hud-panel {
     border: 0;
     background: none;
   }
@@ -1156,6 +1203,19 @@ body {
   .faction-plate {
     padding: 0 8px;
     font-size: 12px;
+  }
+
+  #selected-rows {
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .unit-row {
+    width: auto;
+    padding: 4px 6px;
+    border: 1px solid var(--con-edge);
+    background: var(--con-plate);
+    font-size: 11px;
   }
 
   #city-focus-range {

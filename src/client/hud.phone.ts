@@ -11,10 +11,12 @@ const SCENES = ['base', 'armed', 'factory', 'airport', 'hall', 'army', 'spectate
 
 const SHOWN: Partial<Record<string, string[]>> = {
   base: ['Menu', 'Help', 'minimap-marks', 'Base', 'Land', 'Air', 'Sea', 'Factory', 'Turret'],
-  hall: ['City focus'],
+  hall: ['City focus', 'Factory'],
   spectate: ['Menu', 'Help', 'minimap-marks', 'Ada', 'Bo', 'Cy', 'Dee'],
   menu: ['Music On', 'music-volume', 'Sounds On', 'sounds-volume', 'Input On', 'Changelog', 'Full screen', 'Surrender'],
 }
+
+const SELECTED = ['factory', 'airport', 'hall', 'army', 'trace']
 
 const SCREENS: [string, BrowserContextOptions][] = [
   ['1280×720', { viewport: { width: 1280, height: 720 } }],
@@ -92,7 +94,7 @@ function layout(): { checked: string[]; faults: string[] } {
     faults.push(`${name(control)} hits ${name(hit)}`)
   }
 
-  const chrome = [...document.querySelectorAll('#menubar, #side, #legend, #trace')].filter(rendered)
+  const chrome = [...document.querySelectorAll('#menubar, #side, #legend, #trace, #selected')].filter(rendered)
   for (const [index, element] of chrome.entries()) {
     const rect = element.getBoundingClientRect()
     if (!within(rect, viewport)) faults.push(`${element.id} leaves the viewport`)
@@ -151,6 +153,8 @@ describe('HUD layout', () => {
         await open(page, scene)
         const { checked, faults } = await page.evaluate(layout)
         const missing = (SHOWN[scene] ?? []).filter((control) => !checked.includes(control)).map((control) => `${control} is not on screen`)
+        const selected = await page.evaluate(() => (document.querySelector('#selected')?.getClientRects().length ?? 0) > 0)
+        if (selected !== SELECTED.includes(scene)) missing.push(selected ? 'Selected shows' : 'Selected is not on screen')
         found.push(...[...faults, ...missing].map((fault) => `${scene}: ${fault}`))
       }
       return found
