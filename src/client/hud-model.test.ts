@@ -3,7 +3,7 @@ import { CITY_CATALOG, type CityLayout } from '../shared/cities.ts'
 import type { CityState, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
-import { BuildTab, CreditCounter, focusLabel, functionSlot, hudModel, PingState, TileBlock, TileKind, Trend, type HudInput, type HudModel, type HudTile } from './hud-model.ts'
+import { BuildTab, CreditCounter, focusLabel, functionSlot, HealthBand, hudModel, PingState, TileBlock, TileKind, Trend, type HudInput, type HudModel, type HudTile } from './hud-model.ts'
 
 const ME = 1
 const RIVAL = 2
@@ -55,6 +55,7 @@ function input(fields: Partial<HudInput> & { towns?: Town[] } = {}): HudInput {
     cities: towns.map((entry) => entry.state),
     layouts: towns.map((entry) => entry.layout),
     selected: [],
+    group: null,
     yard: null,
     placing: null,
     raising: false,
@@ -366,13 +367,52 @@ describe('hud F-slots', () => {
   })
 })
 
+describe('hud selection rows', () => {
+  it('count the live selected units per type, most numerous first with ties by type id', () => {
+    const units = [
+      unit(1, UnitTypeId.Gunship),
+      unit(2, UnitTypeId.Scout),
+      unit(3, UnitTypeId.MedTank),
+      unit(4, UnitTypeId.Scout),
+      unit(5, UnitTypeId.Artillery),
+      unit(6, UnitTypeId.MedTank, { health: 0 }),
+      unit(7, UnitTypeId.MedTank),
+    ]
+    const rows = hudModel(input({ units, selected: [1, 2, 3, 4, 5, 6] })).rows
+    expect(rows.map((row) => [UNIT_TYPES[row.type].label, row.count])).toEqual([
+      ['Scout', 2],
+      ['Med Tank', 1],
+      ['Artillery', 1],
+      ['Gunship', 1],
+    ])
+  })
+
+  it('rate the health of a row as Σhealth / ΣmaxHealth, healthy from 50% and damaged from 25%', () => {
+    const max = UNIT_TYPES[UnitTypeId.MedTank].maxHealth
+    const rated = (...healths: number[]) => {
+      const units = healths.map((health, index) => unit(index + 1, UnitTypeId.MedTank, { health }))
+      const [row] = hudModel(input({ units, selected: units.map((entry) => entry.id) })).rows
+      return [row.health, row.band]
+    }
+    expect(rated(max, max * 0.2)).toEqual([0.6, HealthBand.Healthy])
+    expect(rated(max * 0.5)).toEqual([0.5, HealthBand.Healthy])
+    expect(rated(max * 0.25)).toEqual([0.25, HealthBand.Damaged])
+    expect(rated(max * 0.2)).toEqual([0.2, HealthBand.Critical])
+  })
+
+  it('carry the progress of a building that is not finished', () => {
+    const units = [unit(1, UnitTypeId.Factory, { progress: 0.4 }), unit(2, UnitTypeId.Airport)]
+    const progress = (id: number) => hudModel(input({ units, selected: [id] })).rows[0].progress
+    expect([progress(1), progress(2)]).toEqual([0.4, null])
+  })
+})
+
 describe('hud city hall', () => {
-  it('shows no tile and carries the focus of the hall with its label', () => {
+  it('opens Base and carries the focus of the hall with its label', () => {
     const hall = town(ME, 6)
     hall.state.focus = -2
     const model = hudModel(input({ towns: [hall], units: [unit(1, UnitTypeId.Factory)], queue: [job(UnitTypeId.Scout, 1)], hall: 0 }))
-    expect(model.tab).toBeNull()
-    expect(shown(model)).toEqual([])
+    expect(model.tab).toBe(BuildTab.Base)
     expect(model.hall).toEqual({ focus: -2, label: 'Money ×4' })
     expect(hudModel(input()).hall).toBeNull()
   })
@@ -386,5 +426,9 @@ describe('hud for spectators', () => {
   it('shows no tile', () => {
     const model = hudModel(input({ spectating: true, units: [unit(1, UnitTypeId.Factory)], queue: [job(UnitTypeId.Scout, 1)] }))
     expect(shown(model)).toEqual([])
+  })
+
+  it('shows no selection row', () => {
+    expect(hudModel(input({ spectating: true, units: [unit(1, UnitTypeId.MedTank)], selected: [1] })).rows).toEqual([])
   })
 })

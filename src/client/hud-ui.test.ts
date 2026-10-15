@@ -350,7 +350,7 @@ describe('hud build tabs', () => {
     paint(view, idle)
     button(root, 'Sea').click()
     paint(view, { ...idle, hall: 0 })
-    expect(openTab(root)).toBeNull()
+    expect(openTab(root)).toBe('Base')
     paint(view, idle)
     expect(openTab(root)).toBe('Base')
   })
@@ -441,27 +441,90 @@ describe('hud F-slots', () => {
   })
 
   it('do nothing while the grid is hidden', () => {
-    for (const input of [hallHud().input, spectateHud().input]) {
-      const { view, actions } = mount()
-      paint(view, input)
-      expect([view.pressSlot(1, false), view.pressSlot(1, true)]).toEqual([false, false])
-      expect(fired(actions)).toEqual([])
-    }
+    const { view, actions } = mount()
+    paint(view, spectateHud().input)
+    expect([view.pressSlot(1, false), view.pressSlot(1, true)]).toEqual([false, false])
+    expect(fired(actions)).toEqual([])
   })
 })
 
-describe('hud city focus', () => {
-  it('shows for a selected hall, with its label', () => {
+describe('hud selected panel', () => {
+  function rows(root: ParentNode) {
+    return all(one(root, '#selected'), '.unit-row').map((row) => {
+      const bar = one(row, '.bar')
+      return [one(row, '.name').textContent, one(row, '.state').textContent, classes(bar), bar.style.getPropertyValue('--h')]
+    })
+  }
+
+  it('is panel 03 Selected, hidden while no live unit or hall is selected and for spectators', () => {
     const { root, view } = mount()
-    const focus = one(root, '#city-focus')
-    const orders = one(root, '#orders')
-    paint(view, baseHud().input)
-    expect([shown(focus), shown(orders)]).toEqual([false, true])
+    const selected = panel(root, 'Selected')
+    const army = armyHud().input
+    const dead = army.units.map((unit) => (army.selected.includes(unit.id) ? { ...unit, health: 0 } : unit))
+    const seen = (input: HudInput) => {
+      paint(view, input)
+      return shown(selected)
+    }
+    expect([one(selected, '.panel-index').textContent, selected.id]).toEqual(['03', 'selected'])
+    expect([seen(baseHud().input), seen(army), seen({ ...army, units: dead }), seen({ ...army, spectating: true })]).toEqual([false, true, false, false])
+  })
+
+  it('reads a row per type as <label> ×N, with a health bar carrying its band and scale', () => {
+    const { root, view } = mount()
+    paint(view, armyHud().input)
+    expect(rows(root)).toEqual([
+      ['Med Tank ×4', '', ['bar', 'healthy'], '0.65'],
+      ['Scout ×3', '', ['bar', 'healthy'], '1'],
+      ['Heavy Tank ×2', '', ['bar', 'damaged'], '0.3'],
+      ['Artillery', '', ['bar', 'critical'], '0.15'],
+      ['Jet', '', ['bar', 'healthy'], '1'],
+      ['Gunship', '', ['bar', 'healthy'], '1'],
+    ])
+    const base = baseHud().input
+    const [factory] = base.units
+    paint(view, { ...base, units: [{ ...factory, progress: 0.42 }, ...base.units.slice(1)], selected: [factory.id] })
+    expect(rows(root)).toEqual([['Factory', '42%', ['bar', 'healthy'], '1']])
+  })
+
+  it('tags its head Group N while the selection is that group', () => {
+    const { root, view } = mount()
+    const group = one(root, '#group')
+    paint(view, armyHud().input)
+    expect([shown(group), group.textContent]).toEqual([true, 'Group 1'])
+    paint(view, { ...armyHud().input, group: null })
+    expect(shown(group)).toBe(false)
+  })
+
+  it('keeps its row nodes when the same selection is painted twice', () => {
+    const { root, view } = mount()
+    paint(view, armyHud().input)
+    const first = all(root, '.unit-row')
+    paint(view, armyHud().input)
+    const second = all(root, '.unit-row')
+    expect(second).toHaveLength(6)
+    expect(second.every((entry, index) => entry === first[index])).toBe(true)
+  })
+})
+
+describe('hud city hall', () => {
+  it('shows City hall, the focus label and the slider in Selected, and Base in Build', () => {
+    const { root, view } = mount()
     paint(view, hallHud().input)
-    expect([shown(focus), shown(orders)]).toEqual([true, false])
-    expect(one(root, '#city-focus-label').textContent).toBe('Growth ×2')
-    expect(one<HTMLInputElement>(root, 'input[aria-label="City focus"]').value).toBe('1')
-    expect(tiles(root)).toEqual([])
+    const selected = one(root, '#selected')
+    expect(shown(selected)).toBe(true)
+    expect([one(selected, '#city-focus-name').textContent, one(selected, '#city-focus-label').textContent]).toEqual(['City hall', 'Growth ×2'])
+    expect(one<HTMLInputElement>(selected, 'input[aria-label="City focus"]').value).toBe('1')
+    expect(one(root, '#side').querySelector('input[aria-label="City focus"]')).toBeNull()
+    expect([openTab(root), tiles(root).map((entry) => face(entry).name)]).toEqual(['Base', ['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building']])
+    paint(view, baseHud().input)
+    expect(shown(one(root, '#city-focus'))).toBe(false)
+  })
+
+  it('lets the F-keys press the Base tiles', () => {
+    const { view, actions } = mount()
+    paint(view, hallHud().input)
+    expect(view.pressSlot(1, false)).toBe(true)
+    expect(fired(actions)).toEqual([['armBuilding', [UnitTypeId.Factory]]])
   })
 
   it('fires setCityFocus with the step on input', () => {

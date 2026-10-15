@@ -1,6 +1,6 @@
 import type { Faction } from '../shared/lobby.ts'
 import { Locomotion, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
-import { BuildTab, focusLabel, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type Selection } from './hud-model.ts'
+import { BuildTab, focusLabel, HealthBand, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type SelectedRow, type Selection } from './hud-model.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
 import './console.css'
@@ -89,11 +89,6 @@ const MARKUP = `
         <p id="queue-label">Queue</p>
         <div class="chips"></div>
       </div>
-      <div id="city-focus" hidden>
-        <p id="city-focus-name">City hall</p>
-        <p id="city-focus-label">Balanced</p>
-        <input id="city-focus-range" type="range" min="-2" max="2" step="1" value="0" aria-label="City focus">
-      </div>
     </div>
   </section>
   <section class="hud-panel" id="vision-panel" aria-labelledby="vision-title" hidden>
@@ -102,6 +97,15 @@ const MARKUP = `
   </section>
 </aside>
 <div id="legend" hidden></div>
+<section class="hud-panel" id="selected" aria-labelledby="selected-title" hidden>
+  <header class="panel-head"><span class="panel-index" aria-hidden="true">03</span><h2 id="selected-title">Selected</h2><span id="group" hidden></span></header>
+  <div id="selected-rows"></div>
+  <div id="city-focus" hidden>
+    <p id="city-focus-name">City hall</p>
+    <p id="city-focus-label">Balanced</p>
+    <input id="city-focus-range" type="range" min="-2" max="2" step="1" value="0" aria-label="City focus">
+  </div>
+</section>
 <div id="outcome" hidden>
   <div class="outcome-card" role="dialog" aria-modal="true" aria-labelledby="outcome-title">
     <h2 id="outcome-title"></h2>
@@ -135,6 +139,13 @@ type ChipNode = {
   pie: HTMLElement
 }
 
+type RowNode = {
+  row: HTMLElement
+  name: HTMLElement
+  state: HTMLElement
+  bar: HTMLElement
+}
+
 const TABS: readonly (readonly [BuildTab, string])[] = [
   [BuildTab.Base, 'Base'],
   [BuildTab.Land, 'Land'],
@@ -153,6 +164,12 @@ const BLOCK_TEXT: Record<TileBlock, string> = {
   [TileBlock.ApronFull]: 'Apron full',
 }
 
+const BAND_CLASS: Record<HealthBand, string> = {
+  [HealthBand.Healthy]: 'bar healthy',
+  [HealthBand.Damaged]: 'bar damaged',
+  [HealthBand.Critical]: 'bar critical',
+}
+
 export class HudView {
   private readonly battle: HTMLElement
   private readonly credits: HTMLElement
@@ -167,6 +184,9 @@ export class HudView {
   private readonly orders: HTMLElement
   private readonly queue: HTMLElement
   private readonly chipRow: HTMLElement
+  private readonly selectedPanel: HTMLElement
+  private readonly group: HTMLElement
+  private readonly rowList: HTMLElement
   private readonly cityFocus: HTMLElement
   private readonly focusLabel: HTMLElement
   private readonly focusRange: HTMLInputElement
@@ -181,6 +201,7 @@ export class HudView {
   private readonly trace: ReturnType<typeof bindTrace>
   private readonly tiles: TileNode[] = []
   private readonly chips = new Map<UnitTypeId, ChipNode>()
+  private readonly rows = new Map<UnitTypeId, RowNode>()
   private selectionTab: BuildTab | null = null
   private selection: Selection = { ids: [], hall: null }
   private clicked: { tab: BuildTab; selection: Selection } | null = null
@@ -222,6 +243,9 @@ export class HudView {
     this.orders = find('#orders')
     this.queue = find('#queue')
     this.chipRow = find('#queue .chips')
+    this.selectedPanel = find('#selected')
+    this.group = find('#group')
+    this.rowList = find('#selected-rows')
     this.cityFocus = find('#city-focus')
     this.focusLabel = find('#city-focus-label')
     this.focusRange = find<HTMLInputElement>('#city-focus-range')
@@ -265,6 +289,10 @@ export class HudView {
     setText(this.ping, ping.state === PingState.None ? '–' : `${ping.ms} ms`)
     this.ping.classList.toggle('slow', ping.state === PingState.Slow || ping.state === PingState.Bad)
     this.ping.classList.toggle('bad', ping.state === PingState.Bad)
+    this.selectedPanel.hidden = model.rows.length === 0 && model.hall === null
+    this.group.hidden = model.group === null
+    setText(this.group, model.group === null ? '' : `Group ${model.group}`)
+    this.paintRows(model.rows)
     this.cityFocus.hidden = model.hall === null
     if (model.hall !== null && document.activeElement !== this.focusRange) {
       const focus = String(model.hall.focus)
@@ -368,8 +396,16 @@ export class HudView {
       paintChip(node, chip)
       return node.button
     })
-    const row = this.chipRow.children
-    if (buttons.length !== row.length || buttons.some((button, index) => row[index] !== button)) this.chipRow.replaceChildren(...buttons)
+    arrange(this.chipRow, buttons)
+  }
+
+  private paintRows(rows: readonly SelectedRow[]) {
+    const nodes = rows.map((row) => {
+      const node = this.rows.get(row.type) ?? this.createRow(row.type)
+      paintRow(node, row)
+      return node.row
+    })
+    arrange(this.rowList, nodes)
   }
 
   private drop(chip: QueueChip) {
@@ -444,6 +480,24 @@ export class HudView {
     this.chips.set(chip.type, node)
     return node
   }
+
+  private createRow(type: UnitTypeId): RowNode {
+    const row = document.createElement('div')
+    row.className = 'unit-row'
+    const name = document.createElement('span')
+    name.className = 'name'
+    const state = document.createElement('span')
+    state.className = 'state'
+    const health = document.createElement('span')
+    health.className = 'health'
+    health.setAttribute('aria-hidden', 'true')
+    const bar = document.createElement('span')
+    health.append(bar)
+    row.append(name, state, health)
+    const node: RowNode = { row, name, state, bar }
+    this.rows.set(type, node)
+    return node
+  }
 }
 
 function paintTile(node: TileNode, tile: HudTile) {
@@ -464,7 +518,7 @@ function paintTile(node: TileNode, tile: HudTile) {
 function stateLine(tile: HudTile): string {
   if (tile.block !== null) return BLOCK_TEXT[tile.block]
   if (tile.armed) return 'Ready · place'
-  if (tile.progress > 0) return `${Math.floor(fraction(tile.progress) * 100)}%`
+  if (tile.progress > 0) return percent(tile.progress)
   return ''
 }
 
@@ -474,8 +528,25 @@ function paintChip(node: ChipNode, chip: QueueChip) {
   node.pie.style.setProperty('--p', String(fraction(chip.progress)))
 }
 
+function paintRow(node: RowNode, row: SelectedRow) {
+  const label = UNIT_TYPES[row.type].label
+  setText(node.name, row.count > 1 ? `${label} ×${row.count}` : label)
+  setText(node.state, row.progress === null ? '' : percent(row.progress))
+  node.bar.style.setProperty('--h', String(fraction(row.health)))
+  if (node.bar.className !== BAND_CLASS[row.band]) node.bar.className = BAND_CLASS[row.band]
+}
+
+function arrange(parent: HTMLElement, children: readonly HTMLElement[]) {
+  const shown = parent.children
+  if (children.length !== shown.length || children.some((child, index) => shown[index] !== child)) parent.replaceChildren(...children)
+}
+
 function fraction(progress: number): number {
   return Math.max(0, Math.min(1, progress))
+}
+
+function percent(progress: number): string {
+  return `${Math.floor(fraction(progress) * 100)}%`
 }
 
 function sameSelection(a: Selection, b: Selection): boolean {

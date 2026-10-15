@@ -334,6 +334,7 @@ function hudInput(): HudInput {
     cities: replica.cities,
     layouts: replica.settledLayouts(),
     selected: player.selected().map((unit) => unit.id),
+    group: player.groupOf(),
     yard: player.productionYard(),
     placing: player.placingType(),
     raising,
