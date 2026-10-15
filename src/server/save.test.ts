@@ -13,6 +13,7 @@ import {
   type LobbyServerMessage,
   type WaitingRoom,
 } from '../shared/lobby.ts'
+import { mulberry32 } from '../shared/noise.ts'
 import { ServerEventKind, type ServerFrame } from '../shared/protocol.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { Game } from './game.ts'
@@ -81,7 +82,7 @@ describe('saved games', () => {
   it('restores every game and seats the same client again', async () => {
     const dir = scratch()
     const token = 'abc123abc123abc123abc123abc123ab'
-    const lobby = new Lobby()
+    const lobby = new Lobby(mulberry32(1))
     const sock = fake()
     const host = lobby.connect(sock, token)
     lobby.onLobby(host, { kind: LobbyClientKind.SetName, name: 'Ada' })
