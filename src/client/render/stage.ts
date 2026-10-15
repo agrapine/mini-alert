@@ -21,18 +21,28 @@ export const PITCH = (50 * Math.PI) / 180
 const YAW_STEP = Math.PI / 4
 export let cameraYaw = YAW_STEP
 const CAM_DIST = 36
+const CAM_FAR = 400
+const VIEW_HEIGHT = 22
 const PAN_SPEED = 14
 const YAW_EASE_SECONDS = 0.16
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 4
 const ZOOM_PER_PIXEL = 0.005
 const ZOOM_EASE_SECONDS = 0.15
+// Fog (fog.ts) is a sheet above the ground. At minimum zoom its near edge
+// passes behind the camera, and the water shows through as a band.
+const SHEET_Y = 12
+
+function clipNear(): number {
+  const reach = VIEW_HEIGHT / 2 / ZOOM_MIN
+  const closest = CAM_DIST - reach / Math.tan(PITCH) - SHEET_Y / Math.sin(PITCH)
+  return closest - 1
+}
 
 export class Stage {
   readonly scene = new Scene()
   readonly selection: Mesh
   readonly hover: Mesh
-  readonly orderMark: Mesh
   private readonly canvas: HTMLCanvasElement
   private readonly mapWidth: number
   private readonly mapHeight: number
@@ -61,7 +71,7 @@ export class Stage {
     this.renderer = new WebGLRenderer({ canvas, antialias: true })
     this.renderer.debug.checkShaderErrors = false
     this.renderer.setClearColor(0x1a1e12)
-    this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 400)
+    this.camera = new OrthographicCamera(-1, 1, 1, -1, clipNear(), CAM_FAR)
     this.look = new Vector3(mapWidth / 2, 0, mapHeight / 2)
     this.syncCamera()
 
@@ -71,8 +81,8 @@ export class Stage {
     this.scene.add(sun)
 
     this.selection = new Mesh(
-      new RingGeometry(0.46, 0.62, 28),
-      new MeshBasicMaterial({ color: 0xf0d060, side: DoubleSide }),
+      new RingGeometry(0.62 - 0.16 * 0.4, 0.62, 28),
+      new MeshBasicMaterial({ color: 0xf0d060, transparent: true, opacity: 0.5, depthWrite: false, side: DoubleSide }),
     )
     this.selection.rotation.x = -Math.PI / 2
     this.selection.visible = false
@@ -85,14 +95,6 @@ export class Stage {
     this.hover.rotation.x = -Math.PI / 2
     this.hover.visible = false
     this.scene.add(this.hover)
-
-    this.orderMark = new Mesh(
-      new RingGeometry(0.28, 0.4, 24),
-      new MeshBasicMaterial({ color: 0xe7efe0, side: DoubleSide }),
-    )
-    this.orderMark.rotation.x = -Math.PI / 2
-    this.orderMark.visible = false
-    this.scene.add(this.orderMark)
 
     this.resize()
     window.addEventListener('resize', this.onResize)
@@ -221,12 +223,11 @@ export class Stage {
     if (width === 0 || height === 0) return
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
     this.renderer.setSize(width, height, false)
-    const viewHeight = 22
     const aspect = width / height
-    this.camera.left = (-viewHeight * aspect) / 2
-    this.camera.right = (viewHeight * aspect) / 2
-    this.camera.top = viewHeight / 2
-    this.camera.bottom = -viewHeight / 2
+    this.camera.left = (-VIEW_HEIGHT * aspect) / 2
+    this.camera.right = (VIEW_HEIGHT * aspect) / 2
+    this.camera.top = VIEW_HEIGHT / 2
+    this.camera.bottom = -VIEW_HEIGHT / 2
     this.camera.updateProjectionMatrix()
   }
 
@@ -243,8 +244,8 @@ export class Stage {
     return null
   }
 
-  project(x: number, z: number): { x: number; y: number } {
-    this.projected.set(x, 0, z)
+  project(x: number, z: number, y = 0): { x: number; y: number } {
+    this.projected.set(x, y, z)
     this.projected.project(this.camera)
     const rect = this.canvas.getBoundingClientRect()
     return {
@@ -253,12 +254,37 @@ export class Stage {
     }
   }
 
+  /** CSS pixels covered by one world unit along a ground direction. */
+  pixelsPerUnit(dirX: number, dirZ: number): number {
+    const origin = this.project(0, 0)
+    const step = this.project(dirX, dirZ)
+    return Math.hypot(step.x - origin.x, step.y - origin.y)
+  }
+
   pickTile(clientX: number, clientY: number): TileCoord | null {
     const point = this.groundAt(clientX, clientY)
     if (!point) return null
     const tile = { x: Math.floor(point.x), y: Math.floor(point.z) }
     if (tile.x < 0 || tile.y < 0 || tile.x >= this.mapWidth || tile.y >= this.mapHeight) return null
     return tile
+  }
+
+  /** Building tile under the cursor when the nearest hit is a city building. */
+  pickPlot(root: Object3D, clientX: number, clientY: number): TileCoord | null {
+    this.aim(clientX, clientY)
+    const hits = this.raycaster.intersectObject(root, true)
+    const hit = hits[0]
+    const plots = hit?.object.userData.plots as { x: number; y: number }[] | undefined
+    if (!plots) return null
+    let best: TileCoord | null = null
+    let bestDist = 1.25
+    for (const plot of plots) {
+      const dist = Math.hypot(plot.x + 0.5 - hit.point.x, plot.y + 0.5 - hit.point.z)
+      if (dist >= bestDist) continue
+      bestDist = dist
+      best = { x: plot.x, y: plot.y }
+    }
+    return best
   }
 
   draw() {

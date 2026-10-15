@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { REQUEST_OPEN_LIMIT, REQUEST_TEXT_LIMIT, RequestStatus, RoomStatus, SlotKind } from '../shared/lobby.ts'
+import { Landform, REQUEST_OPEN_LIMIT, REQUEST_TEXT_LIMIT, RequestStatus, RoomStatus, SlotKind } from '../shared/lobby.ts'
 import { drawingRoom, emptyHall, guestRoom, hall, hostRoom, ROOM_ID, roomPreview, seatLimitHall } from './lobby-fixtures.ts'
 import { LobbyView, type LobbyActions } from './lobby-ui.ts'
 
@@ -15,6 +15,8 @@ function spies() {
     setSlotAi: vi.fn<LobbyActions['setSlotAi']>(),
     clearSlot: vi.fn<LobbyActions['clearSlot']>(),
     setMapSize: vi.fn<LobbyActions['setMapSize']>(),
+    setLandform: vi.fn<LobbyActions['setLandform']>(),
+    setLakes: vi.fn<LobbyActions['setLakes']>(),
     regenerate: vi.fn<LobbyActions['regenerate']>(),
     start: vi.fn<LobbyActions['start']>(),
     setAiPace: vi.fn<LobbyActions['setAiPace']>(),
@@ -253,7 +255,11 @@ describe('lobby hall', () => {
     const { root, view } = mount()
     view.showWaiting(hall())
     expect(texts(root, '.game-badge')).toEqual(['Open', 'Staging', 'In combat'])
-    expect(texts(root, '.game-meta')).toEqual(['64 · 1 AI · 1 open', '128 · 1 seated · 1 AI · 2 open', '192 · 2 seated · 3 AI · 1 open'])
+    expect(texts(root, '.game-meta')).toEqual([
+      '64 · Land · No lakes · 1 AI · 1 open',
+      '128 · Island · Lakes 0.50 · 1 seated · 1 AI · 2 open',
+      '192 · Island · 2 seated · 3 AI · 1 open',
+    ])
     const pending = gameRow(root, 7)
     expect(pending.textContent).toContain('Bo · AI · open · open')
     expect(pending.textContent).toContain('Waiting: Cy')
@@ -413,7 +419,7 @@ describe('lobby requests', () => {
 describe('lobby room', () => {
   it('lists the map sizes, marks the current one and lets only the host change it', () => {
     const { root, view, actions } = mount()
-    const sizes = () => all<HTMLButtonElement>(root, '.size-row button')
+    const sizes = () => all<HTMLButtonElement>(root, '.map-options .size-row:first-child button')
     view.showGame(guestRoom(), roomPreview())
     expect(sizes().map((size) => size.textContent)).toEqual(['64 · 2', '128 · 4', '192 · 6', '256 · 8'])
     expect(sizes().map((size) => size.classList.contains('on'))).toEqual([false, true, false, false])
@@ -426,6 +432,60 @@ describe('lobby room', () => {
     sizes()[2].click()
     expect(actions.setMapSize).toHaveBeenCalledWith(192)
     expect(busy(root)).toBe(true)
+  })
+
+  it('offers Island and Land, marks the current one and lets only the host change it', () => {
+    const { root, view, actions } = mount()
+    const forms = () => all<HTMLButtonElement>(root, '.map-options .size-row:last-child button')
+    view.showGame(guestRoom(), roomPreview())
+    expect(forms().map((form) => [form.textContent, form.classList.contains('on'), form.disabled])).toEqual([
+      ['Island', true, true],
+      ['Land', false, true],
+    ])
+    view.showGame(hostRoom(), roomPreview())
+    forms()[0].click()
+    expect(actions.setLandform).not.toHaveBeenCalled()
+    expect(busy(root)).toBe(false)
+    forms()[1].click()
+    expect(actions.setLandform).toHaveBeenCalledWith(Landform.Land)
+    expect(busy(root)).toBe(true)
+  })
+
+  it("shows the lakes to every member and sends the host's new amount once the slider is let go", () => {
+    const { root, view, actions } = mount()
+    view.showGame(guestRoom(), roomPreview())
+    const row = one(root, '.lakes-row')
+    const lakes = one<HTMLInputElement>(row, 'input[type="range"]')
+    expect([lakes.min, lakes.max, lakes.step, lakes.value, lakes.disabled]).toEqual(['0', '1', '0.05', '0.25', true])
+    expect(row.textContent).toBe('Lakes0.25')
+    view.showGame({ ...hostRoom(), lakes: 0 }, roomPreview())
+    expect([lakes.disabled, row.textContent]).toEqual([false, 'LakesOff'])
+    lakes.value = '0.5'
+    lakes.dispatchEvent(new Event('input'))
+    expect(row.textContent).toBe('Lakes0.50')
+    expect(actions.setLakes).not.toHaveBeenCalled()
+    lakes.dispatchEvent(new Event('change'))
+    expect(actions.setLakes).toHaveBeenCalledWith(0.5)
+    expect(busy(root)).toBe(true)
+  })
+
+  it('keeps a focused lakes slider through a room update', () => {
+    const { root, view } = mount()
+    view.showGame(hostRoom(), null)
+    const lakes = one<HTMLInputElement>(root, '.lakes-row input')
+    lakes.focus()
+    lakes.value = '0.75'
+    view.showGame({ ...hostRoom(), lakes: 0.5, waiting: [] }, null)
+    expect(document.activeElement).toBe(lakes)
+    expect(lakes.value).toBe('0.75')
+  })
+
+  it('locks the map options of a started battle, even for its host', () => {
+    const { root, view } = mount()
+    view.showGame({ ...hostRoom(), status: RoomStatus.Playing }, null)
+    expect(all<HTMLButtonElement>(root, '.map-options button').every((choice) => choice.disabled)).toBe(true)
+    expect(one<HTMLInputElement>(root, '.lakes-row input').disabled).toBe(true)
+    expect(labels(root)).not.toContain('New map')
   })
 
   it('gives only the host New map and Start, and Start waits for a seated human', () => {

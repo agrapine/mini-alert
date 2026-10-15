@@ -20,6 +20,7 @@ export function cursorFor(
   if (hovered !== null) {
     const unit = replica.unit(hovered)
     if (unit && unit.ownerId === replica.playerId) {
+      if (groundAttack && player.commanding()) return ATTACK_CURSOR
       return player.commanding() && replica.homePad(unit, selected) ? MOVE_CURSOR : 'pointer'
     }
     if (unit && player.commanding()) return ATTACK_CURSOR

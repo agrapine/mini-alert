@@ -54,7 +54,6 @@ function welcomed(replica: Replica, units: UnitSnapshot[]): Replica {
         cities: [],
         credits: 0,
         training: [],
-        primaryFactoryId: 0,
         rally: null,
       },
     ],
@@ -189,6 +188,17 @@ describe('replica drawing', () => {
     expect(replica.units[0].path).toEqual(Array.from({ length: 10 }, (_, i) => ({ x: 3 + i, y: 4 })))
     for (let i = 0; i < 15; i++) replica.advance(SIM_STEP)
     expect(replica.units[0].x).toBeGreaterThan(2.6)
+  })
+
+  it('returns the end of the route a move order plans for each unit, keeping units on the move on course', () => {
+    const replica = joined(scout(2.5, road), onRow(scout(2.5, road), 2, 6), onRow(scout(2.5, []), 3, 8))
+    const goals = replica.predictMove([1, 2, 3], { x: 12, y: 10 })
+    const courses = replica.units.map((unit) => structuredClone(unit.path))
+    expect(courses[0]).toEqual(road)
+    expect(goals).toHaveLength(3)
+    expect(goals).toContainEqual(courses[2].at(-1))
+    expect(replica.predictMove([1, 2, 3], { x: 4, y: 12 })).toHaveLength(3)
+    expect(replica.units.map((unit) => unit.path)).toEqual(courses)
   })
 
   it('keeps a steady pace when frames arrive with uneven delays', () => {
@@ -466,9 +476,9 @@ describe('replica drawing', () => {
 
   it('shows an expected unit in the queue until its command is acknowledged', () => {
     const replica = joined(scout(2.5, []))
-    replica.expectTraining(5, UnitTypeId.MedTank)
+    replica.expectTraining(5, UnitTypeId.MedTank, 2)
     replica.apply({ tick: 10, ack: 4, events: [] })
-    expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, progress: 0 }])
+    expect(replica.queue()).toEqual([{ typeId: UnitTypeId.MedTank, yardId: 2, progress: 0 }])
     replica.apply({ tick: 10, ack: 5, events: [] })
     expect(replica.queue()).toEqual([])
   })
@@ -478,7 +488,7 @@ describe('replica drawing', () => {
     const update = (tick: number, progress: number) => ({
       tick,
       ack: 0,
-      events: [{ kind: ServerEventKind.Training as const, training: [{ typeId: UnitTypeId.Scout, progress }] }],
+      events: [{ kind: ServerEventKind.Training as const, training: [{ typeId: UnitTypeId.Scout, progress, yardId: 4 }] }],
     })
     replica.apply(update(10, 0.1))
     replica.apply(update(16, 0.2))

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  LAKE_DEFAULT,
+  Landform,
   LobbyClientKind,
   LobbyServerKind,
   MapSize,
@@ -12,6 +14,7 @@ import {
   type Faction,
 } from '../shared/lobby.ts'
 import { ClientMessageKind, ServerEventKind, type ServerEvent, type ServerFrame } from '../shared/protocol.ts'
+import { Terrain } from '../shared/tiles.ts'
 import { Game } from './game.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 
@@ -255,6 +258,32 @@ describe('lobby', () => {
     await settled()
     expect(latest<WaitingRoom>(hostSock, LobbyServerKind.Waiting).games).toEqual([])
     expect(opened(lobby).games.has(created.gameId)).toBe(false)
+  })
+
+  it('rebuilds the map when the host picks land and larger lakes', async () => {
+    const lobby = new Lobby()
+    const sock = fake()
+    const host = lobby.connect(sock)
+    lobby.onLobby(host, { kind: LobbyClientKind.CreateGame })
+    await settled()
+    const created = latest<GameLobbyState>(sock, LobbyServerKind.GameLobby)
+    expect(created.landform).toBe(Landform.Island)
+    expect(created.lakes).toBe(LAKE_DEFAULT)
+
+    lobby.onLobby(host, { kind: LobbyClientKind.SetLandform, landform: Landform.Land })
+    await settled()
+    expect(latest<GameLobbyState>(sock, LobbyServerKind.GameLobby).landform).toBe(Landform.Land)
+
+    lobby.onLobby(host, { kind: LobbyClientKind.SetLakes, lakes: 1 })
+    await settled()
+    const next = latest<GameLobbyState>(sock, LobbyServerKind.GameLobby)
+    expect(next.landform).toBe(Landform.Land)
+    expect(next.lakes).toBe(1)
+    const preview = latest<MapPreview>(sock, LobbyServerKind.Preview)
+    const terrain = Buffer.from(preview.terrain, 'base64')
+    let edgeLand = 0
+    for (let x = 0; x < preview.width; x++) if (terrain[x] !== Terrain.Water) edgeLand += 1
+    expect(edgeLand).toBeGreaterThan(preview.width / 2)
   })
 
   it('pauses AI and mechanics while nobody is in a live match, then resumes', async () => {

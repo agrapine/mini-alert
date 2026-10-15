@@ -4,7 +4,7 @@ import { canPlaceCityBuilding } from '../shared/cities.ts'
 import { Flight } from '../shared/flight.ts'
 import { KEEPALIVE_TICKS, SIM_STEP, stepMotion, wrapAngle, type MotionState } from '../shared/motion.ts'
 import { ClientMessageKind, ServerEventKind, type ServerFrame, type UnitSnapshot } from '../shared/protocol.ts'
-import { Terrain } from '../shared/tiles.ts'
+import { Terrain, scarStrength } from '../shared/tiles.ts'
 import { JET, SCOUT, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { ServerHost } from './host.ts'
@@ -153,6 +153,79 @@ describe('host snapshots', () => {
     expect(events(frames).filter((event) => event.kind === ServerEventKind.UnitMotion)).toEqual([])
   })
 
+  it('turns a scout toward its own unit it is ordered to attack on its client, tick for tick as the server does', () => {
+    const game = new Game(new World(16, 16))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 4, y: 4 }, Math.PI / 2)
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 4, y: 9 })
+    scout.attackId = tank.id
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => frames.push(frame)).sync()
+    const client = new Replica()
+    client.apply(frames[0])
+    for (let i = 0; i < 30; i++) {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      expect(client.unit(scout.id)).toMatchObject({ x: scout.pos.x, z: scout.pos.z, facing: expect.closeTo(scout.facing, 5) })
+    }
+    expect(scout.attackId).toBe(tank.id)
+    expect(scout.facing).toBeCloseTo(Math.atan2(tank.pos.x - scout.pos.x, tank.pos.z - scout.pos.z), 9)
+  })
+
+  it('holds a jet with rockets left and no airport in range of its attack target on its client, tick for tick as the server does', () => {
+    const game = new Game(new World(32, 20))
+    const player = game.addPlayer()
+    const jet = game.spawn(player, UnitTypeId.Jet, { x: 20, y: 10 }, Math.PI / 2)
+    const foe = game.spawn(game.addPlayer(), UnitTypeId.Factory, { x: 12, y: 4 })
+    jet.flight = Flight.Cruise
+    jet.altitude = 2.6
+    jet.speed = JET.topSpeed
+    jet.attackId = foe.id
+    game.tick(SIM_STEP)
+    expect(jet.home).toBeNull()
+    expect(jet.rounds).toBeGreaterThan(0)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => frames.push(frame)).sync()
+    const client = new Replica()
+    client.apply(frames[0])
+    for (let i = 0; i < 30; i++) {
+      host.tick(SIM_STEP)
+      client.simulateTo(host.tickNo)
+      const { x, z } = jet.pos
+      expect(client.unit(jet.id)).toMatchObject({ x: expect.closeTo(x, 5), z: expect.closeTo(z, 5), facing: expect.closeTo(jet.facing, 5), path: [] })
+    }
+  })
+
+  it("sends each change of a unit's rounds to its owner, and to other players only a rocket unit running empty", () => {
+    const game = new Game(new World(24, 16))
+    const owner = game.addPlayer()
+    const rival = game.addPlayer()
+    const scout = game.spawn(owner, UnitTypeId.Scout, { x: 4, y: 8 })
+    const jet = game.spawn(owner, UnitTypeId.Jet, { x: 5, y: 10 })
+    game.spawn(rival, UnitTypeId.Scout, { x: 15, y: 8 })
+    const host = new ServerHost(game)
+    const frames = new Map<number, ServerFrame[]>()
+    for (const player of [owner, rival]) {
+      const sent: ServerFrame[] = []
+      frames.set(player.id, sent)
+      host.attach(player.id, true, (frame) => sent.push(frame)).sync()
+    }
+    const told = () =>
+      [...frames.values()].map((sent) =>
+        events(sent.splice(0)).flatMap((event) => (event.kind === ServerEventKind.UnitMotion ? [[event.unit.id, event.unit.rounds]] : [])),
+      )
+    told()
+    scout.rounds -= 1
+    jet.rounds -= 1
+    host.tick(SIM_STEP)
+    expect(told()).toEqual([[[scout.id, SCOUT.weapon.magazine - 1], [jet.id, JET.weapon.magazine - 1]], []])
+    jet.rounds = 0
+    host.tick(SIM_STEP)
+    expect(told()).toEqual([[[jet.id, 0]], [[jet.id, 0]]])
+  })
+
   it('keeps a jittery client within half a tile of a server unit it cannot predict', () => {
     const game = new Game(new World(32, 20))
     const player = game.addPlayer()
@@ -257,6 +330,30 @@ describe('host snapshots', () => {
       expect(Math.hypot(shown.x - answer.x, shown.z - answer.z)).toBeLessThan(0.01)
     }
     expect((echo.get(standing.id) as UnitSnapshot).x - rest).toBeGreaterThan(0.3)
+  })
+
+  it('sends tiles explored before a reload in the next sync', () => {
+    const game = new Game(new World(64, 64))
+    const player = game.addPlayer()
+    const scout = game.spawn(player, UnitTypeId.Scout, { x: 8, y: 8 })
+    const host = new ServerHost(game)
+    const first: ServerFrame[] = []
+    const play = host.attach(player.id, true, (frame) => first.push(frame))
+    play.sync()
+    const started = explored(first)
+    game.orderMove(player.id, [scout.id], { x: 48, y: 48 })
+    for (let i = 0; i < 900 && Math.hypot(scout.pos.x - 8.5, scout.pos.z - 8.5) < SCOUT.weapon.sight + 6; i++) {
+      host.tick(SIM_STEP)
+    }
+    const seen = explored(first)
+    expect(seen.size).toBeGreaterThan(started.size)
+    expect(Math.hypot(scout.pos.x - 8.5, scout.pos.z - 8.5)).toBeGreaterThan(SCOUT.weapon.sight + 4)
+    play.close()
+    const reloaded: ServerFrame[] = []
+    host.attach(player.id, true, (frame) => reloaded.push(frame)).sync()
+    const snapshot = events(reloaded).find((event) => event.kind === ServerEventKind.Snapshot)
+    const again = new Set(snapshot?.map.cells.map((cell) => `${cell.x},${cell.y}`))
+    expect([...seen].filter((tile) => !again.has(tile))).toEqual([])
   })
 
   it('explores terrain two tiles past sight without revealing units there', () => {
@@ -457,6 +554,26 @@ describe('host snapshots', () => {
       expect(patch.map.coast).toEqual([])
       expect(patch.map.roads).toEqual([])
     }
+  })
+
+  it('patches a scarred tile', () => {
+    const tiles = new Uint8Array(24 * 24).fill(Terrain.Land)
+    const game = new Game(World.fromTiles(24, 24, tiles))
+    const player = game.addPlayer()
+    const tank = game.spawn(player, UnitTypeId.MedTank, { x: 10, y: 8 }, 0)
+    const host = new ServerHost(game)
+    const frames: ServerFrame[] = []
+    const play = host.attach(player.id, true, (message) => frames.push(message))
+    play.sync()
+    frames.length = 0
+    play.command({ kind: ClientMessageKind.OrderAttackGround, unitIds: [tank.id], tile: { x: 10, y: 10 } }, 1, host.tickNo)
+    let marked = false
+    for (let i = 0; i < 1500 && !marked; i++) {
+      host.tick(SIM_STEP)
+      const cells = events(frames).flatMap((event) => (event.kind === ServerEventKind.MapPatch ? event.map.cells : []))
+      marked = cells.some((cell) => cell.x === 10 && cell.y === 10 && scarStrength(cell.terrain) > 0)
+    }
+    expect(marked).toBe(true)
   })
 
   it('answers a snapshot request at the server tick and the client keeps that path', () => {

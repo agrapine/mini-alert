@@ -1,4 +1,4 @@
-import { Terrain } from './tiles.ts'
+import { Terrain, scarStrength } from './tiles.ts'
 
 export type Rgb = [number, number, number]
 
@@ -9,6 +9,11 @@ const SHORE: Rgb = [86, 128, 54]
 const FOREST: Rgb = [61, 154, 74]
 const ROAD: Rgb = [102, 119, 85]
 const TOWN: Rgb = [26, 26, 26]
+const SCAR: Rgb[] = [
+  [122, 104, 70],
+  [96, 78, 52],
+  [68, 54, 38],
+]
 
 const SHORE_DIRS = [
   [1, 0],
@@ -35,6 +40,8 @@ export function isMinimapShore(
 }
 
 export function minimapRgb(terrain: Terrain, shore: boolean): Rgb {
+  const scar = scarStrength(terrain)
+  if (scar > 0) return SCAR[scar - 1]
   if (terrain === Terrain.Water) return WATER
   if (terrain === Terrain.Lake) return LAKE
   if (terrain === Terrain.Forest || terrain === Terrain.Tree) return FOREST

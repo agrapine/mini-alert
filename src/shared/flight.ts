@@ -18,6 +18,12 @@ export const FLIGHT_CLEARANCE = 1
 export function planeInFlight(flight: Flight, altitude: number): boolean {
   return flight !== Flight.Ground && altitude >= FLIGHT_CLEARANCE
 }
+
+/** Planes and gunships that have left the ground. Parked aircraft count as land. */
+export function airborne(locomotion: Locomotion, flight: Flight, altitude: number): boolean {
+  if (locomotion !== Locomotion.Plane && locomotion !== Locomotion.Rotor) return false
+  return planeInFlight(flight, altitude)
+}
 export const BAY_COUNT = 6
 export const RUNWAY_LENGTH = 3
 

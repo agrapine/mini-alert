@@ -4,6 +4,7 @@ import { Locomotion, type UnitType } from './unit-types.ts'
 
 const ARRIVE = 0.38
 const HULL_AIM_RATE = 2.5
+const HULL_CLOSE = 1.25
 const RETREAT_TICKS = 10
 const RETREAT_SCALE = 0.95
 const BEHIND = (Math.PI * 2) / 3
@@ -115,6 +116,7 @@ export function stepMotion(
   state.tileY = enteredY
   const coasting = type.locomotion === Locomotion.Plane && state.flight !== Flight.Landing && state.flight !== Flight.Taxi
   if (state.path.length > 0) consumePath(state, coasting)
+  if (type.locomotion === Locomotion.Hull) stopHullOvershoot(state, dt)
   if (air) settleFlight(state, type)
   if (air) stepAltitude(state, type, dt)
   if (air) settleTaxi(state, type, dt)
@@ -386,7 +388,44 @@ function parkedOnRunway(state: MotionState): boolean {
 }
 
 function steerHull(state: MotionState, type: UnitType, dt: number): void {
-  steerAligned(state, type, dt, 0.12)
+  const aim = aimPoint(state)
+  if (!aim) return
+  const err = headingError(state, aim)
+  state.facing = wrapAngle(state.facing + clamp(err, -type.turnRate * dt, type.turnRate * dt))
+  const target = Math.abs(err) <= 0.12 ? hullSpeed(state, type) : 0
+  state.speed = approach(state.speed, target, type.acceleration * dt)
+}
+
+function hullSpeed(state: MotionState, type: UnitType): number {
+  const remain = Math.max(0, pathRemaining(state) - 0.25)
+  return Math.min(type.topSpeed, Math.sqrt(2 * type.acceleration * remain))
+}
+
+function pathRemaining(state: MotionState): number {
+  let dist = 0
+  let x = state.x
+  let z = state.z
+  for (const tile of state.path) {
+    const center = tileCenter(tile)
+    dist += Math.hypot(center.x - x, center.z - z)
+    x = center.x
+    z = center.z
+  }
+  return dist
+}
+
+function stopHullOvershoot(state: MotionState, dt: number): void {
+  if (state.path.length !== 1) return
+  const center = tileCenter(state.path[0])
+  const dx = center.x - state.x
+  const dz = center.z - state.z
+  if (Math.hypot(dx, dz) > HULL_CLOSE) return
+  const dir = state.speed < -0.02 ? -1 : 1
+  const ahead = dx * Math.sin(state.facing) * dir + dz * Math.cos(state.facing) * dir
+  if (ahead >= 0) return
+  if (ahead + Math.abs(state.speed) * dt < 0) return
+  state.path.length = 0
+  state.speed = 0
 }
 
 function steerAligned(state: MotionState, type: UnitType, dt: number, limit: number): void {

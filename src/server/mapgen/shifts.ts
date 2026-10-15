@@ -4,8 +4,6 @@ import { valueNoise } from '../../shared/noise.ts'
 
 const INSET = 1 / 16
 const FOREST_EDGE = 0.6
-const LAKE_LOW = 0.48
-const LAKE_HIGH = 0.56
 
 const DIRS = [
   { x: 1, y: 0 },
@@ -24,6 +22,9 @@ export function fitShifts(
   kept: readonly Site[],
   dropped: readonly Site[],
   roads: readonly { x: number; y: number }[][],
+  lakeLow = 0.48,
+  lakeHigh = 0.56,
+  lakeScale = 0.08,
 ): Uint8Array {
   const shifts = new Uint8Array(width * height)
   shifts.fill(SHIFT_ZERO)
@@ -44,7 +45,7 @@ export function fitShifts(
       }
       const lake = neighbors.filter((neighbor) => isLake(here) !== isLake(neighbor.tile))
       if (lake.length > 0) {
-        shifts[y * width + x] = noiseByte(x, y, seed, lakeThreshold(here, x, y, seed), lake)
+        shifts[y * width + x] = noiseByte(x, y, seed, lakeThreshold(here, x, y, seed, lakeLow, lakeHigh, lakeScale), lake, lakeScale)
         continue
       }
       const road = neighbors.filter((neighbor) => isRoad(here) !== isRoad(neighbor.tile))
@@ -123,6 +124,7 @@ function noiseByte(
   seed: number,
   threshold: number,
   neighbors: readonly { x: number; y: number }[],
+  scale = 0.08,
 ): number {
   let sx = 0
   let sy = 0
@@ -131,8 +133,8 @@ function noiseByte(
     const fromY = ty + 0.5
     const toX = neighbor.x + 0.5
     const toY = neighbor.y + 0.5
-    const start = valueNoise(fromX, fromY, seed)
-    const end = valueNoise(toX, toY, seed)
+    const start = valueNoise(fromX, fromY, seed, scale)
+    const end = valueNoise(toX, toY, seed, scale)
     const span = end - start
     const t = Math.abs(span) < 1e-6 ? 0.5 : Math.min(1, Math.max(0, (threshold - start) / span))
     sx += fromX + (toX - fromX) * t
@@ -141,12 +143,12 @@ function noiseByte(
   return encodeVertex(tx, ty, sx / neighbors.length, sy / neighbors.length)
 }
 
-function lakeThreshold(tile: number, x: number, y: number, seed: number): number {
-  const noise = valueNoise(x, y, seed)
-  if (isLake(tile)) return Math.abs(noise - LAKE_LOW) < Math.abs(noise - LAKE_HIGH) ? LAKE_LOW : LAKE_HIGH
-  if (noise <= LAKE_LOW) return LAKE_LOW
-  if (noise >= LAKE_HIGH) return LAKE_HIGH
-  return Math.abs(noise - LAKE_LOW) < Math.abs(noise - LAKE_HIGH) ? LAKE_LOW : LAKE_HIGH
+function lakeThreshold(tile: number, x: number, y: number, seed: number, low: number, high: number, scale: number): number {
+  const noise = valueNoise(x, y, seed, scale)
+  if (isLake(tile)) return Math.abs(noise - low) < Math.abs(noise - high) ? low : high
+  if (noise <= low) return low
+  if (noise >= high) return high
+  return Math.abs(noise - low) < Math.abs(noise - high) ? low : high
 }
 
 function closestRoad(

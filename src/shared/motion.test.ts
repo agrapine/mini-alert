@@ -58,7 +58,8 @@ describe('shared motion', () => {
       { x: 1, y: 6 },
       { x: 8, y: 6 },
     ]
-    for (let i = 0; i < 18; i++) stepMotion(state, JET, 1 / 30)
+    const roll = Math.ceil((JET.topSpeed * 0.4) / JET.acceleration * 30)
+    for (let i = 0; i < roll; i++) stepMotion(state, JET, 1 / 30)
     expect(state.altitude ?? 0).toBeLessThan(0.25)
     expect(state.speed).toBeGreaterThan(1)
     for (let i = 0; i < 90; i++) stepMotion(state, JET, 1 / 30)
@@ -174,15 +175,55 @@ describe('shared motion', () => {
     expect(state.altitude ?? 0).toBeLessThan(0.1)
   })
 
+  it('slows a cruiser onto its destination', () => {
+    const state = body()
+    state.facing = Math.PI / 2
+    state.path = [{ x: 10, y: 2 }]
+    const goal = { x: 10.5, z: 2.5 }
+    let slowed = false
+    for (let i = 0; i < 30 * 30; i++) {
+      stepMotion(state, CRUISER, 1 / 30)
+      const dist = Math.hypot(goal.x - state.x, goal.z - state.z)
+      if (dist < 2 && state.speed < CRUISER.topSpeed * 0.5) slowed = true
+      if (state.path.length === 0) break
+    }
+    expect(slowed).toBe(true)
+    expect(state.path).toEqual([])
+    expect(Math.hypot(goal.x - state.x, goal.z - state.z)).toBeLessThan(0.6)
+    for (let i = 0; i < 30 * 3; i++) stepMotion(state, CRUISER, 1 / 30)
+    expect(state.speed).toBe(0)
+    expect(Math.hypot(goal.x - state.x, goal.z - state.z)).toBeLessThan(0.6)
+  })
+
+  it('stops a cruiser that sails just past its destination', () => {
+    const state = body()
+    state.x = 3.5
+    state.z = 2.5
+    state.tileX = 3
+    state.tileY = 2
+    state.facing = Math.PI / 2
+    state.speed = CRUISER.topSpeed
+    state.path = [{ x: 4, y: 2 }]
+    const goal = { x: 4.5, z: 2.5 }
+    for (let i = 0; i < 30 * 5; i++) {
+      stepMotion(state, CRUISER, 1 / 30)
+      if (state.path.length === 0) break
+    }
+    expect(state.path).toEqual([])
+    expect(state.speed).toBe(0)
+    expect(Math.hypot(goal.x - state.x, goal.z - state.z)).toBeLessThan(1.25)
+    expect(state.x).toBeGreaterThan(4.4)
+  })
+
   it('spins a cruiser before it builds speed', () => {
     const state = body()
     state.facing = 0
     state.speed = 0
     state.path = [{ x: 8, y: 2 }]
-    for (let i = 0; i < 30; i++) stepMotion(state, CRUISER, 1 / 30)
+    for (let i = 0; i < 20; i++) stepMotion(state, CRUISER, 1 / 30)
     expect(state.speed).toBeLessThan(0.05)
     expect(Math.abs(state.facing)).toBeGreaterThan(0.3)
-    for (let i = 0; i < 30 * 7; i++) stepMotion(state, CRUISER, 1 / 30)
+    for (let i = 0; i < 30 * 3; i++) stepMotion(state, CRUISER, 1 / 30)
     expect(state.speed).toBeGreaterThan(0.8)
     expect(state.x).toBeGreaterThan(1.5)
   })

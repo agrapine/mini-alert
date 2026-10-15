@@ -1,6 +1,5 @@
-import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
+import { buildingCost, canPlaceCityBuilding, cityContains, eachBuildingTile, footprintNearCity, HALL_SPAN, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
-import { Flight } from '../shared/flight.ts'
 import { atRest, flightLine, holdInRange, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
   ServerEventKind,
@@ -77,7 +76,6 @@ export class Replica {
   training: TrainJob[] = []
   cities: (CityState | null)[] = []
   layouts: (CityLayout | null)[] = []
-  primaryFactoryId = 0
   rally: TileCoord | null = null
   cleared: TileCoord[] = []
   serverTick = 0
@@ -109,12 +107,11 @@ export class Replica {
   private askedTick = -SNAPSHOT_GAP
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
-  private expectedTraining: { seq: number; typeId: UnitTypeId }[] = []
+  private expectedTraining: { seq: number; typeId: UnitTypeId; yardId: number }[] = []
   private expectedRally: { seq: number; tile: TileCoord } | null = null
-  private expectedPrimary: { seq: number; id: number } | null = null
   private expectedSites: (ExpectedSite & { seq: number })[] = []
   private trainingTick = 0
-  private trainingRate = 0
+  private readonly trainingRate = new Map<number, number>()
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
   private readonly history: Moment[] | null
@@ -134,7 +131,7 @@ export class Replica {
     this.training = []
     this.cities = []
     this.layouts = []
-    this.primaryFactoryId = 0
+    this.trainingRate.clear()
     this.rally = null
     this.cleared = []
     this.serverTick = 0
@@ -269,40 +266,35 @@ export class Replica {
     }
   }
 
-  expectTraining(seq: number, typeId: UnitTypeId) {
-    this.expectedTraining.push({ seq, typeId })
+  expectTraining(seq: number, typeId: UnitTypeId, yardId: number) {
+    this.expectedTraining.push({ seq, typeId, yardId })
   }
 
   expectRally(seq: number, tile: TileCoord) {
     this.expectedRally = { seq, tile }
   }
 
-  expectPrimary(seq: number, id: number) {
-    this.expectedPrimary = { seq, id }
-  }
-
   expectSite(seq: number, site: ExpectedSite) {
     this.expectedSites.push({ seq, ...site })
   }
 
-  /** The training queue, its head advanced at the rate the server last reported, with unanswered orders appended. */
+  /** Each building's queue, its head advanced at the rate the server last reported, with unanswered orders appended. */
   queue(): TrainJob[] {
     const elapsed = Math.max(0, this.localTick - this.trainingTick)
-    const jobs = this.training.map((job, index) =>
-      index === 0 && this.trainingRate > 0
-        ? { typeId: job.typeId, progress: Math.min(1, job.progress + this.trainingRate * elapsed) }
-        : job,
-    )
-    for (const job of this.expectedTraining) jobs.push({ typeId: job.typeId, progress: 0 })
+    const heads = new Set<number>()
+    const jobs = this.training.map((job) => {
+      if (heads.has(job.yardId)) return job
+      heads.add(job.yardId)
+      const rate = this.trainingRate.get(job.yardId) ?? 0
+      if (rate <= 0) return job
+      return { typeId: job.typeId, yardId: job.yardId, progress: Math.min(1, job.progress + rate * elapsed) }
+    })
+    for (const job of this.expectedTraining) jobs.push({ typeId: job.typeId, yardId: job.yardId, progress: 0 })
     return jobs
   }
 
   shownRally(): TileCoord | null {
     return this.expectedRally?.tile ?? this.rally
-  }
-
-  shownPrimary(): number {
-    return this.expectedPrimary?.id ?? this.primaryFactoryId
   }
 
   expectedSiteList(): readonly ExpectedSite[] {
@@ -313,7 +305,6 @@ export class Replica {
     this.expectedTraining = this.expectedTraining.filter((job) => job.seq > ack)
     this.expectedSites = this.expectedSites.filter((site) => site.seq > ack)
     if (this.expectedRally && this.expectedRally.seq <= ack) this.expectedRally = null
-    if (this.expectedPrimary && this.expectedPrimary.seq <= ack) this.expectedPrimary = null
   }
 
   advance(dt: number): boolean {
@@ -569,28 +560,35 @@ export class Replica {
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
-  /** Plans the move the server will plan for the same order, from what this player knows of the map, and starts the surface units at rest on it; one on the move keeps its course and target until the server answers. */
-  predictMove(unitIds: readonly number[], tile: TileCoord) {
-    this.guess({ kind: Logged.Move, unitIds, tile, plan: null })
+  /** Plans the move the server will plan for the same order, from what this player knows of the map, and starts the surface units at rest on it; one on the move keeps its course and target until the server answers. Returns the end tile of every surface unit's route. */
+  predictMove(unitIds: readonly number[], tile: TileCoord): TileCoord[] {
+    const guess: MoveGuess = { kind: Logged.Move, unitIds, tile, plan: null }
+    this.record(guess)
+    this.planMove(guess, true)
+    const goals: TileCoord[] = []
+    for (const path of guess.plan?.routes.values() ?? []) if (path.length > 0) goals.push({ ...path[path.length - 1] })
+    return goals
   }
 
   /** Points ordered units at the target and leads those at rest and out of range toward it; a unit on the move keeps its course, and without a turret its target, until the server answers. */
   predictAttack(unitIds: readonly number[], target: { x: number; z: number }, targetId: number | null) {
-    this.guess({ kind: Logged.Attack, unitIds, target: { x: target.x, z: target.z }, targetId })
-  }
-
-  private guess(guess: Guess) {
-    this.keep()
-    this.momentAt(this.localTick)?.log.push(guess)
+    const guess: Guess = { kind: Logged.Attack, unitIds, target: { x: target.x, z: target.z }, targetId }
+    this.record(guess)
     this.applyGuess(guess)
   }
 
+  private record(guess: Guess) {
+    this.keep()
+    this.momentAt(this.localTick)?.log.push(guess)
+  }
+
   private applyGuess(guess: Guess) {
-    if (guess.kind === Logged.Move) this.planMove(guess)
+    if (guess.kind === Logged.Move) this.planMove(guess, false)
     else this.aim(guess.unitIds, guess.target, guess.targetId)
   }
 
-  private planMove(guess: MoveGuess) {
+  /** Starts the surface units at rest on the guess's routes; with none at rest, it plans them only when `always`. */
+  private planMove(guess: MoveGuess, always: boolean) {
     const surface: UnitSnapshot[] = []
     const resting: UnitSnapshot[] = []
     let domains = 0
@@ -606,7 +604,7 @@ export class Replica {
       unit.attackPoint = null
     }
     const world = this.world
-    if (!world || resting.length === 0) return
+    if (!world || surface.length === 0 || (!always && resting.length === 0)) return
     const inputs = this.routeInputs(surface)
     if (!guess.plan || !sameValues(guess.plan.inputs, inputs) || !this.openHolds(guess.plan, world, domains)) {
       const open = this.openTiles(world, domains)
@@ -641,7 +639,7 @@ export class Replica {
 
   /** Per tile, bit `1 << domain` for each of `domains` that may stand there: unexplored tiles count as open, city buildings as closed. */
   private openTiles(world: WorldSnapshot, domains: number): Uint8Array {
-    const { width, terrain, known } = world
+    const { width, height, terrain, known } = world
     const ground = domains & (1 << MoveDomain.Ground)
     const water = domains & (1 << MoveDomain.Water)
     const open = new Uint8Array(terrain.length)
@@ -653,7 +651,12 @@ export class Replica {
     }
     for (const tile of this.cleared) open[tile.y * width + tile.x] |= ground
     for (const city of this.settledLayouts()) {
-      if (city) for (const building of city.buildings) open[building.y * width + building.x] = 0
+      if (!city) continue
+      for (const building of city.buildings) {
+        eachBuildingTile(building, (x, y) => {
+          if (x >= 0 && y >= 0 && x < width && y < height) open[y * width + x] = 0
+        })
+      }
     }
     return open
   }
@@ -751,6 +754,27 @@ export class Replica {
     return this.evolved
   }
 
+  /** City index when this tile is the player's city hall. */
+  ownedHall(tile: TileCoord): number | null {
+    if (this.playerId === null) return null
+    const layouts = this.settledLayouts()
+    for (let i = 0; i < layouts.length; i++) {
+      const state = this.cities[i]
+      const layout = layouts[i]
+      if (!state || !layout || state.ownerId !== this.playerId) continue
+      const hall = layout.buildings.find((building) => building.keep)
+      if (!hall) continue
+      if (tile.x >= hall.x && tile.y >= hall.y && tile.x < hall.x + HALL_SPAN && tile.y < hall.y + HALL_SPAN) return i
+    }
+    return null
+  }
+
+  setCityFocus(index: number, focus: number) {
+    const state = this.cities[index]
+    if (!state || state.ownerId !== this.playerId) return
+    state.focus = focus
+  }
+
   private applyEvent(event: ServerFrame['events'][number], tick: number) {
     if (event.kind === ServerEventKind.Welcome) {
       this.playerId = event.playerId
@@ -765,9 +789,8 @@ export class Replica {
       this.units = event.units.map(copyUnit)
       this.credits = event.credits
       this.training = event.training
-      this.trainingRate = 0
+      this.trainingRate.clear()
       this.trainingTick = this.serverTick
-      this.primaryFactoryId = event.primaryFactoryId
       this.rally = event.rally
       this.installCities(event.cities, true)
       this.noteCleared(event.map.cleared, true)
@@ -824,21 +847,25 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.Training) {
-      const head = event.training[0]
-      const before = this.training[0]
       const ticks = tick - this.trainingTick
-      const same = head !== undefined && before !== undefined && head.typeId === before.typeId && ticks > 0
-      this.trainingRate = same ? Math.max(0, (head.progress - before.progress) / ticks) : 0
+      const before = new Map<number, TrainJob>()
+      for (const job of this.training) if (!before.has(job.yardId)) before.set(job.yardId, job)
+      this.trainingRate.clear()
+      const seen = new Set<number>()
+      if (ticks > 0) {
+        for (const job of event.training) {
+          if (seen.has(job.yardId)) continue
+          seen.add(job.yardId)
+          const prior = before.get(job.yardId)
+          if (prior && prior.typeId === job.typeId) this.trainingRate.set(job.yardId, Math.max(0, (job.progress - prior.progress) / ticks))
+        }
+      }
       this.trainingTick = tick
       this.training = event.training
       return
     }
     if (event.kind === ServerEventKind.Rally) {
       this.rally = event.rally
-      return
-    }
-    if (event.kind === ServerEventKind.Primary) {
-      this.primaryFactoryId = event.primaryFactoryId
       return
     }
     if (event.kind === ServerEventKind.Yields) this.pendingYields.push(...event.yields)
@@ -873,6 +900,7 @@ export class Replica {
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
     unit.bay = next.bay ?? -1
+    unit.rounds = next.rounds ?? unit.rounds
     const behind = Math.min(REPLAY_LIMIT, this.localTick - tick)
     if (behind > 0) {
       const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
@@ -930,11 +958,11 @@ export class Replica {
     return nearest
   }
 
-  /** The ground point a unit attacks, else its attack target while alive and hostile. */
+  /** The ground point a unit attacks, else its attack target while alive. */
   private attackAim(unit: UnitSnapshot): { x: number; z: number } | null {
     if (unit.attackPoint) return unit.attackPoint
     const target = unit.attackId === null ? undefined : this.unit(unit.attackId)
-    return target && target.health > 0 && target.ownerId !== unit.ownerId ? target : null
+    return target && target.health > 0 ? target : null
   }
 
   private occupancy(): Map<string, number> {
@@ -969,7 +997,7 @@ export class Replica {
       orbitY: unit.orbit?.y,
       bay: unit.bay !== undefined && unit.bay >= 0 ? unit.bay : undefined,
     }
-    const aim = type.weapon.turretRate > 0 || mayRearm(type, unit) ? null : this.attackAim(unit)
+    const aim = type.weapon.turretRate > 0 || rearming(type, unit) ? null : this.attackAim(unit)
     if (aim && holdInRange(state, type, aim, dt)) state.loiter = false
     stepMotion(state, type, dt, (x, y) => this.tileBlocked(occupied, unit.id, type.locomotion, x, y))
     const span = spanOf(type)
@@ -1075,7 +1103,7 @@ export class Replica {
     const blocked = new Set<string>()
     for (const city of this.evolved) {
       if (!city) continue
-      for (const building of city.buildings) blocked.add(`${building.x},${building.y}`)
+      for (const building of city.buildings) eachBuildingTile(building, (x, y) => blocked.add(`${x},${y}`))
     }
     this.blockedBuildings = blocked
     this.settledRevision = this.cityRevision
@@ -1160,10 +1188,9 @@ function changesUnits(event: ServerFrame['events'][number]): boolean {
   )
 }
 
-/** Whether the server may be rearming a rocket unit, which it never holds in range: rounds are not on the wire, so every homeless or homebound one counts. */
-function mayRearm(type: UnitType, unit: UnitSnapshot): boolean {
-  if (type.weapon.kind !== WeaponKind.Rocket) return false
-  return !unit.home || unit.returning === true || unit.flight === Flight.Landing || unit.flight === Flight.Taxi
+/** A rocket unit out of rounds, which the server calls home to rearm and never holds in range. */
+function rearming(type: UnitType, unit: UnitSnapshot): boolean {
+  return type.weapon.kind === WeaponKind.Rocket && (unit.rounds ?? type.weapon.magazine) <= 0
 }
 
 function grounded(unit: UnitSnapshot): boolean {

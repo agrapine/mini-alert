@@ -1,11 +1,12 @@
 import type { ClientPort } from '../shared/protocol.ts'
 import { ClientMessageKind } from '../shared/protocol.ts'
 import type { TileCoord } from '../shared/tiles.ts'
-import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
+import { Locomotion, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import type { UnitSnapshot } from '../shared/protocol.ts'
 import type { Replica } from './replica.ts'
 
 const GROUP_SLOTS = 10
+const YARDS = new Set<UnitTypeId>([UnitTypeId.Factory, UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
 
 export class Commander {
   private selectedIds: number[] = []
@@ -13,6 +14,7 @@ export class Commander {
   private placing: UnitTypeId | null = null
   private raising = false
   private aim: TileCoord | null = null
+  private hall: number | null = null
   private spectating = false
   private readonly replica: Replica
   private readonly port: ClientPort
@@ -26,6 +28,7 @@ export class Commander {
     this.selectedIds = []
     this.groups = emptyGroups()
     this.cancelPlace()
+    this.hall = null
   }
 
   setSpectating(on: boolean) {
@@ -35,9 +38,11 @@ export class Commander {
     this.placing = null
     this.raising = false
     this.aim = null
+    this.hall = null
   }
 
   select(id: number | null) {
+    this.hall = null
     if (this.spectating) {
       this.selectedIds = []
       return
@@ -48,17 +53,12 @@ export class Commander {
     }
     const unit = this.replica.unit(id)
     if (!unit || unit.ownerId !== this.replica.playerId) return
-    const mobile = UNIT_TYPES[unit.typeId].topSpeed > 0
-    if (!mobile && unit.typeId !== UnitTypeId.Factory) return
-    if (this.selectedIds.length === 1 && this.selectedIds[0] === id && unit.typeId === UnitTypeId.Factory) {
-      const seq = this.port.send({ kind: ClientMessageKind.SetPrimary, unitId: id })
-      if (seq !== null) this.replica.expectPrimary(seq, id)
-      return
-    }
+    if (UNIT_TYPES[unit.typeId].topSpeed <= 0 && !YARDS.has(unit.typeId)) return
     this.selectedIds = [id]
   }
 
   selectIds(ids: readonly number[]) {
+    this.hall = null
     const own: number[] = []
     for (const id of ids) {
       const unit = this.replica.unit(id)
@@ -99,8 +99,48 @@ export class Commander {
     return units
   }
 
+  selectCity(index: number | null) {
+    if (this.spectating) return
+    if (index === null) {
+      this.hall = null
+      return
+    }
+    const state = this.replica.cities[index]
+    if (!state || state.ownerId !== this.replica.playerId) return
+    this.selectedIds = []
+    this.placing = null
+    this.raising = false
+    this.hall = index
+  }
+
+  selectedCity(): number | null {
+    if (this.hall === null) return null
+    const state = this.replica.cities[this.hall]
+    if (!state || state.ownerId !== this.replica.playerId) {
+      this.hall = null
+      return null
+    }
+    return this.hall
+  }
+
+  setCityFocus(focus: number) {
+    const index = this.selectedCity()
+    if (index === null || this.spectating) return
+    const step = Math.max(-2, Math.min(2, Math.round(focus)))
+    this.replica.setCityFocus(index, step)
+    this.port.send({ kind: ClientMessageKind.SetCityFocus, index, focus: step })
+  }
+
   commanding(): boolean {
     return this.selected().some((unit) => UNIT_TYPES[unit.typeId].topSpeed > 0)
+  }
+
+  productionYard(): UnitSnapshot | null {
+    const units = this.selected()
+    if (units.length !== 1) return null
+    const unit = units[0]
+    if (unit.health <= 0 || !YARDS.has(unit.typeId)) return null
+    return unit
   }
 
   factorySelected(): boolean {
@@ -124,15 +164,39 @@ export class Commander {
     if (seq !== null) this.replica.expectRally(seq, tile)
   }
 
-  orderMove(tile: TileCoord) {
-    const unitIds = this.orderable()
-    if (unitIds.length === 0) return
-    if (this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile }) === null) return
-    this.replica.predictMove(unitIds, tile)
+  orderMove(tile: TileCoord): TileCoord[] {
+    const goals = this.sendMove(this.orderable(), tile)
+    return goals.length > 0 ? goals : [tile]
+  }
+
+  orderReturn(): TileCoord[] {
+    if (this.spectating) return []
+    const groups = new Map<string, { tile: TileCoord; ids: number[] }>()
+    for (const unit of this.selected()) {
+      const type = UNIT_TYPES[unit.typeId]
+      if (type.locomotion !== Locomotion.Plane && type.locomotion !== Locomotion.Rotor) continue
+      if (!unit.home) continue
+      const key = `${unit.home.x},${unit.home.y}`
+      const group = groups.get(key) ?? { tile: { x: unit.home.x, y: unit.home.y }, ids: [] }
+      group.ids.push(unit.id)
+      groups.set(key, group)
+    }
+    const marks: TileCoord[] = []
+    for (const group of groups.values()) {
+      const goals = this.sendMove(group.ids, group.tile)
+      marks.push(...(goals.length > 0 ? goals : [group.tile]))
+    }
+    return marks
+  }
+
+  private sendMove(unitIds: number[], tile: TileCoord): TileCoord[] {
+    if (unitIds.length === 0) return []
+    if (this.port.send({ kind: ClientMessageKind.OrderMove, unitIds, tile }) === null) return []
+    return this.replica.predictMove(unitIds, tile)
   }
 
   orderAttack(targetId: number) {
-    const unitIds = this.orderable()
+    const unitIds = this.orderable().filter((id) => id !== targetId)
     if (unitIds.length === 0) return
     if (this.port.send({ kind: ClientMessageKind.OrderAttack, unitIds, targetId }) === null) return
     const target = this.replica.unit(targetId)
@@ -153,13 +217,15 @@ export class Commander {
 
   spawn(typeId: UnitTypeId) {
     if (this.spectating) return
-    const seq = this.port.send({ kind: ClientMessageKind.Spawn, typeId })
-    if (seq !== null) this.replica.expectTraining(seq, typeId)
+    const yard = this.productionYard()
+    if (!yard || yard.progress < 1 || yardOf(typeId) !== yard.typeId) return
+    const seq = this.port.send({ kind: ClientMessageKind.Spawn, typeId, yardId: yard.id })
+    if (seq !== null) this.replica.expectTraining(seq, typeId, yard.id)
   }
 
-  cancelSpawn(typeId: UnitTypeId) {
+  cancelSpawn(typeId: UnitTypeId, yardId = 0) {
     if (this.spectating) return
-    this.port.send({ kind: ClientMessageKind.CancelSpawn, typeId })
+    this.port.send({ kind: ClientMessageKind.CancelSpawn, typeId, yardId })
   }
 
   cancelBuild(typeId: UnitTypeId) {

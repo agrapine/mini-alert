@@ -23,6 +23,8 @@ const actions: LobbyActions = {
   setSlotAi: log('setSlotAi'),
   clearSlot: log('clearSlot'),
   setMapSize: log('setMapSize'),
+  setLandform: log('setLandform'),
+  setLakes: log('setLakes'),
   regenerate: log('regenerate'),
   start: log('start'),
   setAiPace: log('setAiPace'),

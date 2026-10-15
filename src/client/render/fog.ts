@@ -12,7 +12,7 @@ import {
   Vector2,
 } from 'three'
 import type { SightSource } from '../../shared/vision.ts'
-import { EXPLORED_FOG, FOG_FEATHER, FOG_TEXELS, stampFriendDistance, stampSight } from '../../shared/vision.ts'
+import { EXPLORED_FOG, FOG_FEATHER, FOG_TEXELS, rememberExplored, stampFriendDistance, stampSight } from '../../shared/vision.ts'
 import { PITCH } from './stage.ts'
 
 const BLEND_SECONDS = 0.2
@@ -103,6 +103,18 @@ export class Fog {
 
   setView(yaw: number) {
     this.viewShift.set(Math.sin(yaw) * FOG_OVERHANG, Math.cos(yaw) * FOG_OVERHANG)
+  }
+
+  /** Paints tiles the server already explored, before any friendly unit stamps sight this session. */
+  seed(known: Uint8Array) {
+    rememberExplored(known, this.width, this.exploredTiles, this.exploredField, FOG_TEXELS)
+    for (let i = 0; i < known.length && i < this.mask.length; i++) {
+      if (known[i] === 1 && this.mask[i] > EXPLORED_FOG) this.mask[i] = EXPLORED_FOG
+    }
+    encodeDistance(this.exploredField, this.exploredPixels, this.cols, 0, 0, this.cols - 1, this.rows - 1)
+    this.exploredTexture.clearUpdateRanges()
+    this.exploredTexture.needsUpdate = true
+    this.fullUpload = true
   }
 
   reset() {

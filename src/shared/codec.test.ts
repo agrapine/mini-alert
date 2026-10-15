@@ -52,6 +52,7 @@ describe('protobuf frames', () => {
         { kind: ServerEventKind.ShotSpawn, shot: { kind: WeaponKind.Shell, shooterId: 4, x: 1, z: 2, aimX: 3, aimZ: 4, flight: 0.4 } },
         { kind: ServerEventKind.ShotHit, hit: { kind: WeaponKind.Shell, aimX: 3, aimZ: 4 } },
         { kind: ServerEventKind.Credits, credits: 9989.583333333334 },
+        { kind: ServerEventKind.Trace, budget: 33.333, samples: [{ slot: 1, ms: 4.5 }, { slot: 10, ms: 20 }] },
       ],
     }
     const back = decodeServerFrame(encodeServerFrame(frame))
@@ -61,6 +62,11 @@ describe('protobuf frames', () => {
     expect(back?.events[1]).toMatchObject({ kind: ServerEventKind.UnitMotion, unit: { id: 4, x: expect.closeTo(1.25), path: [{ x: 3, y: 2 }] } })
     expect(back?.events[2]).toMatchObject({ kind: ServerEventKind.MapPatch, map: { cells: [{ x: 1, y: 2, terrain: Terrain.Land, shift: 0x88 }] } })
     expect(back?.events[5]).toMatchObject({ kind: ServerEventKind.Credits, credits: expect.closeTo(9989.583333333334) })
+    expect(back?.events[6]).toMatchObject({
+      kind: ServerEventKind.Trace,
+      budget: expect.closeTo(33.333),
+      samples: [{ slot: 1, ms: expect.closeTo(4.5) }, { slot: 10, ms: expect.closeTo(20) }],
+    })
 
     const order = decodeClientMessage(encodeClientMessage({ kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } }, 42, 900))
     expect(order).toEqual({ seq: 42, tick: 900, message: { kind: ClientMessageKind.OrderMove, unitIds: [4], tile: { x: 6, y: 1 } } })

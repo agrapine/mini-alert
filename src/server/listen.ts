@@ -11,6 +11,8 @@ import { runFixedStep } from './clock.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
 import { serveClient } from './static.ts'
+import { instantBuilds } from './instant.ts'
+import { __TRACE__, traceCommit, traceReset } from './trace.ts'
 
 const PORT = Number(process.env.PORT) || 8787
 const STEP = SIM_STEP
@@ -69,12 +71,16 @@ sockets.on('connection', (socket, request) => {
 
 const load = { ticks: 0, busy: 0, worst: 0, since: performance.now() }
 runFixedStep(STEP * 1000, () => {
+  __TRACE__ && traceReset()
   const started = performance.now()
   lobby.tick(STEP)
   const spent = performance.now() - started
   load.ticks += 1
   load.busy += spent
   load.worst = Math.max(load.worst, spent)
+  if (!__TRACE__) return
+  const report = traceCommit(spent, STEP * 1000)
+  if (report) lobby.pushTrace(report.samples, report.budget)
 })
 setInterval(() => {
   const seconds = (performance.now() - load.since) / 1000
@@ -106,7 +112,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`server listening on ${PORT}`)
+  console.log(`server listening on ${PORT}${instantBuilds() ? ', instant builds' : ''}`)
 })
 
 function query(url: string | undefined, name: string): string | null {

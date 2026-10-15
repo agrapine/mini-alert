@@ -87,6 +87,33 @@ export function shotsForPlayer(
   )
 }
 
+/** Marks tiles a sync already revealed, so a fresh client keeps the explored map. */
+export function rememberExplored(
+  known: Uint8Array,
+  width: number,
+  explored: Uint8Array,
+  field: Float32Array,
+  texelsPerTile: number,
+  feather = FOG_FEATHER,
+): void {
+  const cols = width * texelsPerTile
+  for (let i = 0; i < known.length && i < explored.length; i++) {
+    if (known[i] !== 1) continue
+    explored[i] = 1
+    const x = i % width
+    const y = (i - x) / width
+    const x0 = x * texelsPerTile
+    const y0 = y * texelsPerTile
+    for (let ty = 0; ty < texelsPerTile; ty++) {
+      const row = (y0 + ty) * cols + x0
+      for (let tx = 0; tx < texelsPerTile; tx++) {
+        const index = row + tx
+        if (field[index] > -feather) field[index] = -feather
+      }
+    }
+  }
+}
+
 export function stampSight(
   width: number,
   height: number,

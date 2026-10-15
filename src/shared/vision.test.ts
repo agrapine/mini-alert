@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ShotEvent, UnitSnapshot } from './protocol.ts'
 import { UnitTypeId, WeaponKind } from './unit-types.ts'
 import { CITY_SIGHT } from './cities.ts'
-import { FOG_FEATHER, FOG_TEXELS, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
+import { FOG_FEATHER, FOG_TEXELS, rememberExplored, shotsForPlayer, stampExploredDistance, stampSight, unitsForPlayer } from './vision.ts'
 
 function snapshot(id: number, ownerId: number, x: number, z: number, typeId = UnitTypeId.Scout): UnitSnapshot {
   return {
@@ -72,6 +72,20 @@ describe('vision', () => {
       flight: 1,
     }
     expect(shotsForPlayer([landing], [], 1, owned)).toEqual([landing])
+  })
+
+  it('remembers tiles a sync already revealed', () => {
+    const width = 4
+    const known = new Uint8Array(width * width)
+    known[1] = 1
+    const explored = new Uint8Array(width * width)
+    const cols = width * FOG_TEXELS
+    const field = new Float32Array(cols * cols).fill(FOG_FEATHER)
+    rememberExplored(known, width, explored, field, FOG_TEXELS)
+    expect(explored[1]).toBe(1)
+    expect(explored[0]).toBe(0)
+    expect(field[FOG_TEXELS]).toBeCloseTo(-FOG_FEATHER)
+    expect(field[0]).toBeCloseTo(FOG_FEATHER)
   })
 
   it('keeps a tile explored after the unit that saw it moves away', () => {

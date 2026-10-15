@@ -6,13 +6,26 @@ type Store = Pick<Storage, 'getItem' | 'setItem'>
 /**
  * The seat this browser plays. A `#token` link selects that seat and is cleared from the address bar,
  * so a copied page address does not hand the seat to someone else.
+ * `?new=1` plays a fresh seat in that window and leaves the saved browser seat alone.
  */
-export function seatToken(loc: { hash: string } = location, store?: Store, clearLink: () => void = clearSeatLink): string {
+export function seatToken(
+  loc: { hash: string; search?: string } = location,
+  store?: Store,
+  clearLink: () => void = clearSeatLink,
+  session?: Store,
+): string {
   const linked = loc.hash.startsWith('#') ? loc.hash.slice(1) : loc.hash
   if (TOKEN.test(linked)) {
     clearLink()
     saveSeat(linked, store)
     return linked
+  }
+  if (new URLSearchParams(loc.search ?? '').get('new') === '1') {
+    const held = readSeat(session ?? sessionStorage)
+    if (held) return held
+    const fresh = randomToken()
+    saveSeat(fresh, session ?? sessionStorage)
+    return fresh
   }
   const saved = readSeat(store)
   if (saved) return saved
