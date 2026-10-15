@@ -2,7 +2,12 @@ import {
   AI_PACE_DEFAULT,
   AI_PACE_MAX,
   AI_PACE_MIN,
+  LAKE_DEFAULT,
+  LAKE_MAX,
+  LAKE_MIN,
+  Landform,
   MAP_SIZES,
+  clampLakes,
   type MapSize,
   RoomStatus,
   SlotKind,
@@ -29,6 +34,8 @@ export type LobbyActions = {
   setSlotAi(index: number): void
   clearSlot(index: number): void
   setMapSize(size: MapSize): void
+  setLandform(landform: Landform): void
+  setLakes(lakes: number): void
   regenerate(): void
   start(): void
   setAiPace(pace: number): void
@@ -52,6 +59,11 @@ export class LobbyView {
   private readonly paceRow: HTMLLabelElement
   private readonly paceInput: HTMLInputElement
   private readonly paceValue: HTMLElement
+  private readonly lakesRow: HTMLLabelElement
+  private readonly lakesInput: HTMLInputElement
+  private readonly lakesValue: HTMLElement
+  private lakesAmount = LAKE_DEFAULT
+  private lakesEditing = false
   private chatKey = ''
   private previewKey = ''
   private slots: SlotView[] = []
@@ -181,6 +193,28 @@ export class LobbyView {
       this.actions.setAiPace(pace)
     })
     this.paceRow.append(this.paceInput, this.paceValue)
+    this.lakesRow = document.createElement('label')
+    this.lakesRow.className = 'pace-row'
+    this.lakesRow.append(document.createTextNode('Lakes'))
+    this.lakesInput = document.createElement('input')
+    this.lakesInput.type = 'range'
+    this.lakesInput.min = String(LAKE_MIN)
+    this.lakesInput.max = String(LAKE_MAX)
+    this.lakesInput.step = '0.05'
+    this.lakesInput.value = String(LAKE_DEFAULT)
+    this.lakesValue = document.createElement('span')
+    this.lakesValue.textContent = lakeLabel(LAKE_DEFAULT)
+    this.lakesInput.addEventListener('input', () => {
+      this.lakesValue.textContent = lakeLabel(Number(this.lakesInput.value))
+    })
+    this.lakesInput.addEventListener('change', () => {
+      const lakes = clampLakes(Number(this.lakesInput.value))
+      this.lakesValue.textContent = lakeLabel(lakes)
+      if (!this.lakesEditing || lakes === this.lakesAmount) return
+      this.setBusy(true)
+      this.actions.setLakes(lakes)
+    })
+    this.lakesRow.append(this.lakesInput, this.lakesValue)
     this.paintStatus()
   }
 
@@ -374,23 +408,41 @@ export class LobbyView {
 
   private fillSlots(state: GameLobbyState, host: boolean) {
     this.main.replaceChildren()
-    const sizes = document.createElement('div')
-    sizes.className = 'size-row'
-    for (const size of MAP_SIZES) {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.textContent = `${size} · ${slotsForSize(size)}`
-      button.disabled = !host
-      button.classList.toggle('on', size === state.mapSize)
-      button.addEventListener('click', () => {
-        if (size === state.mapSize) return
-        this.setBusy(true)
-        this.actions.setMapSize(size)
-      })
-      sizes.append(button)
+    const editing = host && state.status === RoomStatus.Waiting
+    const options = document.createElement('div')
+    options.className = 'map-options'
+    const choose = (pick: () => void) => {
+      this.setBusy(true)
+      pick()
     }
-    this.main.append(sizes)
-    if (host) {
+    options.append(
+      choiceRow(
+        MAP_SIZES.map((size) => ({
+          label: `${size} · ${slotsForSize(size)}`,
+          on: size === state.mapSize,
+          disabled: !editing,
+          pick: () => choose(() => this.actions.setMapSize(size)),
+        })),
+      ),
+      choiceRow([
+        {
+          label: 'Island',
+          on: state.landform === Landform.Island,
+          disabled: !editing,
+          pick: () => choose(() => this.actions.setLandform(Landform.Island)),
+        },
+        {
+          label: 'Land',
+          on: state.landform === Landform.Land,
+          disabled: !editing,
+          pick: () => choose(() => this.actions.setLandform(Landform.Land)),
+        },
+      ]),
+    )
+    this.main.append(options)
+    this.syncLakes(state.lakes, editing)
+    this.main.append(this.lakesRow)
+    if (editing) {
       const regen = document.createElement('button')
       regen.type = 'button'
       regen.textContent = 'New map'
@@ -446,6 +498,15 @@ export class LobbyView {
     this.main.append(this.paceRow)
   }
 
+  syncLakes(amount: number, editing: boolean) {
+    this.lakesAmount = amount
+    this.lakesEditing = editing
+    this.lakesInput.disabled = !editing
+    if (document.activeElement === this.lakesInput) return
+    this.lakesInput.value = String(amount)
+    this.lakesValue.textContent = lakeLabel(amount)
+  }
+
   syncPace(pace: number) {
     if (document.activeElement === this.paceInput) return
     this.paceInput.value = String(pace)
@@ -466,6 +527,28 @@ export class LobbyView {
     }
     this.chatLog.scrollTop = this.chatLog.scrollHeight
   }
+}
+
+function lakeLabel(amount: number): string {
+  return amount <= 0 ? 'Off' : amount.toFixed(2)
+}
+
+function choiceRow(choices: readonly { label: string; on: boolean; disabled: boolean; pick: () => void }[]): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'size-row'
+  for (const choice of choices) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = choice.label
+    button.disabled = choice.disabled
+    button.classList.toggle('on', choice.on)
+    button.addEventListener('click', () => {
+      if (choice.on || choice.disabled) return
+      choice.pick()
+    })
+    row.append(button)
+  }
+  return row
 }
 
 function slotButton(label: string, onClick: () => void): HTMLButtonElement {
@@ -501,7 +584,9 @@ function occupancy(game: GameCard): string {
     else if (slot.kind === SlotKind.Ai) ais += 1
     else open += 1
   }
-  const parts = [String(game.mapSize)]
+  const parts = [String(game.mapSize), game.landform === Landform.Land ? 'Land' : 'Island']
+  if (game.lakes === 0) parts.push('No lakes')
+  else if (game.lakes !== LAKE_DEFAULT) parts.push(`Lakes ${game.lakes.toFixed(2)}`)
   if (humans > 0) parts.push(humans === 1 ? '1 seated' : `${humans} seated`)
   if (ais > 0) parts.push(ais === 1 ? '1 AI' : `${ais} AI`)
   if (open > 0) parts.push(open === 1 ? '1 open' : `${open} open`)

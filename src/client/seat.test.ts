@@ -25,6 +25,18 @@ describe('seat token', () => {
     expect(seatToken({ hash: '' }, store)).toBe(linked)
   })
 
+  it('gives a ?new=1 window its own seat and keeps the browser seat', () => {
+    const store = browser()
+    const saved = seatToken({ hash: '' }, store)
+    const session = browser()
+    const fresh = seatToken({ hash: '', search: '?new=1' }, store, () => {}, session)
+    expect(fresh).toMatch(/^[a-f0-9]{32}$/)
+    expect(fresh).not.toBe(saved)
+    expect(seatToken({ hash: '' }, store)).toBe(saved)
+    expect(seatToken({ hash: '', search: '?admin=1&new=1' }, store, () => {}, session)).toBe(fresh)
+    expect(seatToken({ hash: '', search: '?new=1' }, store, () => {}, browser())).not.toBe(fresh)
+  })
+
   it('plays the same seat in another browser that opens its link, without the page query', () => {
     const seat = seatToken({ hash: '' }, browser())
     const page = { origin: 'https://mini.test', pathname: '/', search: '?admin=1' }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CAPTURE_DRAIN, captureDuration, captureFade, CITY_CATALOG, CITY_MODELS, cityContains, cityHolds, cityRadius, CITY_GROW_SECONDS, DENSITY_MAX, DENSITY_MIN, densityOf, growCity, HALL_MODEL, layoutCities, lostStreets, populationOf, projectCity, settledCity, STREET_REACH, StreetKind, UPGRADE_REST, type CityLayout } from '../shared/cities.ts'
+import { CAPTURE_DRAIN, captureDuration, captureFade, CITY_CATALOG, CITY_MODELS, cityContains, cityHolds, cityRadius, CITY_GROW_SECONDS, DENSITY_MAX, DENSITY_MIN, densityOf, growCity, HALL_DENSITY, HALL_MODEL, HALL_SPAN, layoutCities, lostStreets, populationOf, projectCity, settledCity, STREET_REACH, StreetKind, UPGRADE_REST, type CityLayout } from '../shared/cities.ts'
 import { Terrain } from '../shared/tiles.ts'
 import { HEAVY_TANK, SCOUT, TURRET, UnitTypeId } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
@@ -31,7 +31,7 @@ describe('cities', () => {
     const game = cityGame()
     const runtime = game as unknown as { cities: { layout: CityLayout; ruins: { x: number; y: number }[] }[]; syncBlocks(): void }
     const city = runtime.cities[0]
-    const building = city.layout.buildings[0]
+    const building = city.layout.buildings.find((entry) => !entry.keep) ?? city.layout.buildings[0]
     expect(game.pathfinder.isWalkable(building.x, building.y, -1)).toBe(false)
     city.ruins.push({ x: building.x, y: building.y })
     runtime.syncBlocks()
@@ -66,7 +66,15 @@ describe('cities', () => {
       expect(city.buildings.length).toBeGreaterThan(0)
       expect(city.buildings.filter((building) => building.keep)).toHaveLength(1)
       expect(city.buildings.find((building) => building.keep)?.model).toBe(HALL_MODEL)
-      expect(populationOf(city)).toBe(city.buildings.reduce((sum, building) => sum + densityOf(building.model), 0))
+      expect(populationOf(city)).toBe(city.buildings.reduce((sum, building) => sum + (building.keep ? HALL_DENSITY : densityOf(building.model)), 0))
+      const hall = city.buildings.find((building) => building.keep)
+      expect(hall).toBeDefined()
+      if (hall) {
+        expect(CITY_CATALOG[hall.model].name).toBe('building-l')
+        for (let dy = 0; dy < HALL_SPAN; dy++) {
+          for (let dx = 0; dx < HALL_SPAN; dx++) expect(cityContains(city, hall.x + dx, hall.y + dy)).toBe(true)
+        }
+      }
       const roads = roadsOf(city)
       expect(roads.length).toBeGreaterThan(0)
       expect(connected(roads)).toBe(true)
@@ -142,7 +150,7 @@ describe('cities', () => {
     let reach = 0
     for (const building of city.buildings) reach = Math.max(reach, Math.hypot(building.x - anchor.x, building.y - anchor.y))
     expect(reach).toBeLessThanOrEqual(cityRadius(populationOf(city)) + 1)
-    expect(CITY_CATALOG[HALL_MODEL].name).toBe('water-tower')
+    expect(CITY_CATALOG[HALL_MODEL].name).toBe('building-l')
   })
 
   it('spreads for a few steps after a building is upgraded', () => {
@@ -386,21 +394,27 @@ describe('cities', () => {
     const human = game.addPlayer()
     game.claimCity(game.scenery.towns[0], human.id)
     const layout = layoutCities(game.scenery.towns, game.scenery.seed, terrainOf(game), game.world.width, game.world.height)[0]
+    const hall = layout.buildings.find((building) => building.keep)
+    expect(hall).toBeDefined()
+    if (hall) {
+      for (let dy = 0; dy < HALL_SPAN; dy++) {
+        for (let dx = 0; dx < HALL_SPAN; dx++) expect(game.pathfinder.isWalkable(hall.x + dx, hall.y + dy, -1)).toBe(false)
+      }
+    }
     for (const building of layout.buildings) expect(game.pathfinder.isWalkable(building.x, building.y, -1)).toBe(false)
     const street = streetTile(layout)
     expect(game.pathfinder.isWalkable(street.x, street.y, -1)).toBe(true)
     game.tick(CITY_GROW_SECONDS)
-    expect(game.cityStates()[0].grown).toBe(0)
-    const blocked = layout.buildings[0]
+    expect(game.cityStates()[0].grown).toBe(1)
+    game.tick(CITY_GROW_SECONDS / 2)
+    expect(game.cityStates()[0].grown).toBe(1)
+    game.tick(CITY_GROW_SECONDS)
+    expect(game.cityStates()[0].grown).toBe(2)
+    const blocked = layout.buildings.find((building) => !building.keep) ?? layout.buildings[0]
     const shifted = game.spawn(human, UnitTypeId.Scout, { x: blocked.x, y: blocked.y }, 0)
     expect(shifted.tile.x === blocked.x && shifted.tile.y === blocked.y).toBe(false)
     expect(game.pathfinder.occupant(blocked.x, blocked.y)).toBeNull()
-    game.spawn(human, UnitTypeId.Scout, { x: street.x, y: street.y }, 0)
-    game.tick(CITY_GROW_SECONDS / 2)
-    expect(game.cityStates()[0].grown).toBe(0)
-    game.tick(CITY_GROW_SECONDS)
-    expect(game.cityStates()[0].grown).toBe(1)
-    const grownLayout = projectCity(layout, 1, terrainOf(game), game.world.width, game.world.height)
+    const grownLayout = projectCity(layout, 2, terrainOf(game), game.world.width, game.world.height)
     expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * populationOf(grownLayout))
     expect(packedStreets(roadsOf(grownLayout))).toBe(false)
     expect(streetNeighbors(roadsOf(grownLayout))).toBeLessThanOrEqual(3)
@@ -428,6 +442,49 @@ describe('cities', () => {
     )
     expect(beside).toBeDefined()
     if (beside) expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: beside.x, y: beside.y })).toBe(true)
+  })
+
+  it('leans a held city toward money or growth without a garrison', () => {
+    const game = cityGame()
+    const human = game.addPlayer()
+    const other = game.addPlayer()
+    game.claimCity(game.scenery.towns[0], human.id)
+    expect(game.cityStates()[0].focus).toBe(0)
+    game.tick(CITY_GROW_SECONDS)
+    expect(game.cityStates()[0].grown).toBe(1)
+    const people = game.creditIncome(human.id) / CREDIT_PER_POPULATION
+    expect(game.setCityFocus(other.id, 0, -2)).toBe(false)
+    expect(game.setCityFocus(human.id, 0, -1)).toBe(true)
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * people * 2)
+    expect(game.setCityFocus(human.id, 0, -2)).toBe(true)
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * people * 4)
+    game.setCityFocus(human.id, 0, 1)
+    expect(game.creditIncome(human.id)).toBe(CREDIT_PER_POPULATION * people)
+    const grown = game.cityStates()[0].grown
+    game.setCityFocus(human.id, 0, 2)
+    game.tick(CITY_GROW_SECONDS)
+    expect(game.cityStates()[0].grown).toBe(grown + 4)
+    const neutral = cityGame()
+    neutral.addPlayer()
+    neutral.tick(CITY_GROW_SECONDS)
+    expect(neutral.cityStates()[0].grown).toBe(0)
+  })
+
+  it('grows a city ten times faster when INSTANT=1', () => {
+    const previous = process.env.INSTANT
+    process.env.INSTANT = '1'
+    try {
+      const game = cityGame()
+      const human = game.addPlayer()
+      game.claimCity(game.scenery.towns[0], human.id)
+      game.tick(CITY_GROW_SECONDS / 10 - 1 / 30)
+      expect(game.cityStates()[0].grown).toBe(0)
+      game.tick(1 / 30)
+      expect(game.cityStates()[0].grown).toBe(1)
+    } finally {
+      if (previous === undefined) delete process.env.INSTANT
+      else process.env.INSTANT = previous
+    }
   })
 })
 
@@ -473,11 +530,16 @@ function nextToStreet(building: { x: number; y: number }, roads: readonly { x: n
   return roads.some((road) => Math.max(Math.abs(road.x - building.x), Math.abs(road.y - building.y)) <= 2)
 }
 
-function nearestBuilding(road: { x: number; y: number }, buildings: readonly { x: number; y: number }[]): number {
+function nearestBuilding(road: { x: number; y: number }, buildings: readonly { x: number; y: number; keep?: boolean }[]): number {
   let best = Infinity
   for (const building of buildings) {
-    const dist = Math.abs(road.x - building.x) + Math.abs(road.y - building.y)
-    if (dist < best) best = dist
+    const span = building.keep ? HALL_SPAN : 1
+    for (let y = 0; y < span; y++) {
+      for (let x = 0; x < span; x++) {
+        const dist = Math.abs(road.x - (building.x + x)) + Math.abs(road.y - (building.y + y))
+        if (dist < best) best = dist
+      }
+    }
   }
   return best
 }

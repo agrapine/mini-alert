@@ -18,7 +18,6 @@ const CLIENT_KIND: Record<number, string> = {
   [ClientMessageKind.PlaceBuilding]: 'PlaceBuilding',
   [ClientMessageKind.CancelSpawn]: 'CancelSpawn',
   [ClientMessageKind.CancelBuilding]: 'CancelBuilding',
-  [ClientMessageKind.SetPrimary]: 'SetPrimary',
   [ClientMessageKind.SetRally]: 'SetRally',
   [ClientMessageKind.OrderAttackGround]: 'OrderAttackGround',
   [ClientMessageKind.PlaceCity]: 'PlaceCity',
@@ -39,7 +38,6 @@ const SERVER_KIND: Record<number, string> = {
   [ServerEventKind.Credits]: 'Credits',
   [ServerEventKind.Training]: 'Training',
   [ServerEventKind.Rally]: 'Rally',
-  [ServerEventKind.Primary]: 'Primary',
   [ServerEventKind.Yields]: 'Yields',
   [ServerEventKind.Trace]: 'Trace',
 }
@@ -60,6 +58,8 @@ const LOBBY_CLIENT_KIND: Record<number, string> = {
   [LobbyClientKind.SetAiPace]: 'SetAiPace',
   [LobbyClientKind.ClaimAdmin]: 'ClaimAdmin',
   [LobbyClientKind.DestroyGame]: 'DestroyGame',
+  [LobbyClientKind.SetLandform]: 'SetLandform',
+  [LobbyClientKind.SetLakes]: 'SetLakes',
 }
 
 const LOBBY_SERVER_KIND: Record<number, string> = {
@@ -152,7 +152,6 @@ function presentEvent(event: ServerEvent) {
       cities: event.cities.length,
       credits: event.credits,
       training: event.training,
-      primaryFactoryId: event.primaryFactoryId,
       rally: event.rally,
     }
   }

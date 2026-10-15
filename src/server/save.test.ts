@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  Landform,
   LobbyClientKind,
   LobbyServerKind,
   MapSize,
@@ -146,6 +147,10 @@ describe('saved games', () => {
     const created = latest<GameLobbyState>(sock, LobbyServerKind.GameLobby)
     lobby.onLobby(host, { kind: LobbyClientKind.SetMapSize, size: MapSize.Tiny })
     await settled()
+    lobby.onLobby(host, { kind: LobbyClientKind.SetLandform, landform: Landform.Land })
+    await settled()
+    lobby.onLobby(host, { kind: LobbyClientKind.SetLakes, lakes: 0.5 })
+    await settled()
     saveSaves(lobby, dir)
 
     const restored = new Lobby()
@@ -157,6 +162,8 @@ describe('saved games', () => {
     expect(room.gameId).toBe(created.gameId)
     expect(room.status).toBe(RoomStatus.Waiting)
     expect(room.mapSize).toBe(MapSize.Tiny)
+    expect(room.landform).toBe(Landform.Land)
+    expect(room.lakes).toBe(0.5)
     expect(room.hostId).toBe(host.id)
     const island = (restored as unknown as { games: Map<number, { island: { terrain: Uint8Array; width: number } | null }> }).games.get(created.gameId)?.island
     expect(island?.width).toBe(MapSize.Tiny)

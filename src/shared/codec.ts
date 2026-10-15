@@ -99,11 +99,9 @@ function encodeEvent(event: ServerEvent): WireFrame['events'][number] {
     case ServerEventKind.Credits:
       return packed('credits', { credits: event.credits })
     case ServerEventKind.Training:
-      return packed('training', { jobs: event.training.map((job) => ({ typeId: job.typeId, progress: job.progress })) })
+      return packed('training', { jobs: event.training.map((job) => ({ typeId: job.typeId, progress: job.progress, yardId: job.yardId })) })
     case ServerEventKind.Rally:
       return packed('rally', event.rally ? { set: true, x: event.rally.x, y: event.rally.y } : { set: false, x: 0, y: 0 })
-    case ServerEventKind.Primary:
-      return packed('primary', { id: event.primaryFactoryId })
     case ServerEventKind.Yields:
       return packed('yields', { points: event.yields.map(encodePoint) })
     case ServerEventKind.Trace:
@@ -157,12 +155,10 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
     case 'training':
       return [{
         kind: ServerEventKind.Training,
-        training: body.value.jobs.map((job) => ({ typeId: job.typeId as UnitTypeId, progress: job.progress })),
+        training: body.value.jobs.map((job) => ({ typeId: job.typeId as UnitTypeId, progress: job.progress, yardId: job.yardId })),
       }]
     case 'rally':
       return [{ kind: ServerEventKind.Rally, rally: body.value.set ? { x: body.value.x, y: body.value.y } : null }]
-    case 'primary':
-      return [{ kind: ServerEventKind.Primary, primaryFactoryId: body.value.id }]
     case 'yields':
       return [{ kind: ServerEventKind.Yields, yields: body.value.points.map(decodePoint) }]
     case 'trace':
@@ -176,22 +172,20 @@ function decodeEvent(event: WireEvent): ServerEvent[] {
   }
 }
 
-function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setPrimary'; value: { unitId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } | { case: 'ping'; value: Record<string, never> } {
+function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { unitIds: number[]; x: number; y: number } } | { case: 'spawn'; value: { typeId: number; yardId: number } } | { case: 'orderAttack'; value: { unitIds: number[]; targetId: number } } | { case: 'placeBuilding'; value: { typeId: number; x: number; y: number } } | { case: 'cancelSpawn'; value: { typeId: number; yardId: number } } | { case: 'cancelBuilding'; value: { typeId: number } } | { case: 'setRally'; value: { x: number; y: number } } | { case: 'orderAttackGround'; value: { unitIds: number[]; x: number; y: number } } | { case: 'placeCity'; value: { x: number; y: number } } | { case: 'requestSnapshot'; value: Record<string, never> } | { case: 'ping'; value: Record<string, never> } | { case: 'setCityFocus'; value: { index: number; focus: number } } {
   switch (message.kind) {
     case ClientMessageKind.OrderMove:
       return { case: 'orderMove', value: { unitIds: message.unitIds, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.Spawn:
-      return { case: 'spawn', value: { typeId: message.typeId } }
+      return { case: 'spawn', value: { typeId: message.typeId, yardId: message.yardId } }
     case ClientMessageKind.OrderAttack:
       return { case: 'orderAttack', value: { unitIds: message.unitIds, targetId: message.targetId } }
     case ClientMessageKind.PlaceBuilding:
       return { case: 'placeBuilding', value: { typeId: message.typeId, x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.CancelSpawn:
-      return { case: 'cancelSpawn', value: { typeId: message.typeId } }
+      return { case: 'cancelSpawn', value: { typeId: message.typeId, yardId: message.yardId } }
     case ClientMessageKind.CancelBuilding:
       return { case: 'cancelBuilding', value: { typeId: message.typeId } }
-    case ClientMessageKind.SetPrimary:
-      return { case: 'setPrimary', value: { unitId: message.unitId } }
     case ClientMessageKind.SetRally:
       return { case: 'setRally', value: { x: message.tile.x, y: message.tile.y } }
     case ClientMessageKind.OrderAttackGround:
@@ -202,6 +196,8 @@ function encodeClient(message: ClientMessage): { case: 'orderMove'; value: { uni
       return { case: 'requestSnapshot', value: {} }
     case ClientMessageKind.Ping:
       return { case: 'ping', value: {} }
+    case ClientMessageKind.SetCityFocus:
+      return { case: 'setCityFocus', value: { index: message.index, focus: message.focus } }
   }
 }
 
@@ -212,8 +208,8 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
     return { kind: ClientMessageKind.OrderMove, unitIds: [...value.unitIds], tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'spawn') {
-    const value = body.value as { typeId: number }
-    return { kind: ClientMessageKind.Spawn, typeId: value.typeId as UnitTypeId }
+    const value = body.value as { typeId: number; yardId: number }
+    return { kind: ClientMessageKind.Spawn, typeId: value.typeId as UnitTypeId, yardId: value.yardId }
   }
   if (body.case === 'orderAttack') {
     const value = body.value as { unitIds: number[]; targetId: number }
@@ -224,16 +220,12 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
     return { kind: ClientMessageKind.PlaceBuilding, typeId: value.typeId as UnitTypeId, tile: { x: value.x, y: value.y } }
   }
   if (body.case === 'cancelSpawn') {
-    const value = body.value as { typeId: number }
-    return { kind: ClientMessageKind.CancelSpawn, typeId: value.typeId as UnitTypeId }
+    const value = body.value as { typeId: number; yardId: number }
+    return { kind: ClientMessageKind.CancelSpawn, typeId: value.typeId as UnitTypeId, yardId: value.yardId }
   }
   if (body.case === 'cancelBuilding') {
     const value = body.value as { typeId: number }
     return { kind: ClientMessageKind.CancelBuilding, typeId: value.typeId as UnitTypeId }
-  }
-  if (body.case === 'setPrimary') {
-    const value = body.value as { unitId: number }
-    return { kind: ClientMessageKind.SetPrimary, unitId: value.unitId }
   }
   if (body.case === 'setRally') {
     const value = body.value as { x: number; y: number }
@@ -249,6 +241,10 @@ function decodeClient(command: { body: { case: string | undefined; value?: unkno
   }
   if (body.case === 'requestSnapshot') return { kind: ClientMessageKind.RequestSnapshot }
   if (body.case === 'ping') return { kind: ClientMessageKind.Ping }
+  if (body.case === 'setCityFocus') {
+    const value = body.value as { index: number; focus: number }
+    return { kind: ClientMessageKind.SetCityFocus, index: value.index, focus: value.focus }
+  }
   return null
 }
 
@@ -258,8 +254,7 @@ function encodeSnapshot(event: Extract<ServerEvent, { kind: ServerEventKind.Snap
     units: event.units.map(encodeUnit),
     cities: event.cities.map(encodeCity),
     credits: event.credits,
-    training: event.training.map((job) => ({ typeId: job.typeId, progress: job.progress })),
-    primaryFactoryId: event.primaryFactoryId,
+    training: event.training.map((job) => ({ typeId: job.typeId, progress: job.progress, yardId: job.yardId })),
     rallySet: event.rally !== null,
     rallyX: event.rally?.x ?? 0,
     rallyY: event.rally?.y ?? 0,
@@ -272,8 +267,7 @@ function decodeSnapshot(message: SnapshotMsg): Omit<Extract<ServerEvent, { kind:
     units: message.units.map(decodeUnit),
     cities: message.cities.map(decodeCity),
     credits: message.credits,
-    training: message.training.map((job) => ({ typeId: job.typeId as UnitTypeId, progress: job.progress })),
-    primaryFactoryId: message.primaryFactoryId,
+    training: message.training.map((job) => ({ typeId: job.typeId as UnitTypeId, progress: job.progress, yardId: job.yardId })),
     rally: message.rallySet ? { x: message.rallyX, y: message.rallyY } : null,
   }
 }
@@ -308,6 +302,7 @@ function encodeUnit(unit: UnitSnapshot): UnitMotionMsg {
     orbitX: unit.orbit?.x ?? 0,
     orbitY: unit.orbit?.y ?? 0,
     bay: unit.bay ?? -1,
+    rounds: unit.rounds ?? 0,
   } as UnitMotionMsg
 }
 
@@ -337,6 +332,7 @@ function decodeUnit(unit: UnitMotionMsg): UnitSnapshot {
     altitude: unit.altitude,
     orbit: unit.orbitSet ? { x: unit.orbitX, y: unit.orbitY } : null,
     bay: unit.bay,
+    rounds: unit.rounds,
   }
 }
 
@@ -364,6 +360,7 @@ function encodeCityState(state: CityState): CityStateMsg {
     challengerId: state.challengerId,
     challengerColor: state.challengerColor,
     grown: state.grown,
+    focus: state.focus ?? 0,
     ruins: packTiles(state.ruins),
     sites: state.sites.map((site) => ({ x: site.x, y: site.y, model: site.model, yaw: site.yaw, at: site.at })),
   } as CityStateMsg
@@ -377,6 +374,7 @@ function decodeCityState(state: CityStateMsg): CityState {
     challengerId: state.challengerId,
     challengerColor: state.challengerColor,
     grown: state.grown,
+    focus: state.focus,
     ruins: unpackTiles(state.ruins),
     sites: state.sites.map((site) => ({ x: site.x, y: site.y, model: site.model, yaw: site.yaw, at: site.at })),
   }
@@ -517,5 +515,5 @@ function emptyMap(): MapData {
 }
 
 function emptyCity(): CityState {
-  return { ownerId: 0, color: 0, progress: 0, challengerId: 0, challengerColor: 0, grown: 0, ruins: [], sites: [] }
+  return { ownerId: 0, color: 0, progress: 0, challengerId: 0, challengerColor: 0, grown: 0, focus: 0, ruins: [], sites: [] }
 }

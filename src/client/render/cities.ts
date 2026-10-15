@@ -1,20 +1,26 @@
 import {
   Box3,
   BufferGeometry,
+  ClampToEdgeWrapping,
+  DataTexture,
   Group,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  NearestFilter,
+  NoColorSpace,
   Quaternion,
+  RedFormat,
   RingGeometry,
   SRGBColorSpace,
   TextureLoader,
+  UnsignedByteType,
   Vector3,
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { CITY_CATALOG, NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
+import { CITY_CATALOG, eachBuildingTile, HALL_SCALE, HALL_SPAN, NEUTRAL_CITY, StreetKind, type CityLayout } from '../../shared/cities.ts'
 import type { CityState } from '../../shared/protocol.ts'
 import { TILE_TOP } from './terrain.ts'
 
@@ -64,6 +70,7 @@ type CityView = {
   owner: { value: number }
   team: Vector3
   buildingMaterial: MeshStandardMaterial
+  roadMaterial: MeshStandardMaterial
   cluster: Group
   track: Mesh
   trackMaterial: MeshBasicMaterial
@@ -74,8 +81,8 @@ type CityView = {
 
 type Kit = {
   streetsMaterial: MeshStandardMaterial
-  neutralMaterial: MeshStandardMaterial
   buildingTexture: MeshStandardMaterial['map']
+  swatches: DataTexture
   buildings: BufferGeometry[]
   streets: BufferGeometry[]
 }
@@ -95,10 +102,10 @@ export class CityLayer {
     buildingTexture.colorSpace = SRGBColorSpace
     buildingTexture.flipY = true
     const streetsMaterial = new MeshStandardMaterial({ map: streetTexture, roughness: 0.82, metalness: 0 })
-    const neutralMaterial = new MeshStandardMaterial({ map: buildingTexture, roughness: 0.82, metalness: 0 })
+    const swatches = swatchTexture()
     const buildings = await Promise.all(CITY_CATALOG.map((entry) => loadKenney(catalogUrl(entry.name))))
     const streets = await Promise.all(STREET_URLS.map((url, index) => loadFitted(url, index >= StreetKind.Lamp ? 'prop' : 'road')))
-    this.kit = { streetsMaterial, neutralMaterial, buildingTexture, buildings, streets }
+    this.kit = { streetsMaterial, buildingTexture, swatches, buildings, streets }
     this.present(this.pendingLayouts, this.pendingStates)
   }
 
@@ -132,7 +139,8 @@ export class CityLayer {
   private makeView(layout: CityLayout, kit: Kit): CityView {
     const owner = { value: 0 }
     const team = new Vector3(1, 1, 1)
-    const buildingMaterial = teamMaterial(kit.buildingTexture, owner, team)
+    const buildingMaterial = teamMaterial(kit.buildingTexture, kit.swatches, owner, team)
+    const roadMaterial = roadMaterialOf(kit.streetsMaterial.map, owner, team)
     const cluster = new Group()
     const trackMaterial = new MeshBasicMaterial({
       color: NEUTRAL_CITY,
@@ -166,13 +174,14 @@ export class CityLayer {
       siteKey: '',
       owner,
       team,
+      buildingMaterial,
+      roadMaterial,
       cluster,
       track,
       trackMaterial,
       ring,
       ringMaterial,
       shown: 0,
-      buildingMaterial,
     }
   }
 
@@ -184,23 +193,44 @@ export class CityLayer {
       view.cluster.remove(child)
       if (child instanceof Mesh) child.geometry.dispose()
     }
-    const streets: BufferGeometry[] = []
+    const roads: BufferGeometry[] = []
+    const props: BufferGeometry[] = []
     const teams: BufferGeometry[] = []
     const keeps: BufferGeometry[] = []
+    const teamPlots: { x: number; y: number }[] = []
+    const keepPlots: { x: number; y: number }[] = []
     for (const street of view.layout.streets) {
       const model = kit.streets[street.kind] ?? kit.streets[0]
       const lift = street.kind >= StreetKind.Lamp ? 0.06 : 0.015
-      streets.push(placeGeometry(model, street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz, street.yaw * (Math.PI / 2)))
+      const geometry = placeGeometry(model, street.x + 0.5 + street.ox, TILE_TOP + lift, street.y + 0.5 + street.oz, street.yaw * (Math.PI / 2))
+      if (street.kind >= StreetKind.Lamp) props.push(geometry)
+      else roads.push(geometry)
     }
     for (const building of view.layout.buildings) {
       const model = kit.buildings[building.model] ?? kit.buildings[0]
-      const geometry = placeGeometry(model, building.x + 0.5, TILE_TOP + 0.06, building.y + 0.5, building.yaw * (Math.PI / 2))
-      if (building.keep) keeps.push(geometry)
-      else teams.push(geometry)
+      const span = building.keep ? HALL_SPAN : 1
+      const geometry = placeGeometry(
+        model,
+        building.x + span / 2,
+        TILE_TOP + 0.06,
+        building.y + span / 2,
+        building.yaw * (Math.PI / 2),
+        building.keep ? HALL_SCALE : 1,
+      )
+      const plots: { x: number; y: number }[] = []
+      eachBuildingTile(building, (x, y) => plots.push({ x, y }))
+      if (building.keep) {
+        keeps.push(geometry)
+        keepPlots.push(...plots)
+      } else {
+        teams.push(geometry)
+        teamPlots.push(...plots)
+      }
     }
-    addMerged(view.cluster, streets, kit.streetsMaterial)
-    addMerged(view.cluster, teams, view.buildingMaterial)
-    addMerged(view.cluster, keeps, kit.neutralMaterial)
+    addMerged(view.cluster, roads, view.roadMaterial)
+    addMerged(view.cluster, props, kit.streetsMaterial)
+    addMerged(view.cluster, teams, view.buildingMaterial, teamPlots)
+    addMerged(view.cluster, keeps, view.buildingMaterial, keepPlots)
     const center = blobCenter(view.layout)
     const reach = Math.max(view.layout.span, Math.ceil(Math.sqrt(view.layout.tiles.length)))
     if (view.ring.userData.reach !== reach) {
@@ -270,8 +300,52 @@ function blobCenter(layout: CityLayout): { x: number; z: number } {
   return { x: x / count, z: z / count }
 }
 
-function teamMaterial(map: MeshStandardMaterial['map'], owner: { value: number }, team: Vector3): MeshStandardMaterial {
+const SWATCH_COUNT = 32
+
+function teamMaterial(
+  map: MeshStandardMaterial['map'],
+  swatches: DataTexture,
+  owner: { value: number },
+  team: Vector3,
+): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ map, roughness: 0.82, metalness: 0 })
+  material.customProgramCacheKey = () => 'city-swatch'
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.cityOwner = owner
+    shader.uniforms.teamColor = { value: team }
+    shader.uniforms.swatchMap = { value: swatches }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        uniform float cityOwner;
+        uniform vec3 teamColor;
+        uniform sampler2D swatchMap;`,
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#ifdef USE_MAP
+          float col = clamp(floor(vMapUv.x * 8.0), 0.0, 7.0);
+          float row = clamp(floor(vMapUv.y * 4.0), 0.0, 3.0);
+          float cell = col + row * 8.0;
+          vec2 local = fract(vec2(vMapUv.x * 8.0, vMapUv.y * 4.0));
+          float dest = floor(texture2D(swatchMap, vec2((cell + 0.5) / 32.0, (cityOwner + 0.5) / 2.0)).r * 255.0 + 0.5);
+          vec2 sampleUv = (vec2(mod(dest, 8.0), floor(dest / 8.0)) + local) / vec2(8.0, 4.0);
+          vec4 sampledDiffuseColor = texture2D(map, sampleUv);
+          if (cityOwner > 0.5 && abs(dest - cell) > 0.5) {
+            float shade = max(sampledDiffuseColor.r, max(sampledDiffuseColor.g, sampledDiffuseColor.b));
+            sampledDiffuseColor.rgb = teamColor * shade;
+          }
+          diffuseColor *= sampledDiffuseColor;
+        #endif`,
+      )
+  }
+  return material
+}
+
+function roadMaterialOf(map: MeshStandardMaterial['map'], owner: { value: number }, team: Vector3): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({ map, roughness: 0.82, metalness: 0 })
+  material.customProgramCacheKey = () => 'city-road-paint'
   material.onBeforeCompile = (shader) => {
     shader.uniforms.cityOwner = owner
     shader.uniforms.teamColor = { value: team }
@@ -288,13 +362,42 @@ function teamMaterial(map: MeshStandardMaterial['map'], owner: { value: number }
           vec4 sampledDiffuseColor = texture2D(map, vMapUv);
           if (cityOwner > 0.5) {
             float shade = max(sampledDiffuseColor.r, max(sampledDiffuseColor.g, sampledDiffuseColor.b));
-            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, teamColor * shade, 0.35);
+            float chroma = shade - min(sampledDiffuseColor.r, min(sampledDiffuseColor.g, sampledDiffuseColor.b));
+            float paint = max(smoothstep(0.08, 0.2, chroma), smoothstep(0.35, 0.55, shade));
+            sampledDiffuseColor.rgb = mix(teamColor * shade, sampledDiffuseColor.rgb, paint);
           }
           diffuseColor *= sampledDiffuseColor;
         #endif`,
       )
   }
   return material
+}
+
+function swatchTexture(): DataTexture {
+  const data = new Uint8Array(SWATCH_COUNT * 2)
+  writePalette(data, 0, [cell(1, 3)])
+  writePalette(data, 1, [cell(1, 3), cell(2, 3), cell(3, 3), cell(4, 3)])
+  const texture = new DataTexture(data, SWATCH_COUNT, 2, RedFormat, UnsignedByteType)
+  texture.colorSpace = NoColorSpace
+  texture.magFilter = NearestFilter
+  texture.minFilter = NearestFilter
+  texture.wrapS = ClampToEdgeWrapping
+  texture.wrapT = ClampToEdgeWrapping
+  texture.flipY = false
+  texture.unpackAlignment = 1
+  texture.needsUpdate = true
+  return texture
+}
+
+function writePalette(data: Uint8Array, owner: number, palette: readonly number[]) {
+  const keep = new Set([cell(1, 3), cell(0, 3), cell(3, 3), cell(4, 3), cell(6, 2), cell(4, 1), cell(5, 1)])
+  for (let i = 0; i < SWATCH_COUNT; i++) {
+    data[owner * SWATCH_COUNT + i] = keep.has(i) ? i : palette[i % palette.length]
+  }
+}
+
+function cell(col: number, row: number): number {
+  return col + row * 8
 }
 
 function catalogUrl(name: string): string {
@@ -310,16 +413,22 @@ const placeQuaternion = new Quaternion()
 const placeScale = new Vector3(1, 1, 1)
 const placeUp = new Vector3(0, 1, 0)
 
-function placeGeometry(source: BufferGeometry, x: number, y: number, z: number, yaw: number): BufferGeometry {
+function placeGeometry(source: BufferGeometry, x: number, y: number, z: number, yaw: number, scale = 1): BufferGeometry {
   placePosition.set(x, y, z)
   placeQuaternion.setFromAxisAngle(placeUp, yaw)
+  placeScale.set(scale, scale, scale)
   placeMatrix.compose(placePosition, placeQuaternion, placeScale)
   const geometry = source.clone()
   geometry.applyMatrix4(placeMatrix)
   return geometry
 }
 
-function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandardMaterial) {
+function addMerged(
+  group: Group,
+  parts: BufferGeometry[],
+  material: MeshStandardMaterial,
+  plots?: readonly { x: number; y: number }[],
+) {
   if (parts.length === 0) return
   let geometry = parts[0]
   if (parts.length > 1) {
@@ -328,17 +437,22 @@ function addMerged(group: Group, parts: BufferGeometry[], material: MeshStandard
       for (const part of parts) part.dispose()
       geometry = merged
     } else {
-      for (const part of parts) group.add(staticMesh(part, material))
+      for (const part of parts) group.add(staticMesh(part, material, plots))
       return
     }
   }
-  group.add(staticMesh(geometry, material))
+  group.add(staticMesh(geometry, material, plots))
 }
 
-function staticMesh(geometry: BufferGeometry, material: MeshStandardMaterial): Mesh {
+function staticMesh(
+  geometry: BufferGeometry,
+  material: MeshStandardMaterial,
+  plots?: readonly { x: number; y: number }[],
+): Mesh {
   geometry.computeBoundingSphere()
   const mesh = new Mesh(geometry, material)
   mesh.matrixAutoUpdate = false
+  if (plots) mesh.userData.plots = plots
   return mesh
 }
 

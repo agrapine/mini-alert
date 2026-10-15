@@ -11,11 +11,10 @@ import { Replica } from './client/replica.ts'
 import { seatLink } from './client/seat.ts'
 import { GameView } from './client/render/view.ts'
 import { bindTrace } from './client/trace-pie.ts'
-import { populationOf } from './shared/cities.ts'
+import { HALL_SPAN, populationOf } from './shared/cities.ts'
 import { baysFree } from './shared/flight.ts'
 import { LobbyClientKind, LobbyServerKind, RoomStatus, type Faction, type MapPreview } from './shared/lobby.ts'
 import { ClientMessageKind, ServerEventKind, type ClientPort, type TrainJob, type UnitSnapshot } from './shared/protocol.ts'
-import type { TileCoord } from './shared/tiles.ts'
 import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, Locomotion, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf } from './shared/unit-types.ts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')
@@ -124,6 +123,14 @@ const lobby = new LobbyView(lobbyRoot, {
     lobby.setBusy(true)
     net.sendLobby({ kind: LobbyClientKind.SetMapSize, size })
   },
+  setLandform(landform) {
+    lobby.setBusy(true)
+    net.sendLobby({ kind: LobbyClientKind.SetLandform, landform })
+  },
+  setLakes(lakes) {
+    lobby.setBusy(true)
+    net.sendLobby({ kind: LobbyClientKind.SetLakes, lakes })
+  },
   regenerate() {
     lobby.setBusy(true)
     net.sendLobby({ kind: LobbyClientKind.Regenerate })
@@ -213,7 +220,7 @@ net.onGame = (frame) => {
   replica.apply(frame)
   const welcome = frame.events.find((event) => event.kind === ServerEventKind.Welcome)
   if (welcome && spectating && welcome.playerId !== previous) {
-    live.view?.forgetVision()
+    live.view?.forgetVision(replica.world?.known)
     player.select(null)
     aimed = false
     paintVision()
@@ -358,18 +365,40 @@ const population = document.querySelector<HTMLElement>('#population')
 const cities = document.querySelector<HTMLElement>('#cities')
 const ping = document.querySelector<HTMLElement>('#ping')
 const orders = document.querySelector<HTMLElement>('#orders')
+const cityFocus = document.querySelector<HTMLElement>('#city-focus')
+const cityFocusLabel = document.querySelector<HTMLElement>('#city-focus-label')
+const cityFocusRange = document.querySelector<HTMLInputElement>('#city-focus-range')
+const FOCUS_LABEL = ['Money ×4', 'Money ×2', 'Balanced', 'Growth ×2', 'Growth ×4']
 const fullscreen = document.querySelector<HTMLButtonElement>('#fullscreen')
 const NEEDS_FACTORY = new Set<UnitTypeId>([UnitTypeId.Airport, UnitTypeId.Helipad, UnitTypeId.Shipyard])
+const TRAINABLE = [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY, JET, GUNSHIP, CRUISER]
 const tiles: OrderTile[] = []
+let queueSplit: HTMLElement | null = null
 if (orders) {
   for (const type of [FACTORY, TURRET, AIRPORT, HELIPAD, SHIPYARD]) {
-    tiles.push(createTile(orders, type.id, false, type.label, type.cost, () => player.armBuilding(type.id), () => player.cancelBuild(type.id)))
+    tiles.push(createTile(orders, type.id, false, false, type.label, type.cost, () => player.armBuilding(type.id), () => player.cancelBuild(type.id)))
   }
-  tiles.push(createTile(orders, null, false, 'Building', 0, () => player.armCity()))
-  for (const type of [SCOUT, MED_TANK, HEAVY_TANK, ARTILLERY, JET, GUNSHIP, CRUISER]) {
-    tiles.push(createTile(orders, type.id, true, type.label, type.cost, () => player.spawn(type.id), () => player.cancelSpawn(type.id)))
+  tiles.push(createTile(orders, null, false, false, 'Building', 0, () => player.armCity()))
+  for (const type of TRAINABLE) {
+    tiles.push(createTile(orders, type.id, true, false, type.label, type.cost, () => player.spawn(type.id), () => {
+      const yard = player.productionYard()
+      if (yard) player.cancelSpawn(type.id, yard.id)
+    }))
+  }
+  queueSplit = document.createElement('div')
+  queueSplit.className = 'queue-split'
+  queueSplit.textContent = 'Queued: '
+  queueSplit.hidden = true
+  orders.append(queueSplit)
+  for (const type of TRAINABLE) {
+    tiles.push(createTile(orders, type.id, true, true, type.label, type.cost, () => player.cancelSpawn(type.id), () => player.cancelSpawn(type.id)))
   }
 }
+cityFocusRange?.addEventListener('input', () => {
+  const step = Number(cityFocusRange.value)
+  if (cityFocusLabel) cityFocusLabel.textContent = FOCUS_LABEL[step + 2] ?? 'Balanced'
+  player.setCityFocus(step)
+})
 fullscreen?.addEventListener('click', () => {
   if (document.fullscreenElement) void document.exitFullscreen()
   else void document.documentElement.requestFullscreen()
@@ -422,6 +451,14 @@ const refreshHud = (dt: number) => {
   }
   if (population) population.textContent = String(held.population)
   if (cities) cities.textContent = String(held.cities)
+  const hall = player.selectedCity()
+  if (orders) orders.hidden = hall !== null
+  if (cityFocus) cityFocus.hidden = hall === null
+  if (hall !== null && cityFocusRange && cityFocusLabel && document.activeElement !== cityFocusRange) {
+    const step = replica.cities[hall]?.focus ?? 0
+    cityFocusRange.value = String(step)
+    cityFocusLabel.textContent = FOCUS_LABEL[step + 2] ?? 'Balanced'
+  }
   if (ping) {
     const rtt = net.rtt
     ping.textContent = rtt === null ? '–' : `${Math.round(rtt)} ms`
@@ -432,37 +469,52 @@ const refreshHud = (dt: number) => {
   for (const unit of own) {
     if (unit.progress >= 1 && UNIT_TYPES[unit.typeId].topSpeed <= 0) ready.add(unit.typeId)
   }
-  const head = queue[0]
+  const yard = player.productionYard()
   const armed = player.placingType()
   const pending = structureQueue()
   const quoted = player.raisingCity() ? replica.cityBuildCost(player.aimedTile()) : null
+  const yardJobs = tallyJobs(queue, yard?.id)
+  const allJobs = tallyJobs(queue)
+  if (queueSplit) queueSplit.hidden = !allJobs.any
   for (const entry of tiles) {
+    if (entry.queue) {
+      const count = entry.id === null ? 0 : (allJobs.count.get(entry.id) ?? 0)
+      const progress = entry.id === null ? 0 : (allJobs.progress.get(entry.id) ?? 0)
+      paintTile(entry, count, progress, count > 0, count > 0)
+      continue
+    }
+    if (yard) {
+      if (!entry.train || entry.id === null || yardOf(entry.id) !== yard.typeId) {
+        entry.button.hidden = true
+        continue
+      }
+      const count = yardJobs.count.get(entry.id) ?? 0
+      const progress = yardJobs.progress.get(entry.id) ?? 0
+      const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
+      const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, queue, yard) > 0)
+      paintTile(entry, count, progress, yard.progress >= 1 && room, true)
+      continue
+    }
+    if (entry.train) {
+      entry.button.hidden = true
+      continue
+    }
     if (entry.id === null) {
       entry.cost.textContent = costLine(quoted ?? 0, 1)
       paintTile(entry, 0, 0, true, true, player.raisingCity())
       continue
     }
-    const training = entry.train
-    let count = 0
-    let progress = 0
-    if (training) {
-      for (const job of queue) if (job.typeId === entry.id) count += 1
-      progress = head?.typeId === entry.id ? head.progress : 0
-    } else {
-      const site = pending.get(entry.id)
-      count = site?.count ?? 0
-      progress = site?.progress ?? 0
-    }
-    const gate = training ? ready.has(yardOf(entry.id)) : !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
+    const site = pending.get(entry.id)
+    const gate = !NEEDS_FACTORY.has(entry.id) || ready.has(UnitTypeId.Factory)
     const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
-    const room = supplyRoom && (entry.id !== UnitTypeId.Jet || jetApron(own, queue) > 0)
-    paintTile(entry, count, progress, gate && room, gate || count > 0 || progress > 0, !training && armed === entry.id)
+    paintTile(entry, site?.count ?? 0, site?.progress ?? 0, gate && supplyRoom, gate || (site?.count ?? 0) > 0 || (site?.progress ?? 0) > 0, armed === entry.id)
   }
 }
 
 type OrderTile = {
   id: UnitTypeId | null
   train: boolean
+  queue: boolean
   button: HTMLButtonElement
   ring: HTMLElement
   badge: HTMLElement
@@ -473,6 +525,7 @@ function createTile(
   bar: HTMLElement,
   id: UnitTypeId | null,
   train: boolean,
+  queue: boolean,
   name: string,
   cost: number,
   onAdd: () => void,
@@ -482,7 +535,7 @@ function createTile(
   button.type = 'button'
   button.className = `tile ${tileKind(id)}`
   button.title = name
-  button.hidden = train || (id !== null && NEEDS_FACTORY.has(id))
+  button.hidden = queue || train || (id !== null && NEEDS_FACTORY.has(id))
   const pie = document.createElement('span')
   pie.className = 'pie'
   const label = document.createElement('span')
@@ -496,7 +549,7 @@ function createTile(
   badge.hidden = true
   button.append(pie, label, price, badge)
   button.addEventListener('click', (event) => {
-    if (event.shiftKey) {
+    if (queue || event.shiftKey) {
       onRemove?.()
       return
     }
@@ -508,7 +561,7 @@ function createTile(
     onRemove?.()
   })
   bar.append(button)
-  return { id, train, button, ring: pie, badge, cost: price }
+  return { id, train, queue, button, ring: pie, badge, cost: price }
 }
 
 function paintTile(entry: OrderTile, count: number, progress: number, enabled: boolean, visible: boolean, armed = false) {
@@ -524,19 +577,32 @@ function paintTile(entry: OrderTile, count: number, progress: number, enabled: b
   entry.button.classList.toggle('armed', armed)
 }
 
-function jetApron(own: readonly UnitSnapshot[], training: readonly TrainJob[]): number {
-  const pads: TileCoord[] = []
+function jetApron(own: readonly UnitSnapshot[], training: readonly TrainJob[], airport: UnitSnapshot): number {
   const parked: { x: number; y: number; bay: number }[] = []
   for (const unit of own) {
-    if (unit.health <= 0) continue
-    if (unit.typeId === UnitTypeId.Airport && unit.progress >= 1) pads.push({ x: unit.tileX, y: unit.tileY })
-    if (unit.typeId === UnitTypeId.Jet && unit.home && (unit.bay ?? -1) >= 0) {
-      parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay ?? -1 })
-    }
+    if (unit.health <= 0 || unit.typeId !== UnitTypeId.Jet || !unit.home || (unit.bay ?? -1) < 0) continue
+    if (unit.home.x !== airport.tileX || unit.home.y !== airport.tileY) continue
+    parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay ?? -1 })
   }
   let queued = 0
-  for (const job of training) if (job.typeId === UnitTypeId.Jet) queued += 1
-  return baysFree(pads, parked) - queued
+  for (const job of training) if (job.typeId === UnitTypeId.Jet && job.yardId === airport.id) queued += 1
+  return baysFree([{ x: airport.tileX, y: airport.tileY }], parked) - queued
+}
+
+function tallyJobs(jobs: readonly TrainJob[], yardId?: number): { count: Map<UnitTypeId, number>; progress: Map<UnitTypeId, number>; any: boolean } {
+  const count = new Map<UnitTypeId, number>()
+  const progress = new Map<UnitTypeId, number>()
+  const heads = new Set<number>()
+  let any = false
+  for (const job of jobs) {
+    if (yardId !== undefined && job.yardId !== yardId) continue
+    any = true
+    count.set(job.typeId, (count.get(job.typeId) ?? 0) + 1)
+    if (heads.has(job.yardId)) continue
+    heads.add(job.yardId)
+    if (job.progress > (progress.get(job.typeId) ?? 0)) progress.set(job.typeId, job.progress)
+  }
+  return { count, progress, any }
 }
 
 function structureQueue(): Map<UnitTypeId, { count: number; progress: number }> {
@@ -579,6 +645,10 @@ const frame = (now: number) => {
     view.update(frameDt)
     refreshHud(frameDt)
     view.showExpectedSites(replica.expectedSiteList())
+    const hallIndex = player.selectedCity()
+    const hallLayout = hallIndex === null ? null : replica.settledLayouts()[hallIndex]
+    const hallBuilding = hallLayout?.buildings.find((building) => building.keep) ?? null
+    view.showHall(hallBuilding ? { x: hallBuilding.x + HALL_SPAN / 2, z: hallBuilding.y + HALL_SPAN / 2 } : null)
     view.render(
       replica.drawn(),
       player.selected(),
@@ -587,7 +657,6 @@ const frame = (now: number) => {
       replica.playerId,
       replica.cities,
       replica.settledLayouts(),
-      replica.shownPrimary(),
       replica.shownRally(),
       replica.cleared,
       replica.takeYields(),

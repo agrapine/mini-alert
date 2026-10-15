@@ -57,6 +57,7 @@ export class PropField {
   private generation = 0
   private width = 0
   private readonly trees = new Map<number, TreeSpot>()
+  private readonly plants = new Map<number, TreeSpot>()
   private readonly spots: Record<PropName, Spot[]> = {
     tree: [],
     'tree-high': [],
@@ -89,9 +90,15 @@ export class PropField {
     return fell
   }
 
+  hideStale(world: WorldSnapshot) {
+    this.dropMissing(this.trees, world, Terrain.Tree)
+    this.dropMissing(this.plants, world, Terrain.Flowers)
+  }
+
   private scatter(world: WorldSnapshot, kit: Kit) {
     this.width = world.width
     this.trees.clear()
+    this.plants.clear()
     for (const child of this.root.children) {
       if (child instanceof InstancedMesh) child.dispose()
     }
@@ -125,10 +132,24 @@ export class PropField {
         dummy.updateMatrix()
         mesh.setMatrixAt(i, dummy.matrix)
         if (tree) this.trees.set(spot.y * width + spot.x, { mesh, index: i, hidden: false })
+        else if (name === 'plant') this.plants.set(spot.y * width + spot.x, { mesh, index: i, hidden: false })
       }
       mesh.instanceMatrix.needsUpdate = true
       mesh.computeBoundingSphere()
       this.root.add(mesh)
+    }
+  }
+
+  private dropMissing(spots: Map<number, TreeSpot>, world: WorldSnapshot, terrain: Terrain) {
+    for (const [index, spot] of spots) {
+      if (spot.hidden || world.terrain[index] === terrain) continue
+      spot.hidden = true
+      dummy.position.set(0, 0, 0)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(0, 0, 0)
+      dummy.updateMatrix()
+      spot.mesh.setMatrixAt(spot.index, dummy.matrix)
+      spot.mesh.instanceMatrix.needsUpdate = true
     }
   }
 }

@@ -1,4 +1,4 @@
-import { buildingCost, canPlaceCityBuilding, cityContains, footprintNearCity, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
+import { buildingCost, canPlaceCityBuilding, cityContains, eachBuildingTile, footprintNearCity, HALL_SPAN, populationOf, settledCity, type CityLayout } from '../shared/cities.ts'
 import { footprintCovers, tileOccupied } from '../shared/footprint.ts'
 import { flightLine, SIM_STEP, SNAPSHOT_GAP, stepMotion, timeScale, turnToward, wrapAngle, type MotionState } from '../shared/motion.ts'
 import {
@@ -55,7 +55,6 @@ export class Replica {
   training: TrainJob[] = []
   cities: (CityState | null)[] = []
   layouts: (CityLayout | null)[] = []
-  primaryFactoryId = 0
   rally: TileCoord | null = null
   cleared: TileCoord[] = []
   serverTick = 0
@@ -87,12 +86,11 @@ export class Replica {
   private askedTick = -SNAPSHOT_GAP
   private readonly shown = new Map<number, Shown>()
   private frameOccupancy: Map<string, number> | null = null
-  private expectedTraining: { seq: number; typeId: UnitTypeId }[] = []
+  private expectedTraining: { seq: number; typeId: UnitTypeId; yardId: number }[] = []
   private expectedRally: { seq: number; tile: TileCoord } | null = null
-  private expectedPrimary: { seq: number; id: number } | null = null
   private expectedSites: (ExpectedSite & { seq: number })[] = []
   private trainingTick = 0
-  private trainingRate = 0
+  private readonly trainingRate = new Map<number, number>()
   private readonly drawnUnits: UnitSnapshot[] = []
   private drawPass = 0
 
@@ -104,7 +102,7 @@ export class Replica {
     this.training = []
     this.cities = []
     this.layouts = []
-    this.primaryFactoryId = 0
+    this.trainingRate.clear()
     this.rally = null
     this.cleared = []
     this.serverTick = 0
@@ -155,40 +153,35 @@ export class Replica {
     this.settle(frame.ack)
   }
 
-  expectTraining(seq: number, typeId: UnitTypeId) {
-    this.expectedTraining.push({ seq, typeId })
+  expectTraining(seq: number, typeId: UnitTypeId, yardId: number) {
+    this.expectedTraining.push({ seq, typeId, yardId })
   }
 
   expectRally(seq: number, tile: TileCoord) {
     this.expectedRally = { seq, tile }
   }
 
-  expectPrimary(seq: number, id: number) {
-    this.expectedPrimary = { seq, id }
-  }
-
   expectSite(seq: number, site: ExpectedSite) {
     this.expectedSites.push({ seq, ...site })
   }
 
-  /** The training queue, its head advanced at the rate the server last reported, with unanswered orders appended. */
+  /** Each building's queue, its head advanced at the rate the server last reported, with unanswered orders appended. */
   queue(): TrainJob[] {
     const elapsed = Math.max(0, this.localTick - this.trainingTick)
-    const jobs = this.training.map((job, index) =>
-      index === 0 && this.trainingRate > 0
-        ? { typeId: job.typeId, progress: Math.min(1, job.progress + this.trainingRate * elapsed) }
-        : job,
-    )
-    for (const job of this.expectedTraining) jobs.push({ typeId: job.typeId, progress: 0 })
+    const heads = new Set<number>()
+    const jobs = this.training.map((job) => {
+      if (heads.has(job.yardId)) return job
+      heads.add(job.yardId)
+      const rate = this.trainingRate.get(job.yardId) ?? 0
+      if (rate <= 0) return job
+      return { typeId: job.typeId, yardId: job.yardId, progress: Math.min(1, job.progress + rate * elapsed) }
+    })
+    for (const job of this.expectedTraining) jobs.push({ typeId: job.typeId, yardId: job.yardId, progress: 0 })
     return jobs
   }
 
   shownRally(): TileCoord | null {
     return this.expectedRally?.tile ?? this.rally
-  }
-
-  shownPrimary(): number {
-    return this.expectedPrimary?.id ?? this.primaryFactoryId
   }
 
   expectedSiteList(): readonly ExpectedSite[] {
@@ -199,7 +192,6 @@ export class Replica {
     this.expectedTraining = this.expectedTraining.filter((job) => job.seq > ack)
     this.expectedSites = this.expectedSites.filter((site) => site.seq > ack)
     if (this.expectedRally && this.expectedRally.seq <= ack) this.expectedRally = null
-    if (this.expectedPrimary && this.expectedPrimary.seq <= ack) this.expectedPrimary = null
   }
 
   advance(dt: number): boolean {
@@ -441,8 +433,8 @@ export class Replica {
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
-  /** Plans the move the server will plan for the same order, from what this player knows of the map. */
-  predictMove(unitIds: readonly number[], tile: TileCoord) {
+  /** Plans the move the server will plan for the same order, from what this player knows of the map. Returns each path's end tile. */
+  predictMove(unitIds: readonly number[], tile: TileCoord): TileCoord[] {
     const surface: UnitSnapshot[] = []
     for (const unit of this.ordered(unitIds)) {
       unit.attackId = null
@@ -451,15 +443,18 @@ export class Replica {
       if (type.topSpeed > 0 && domainOf(type) !== MoveDomain.Air) surface.push(unit)
     }
     const map = this.routeMap()
-    if (!map || surface.length === 0) return
+    if (!map || surface.length === 0) return []
     const movers = surface.map((unit) => ({ id: unit.id, tile: { x: unit.tileX, y: unit.tileY }, domain: domainOf(UNIT_TYPES[unit.typeId]) }))
     const routes = planMoves(map, movers, tile)
+    const goals: TileCoord[] = []
     for (const unit of surface) {
       const path = routes.get(unit.id)
       if (!path || path.length === 0) continue
       unit.path = path
       unit.goal = { ...path[path.length - 1] }
+      goals.push(unit.goal)
     }
+    return goals
   }
 
   /** The map as this player knows it: unexplored tiles count as open, city buildings and units as the server stamps them. */
@@ -469,7 +464,13 @@ export class Replica {
     const { width, height } = world
     const blocked = new Uint8Array(width * height)
     for (const city of this.settledLayouts()) {
-      if (city) for (const building of city.buildings) blocked[building.y * width + building.x] = 1
+      if (city) {
+        for (const building of city.buildings) {
+          eachBuildingTile(building, (x, y) => {
+            if (x >= 0 && y >= 0 && x < width && y < height) blocked[y * width + x] = 1
+          })
+        }
+      }
     }
     const cleared = new Uint8Array(width * height)
     for (const tile of this.cleared) cleared[tile.y * width + tile.x] = 1
@@ -568,6 +569,27 @@ export class Replica {
     return this.evolved
   }
 
+  /** City index when this tile is the player's city hall. */
+  ownedHall(tile: TileCoord): number | null {
+    if (this.playerId === null) return null
+    const layouts = this.settledLayouts()
+    for (let i = 0; i < layouts.length; i++) {
+      const state = this.cities[i]
+      const layout = layouts[i]
+      if (!state || !layout || state.ownerId !== this.playerId) continue
+      const hall = layout.buildings.find((building) => building.keep)
+      if (!hall) continue
+      if (tile.x >= hall.x && tile.y >= hall.y && tile.x < hall.x + HALL_SPAN && tile.y < hall.y + HALL_SPAN) return i
+    }
+    return null
+  }
+
+  setCityFocus(index: number, focus: number) {
+    const state = this.cities[index]
+    if (!state || state.ownerId !== this.playerId) return
+    state.focus = focus
+  }
+
   private applyEvent(event: ServerFrame['events'][number], tick: number) {
     if (event.kind === ServerEventKind.Welcome) {
       this.playerId = event.playerId
@@ -582,9 +604,8 @@ export class Replica {
       this.units = event.units.map(copyUnit)
       this.credits = event.credits
       this.training = event.training
-      this.trainingRate = 0
+      this.trainingRate.clear()
       this.trainingTick = this.serverTick
-      this.primaryFactoryId = event.primaryFactoryId
       this.rally = event.rally
       this.installCities(event.cities, true)
       this.noteCleared(event.map.cleared, true)
@@ -641,21 +662,25 @@ export class Replica {
       return
     }
     if (event.kind === ServerEventKind.Training) {
-      const head = event.training[0]
-      const before = this.training[0]
       const ticks = tick - this.trainingTick
-      const same = head !== undefined && before !== undefined && head.typeId === before.typeId && ticks > 0
-      this.trainingRate = same ? Math.max(0, (head.progress - before.progress) / ticks) : 0
+      const before = new Map<number, TrainJob>()
+      for (const job of this.training) if (!before.has(job.yardId)) before.set(job.yardId, job)
+      this.trainingRate.clear()
+      const seen = new Set<number>()
+      if (ticks > 0) {
+        for (const job of event.training) {
+          if (seen.has(job.yardId)) continue
+          seen.add(job.yardId)
+          const prior = before.get(job.yardId)
+          if (prior && prior.typeId === job.typeId) this.trainingRate.set(job.yardId, Math.max(0, (job.progress - prior.progress) / ticks))
+        }
+      }
       this.trainingTick = tick
       this.training = event.training
       return
     }
     if (event.kind === ServerEventKind.Rally) {
       this.rally = event.rally
-      return
-    }
-    if (event.kind === ServerEventKind.Primary) {
-      this.primaryFactoryId = event.primaryFactoryId
       return
     }
     if (event.kind === ServerEventKind.Yields) this.pendingYields.push(...event.yields)
@@ -690,6 +715,7 @@ export class Replica {
     unit.altitude = next.altitude ?? 0
     unit.orbit = next.orbit ? { x: next.orbit.x, y: next.orbit.y } : null
     unit.bay = next.bay ?? -1
+    unit.rounds = next.rounds ?? unit.rounds
     const behind = Math.min(REPLAY_LIMIT, this.localTick - tick)
     if (behind > 0) {
       const occupied = this.frameOccupancy ?? (this.frameOccupancy = this.occupancy())
@@ -879,7 +905,7 @@ export class Replica {
     const blocked = new Set<string>()
     for (const city of this.evolved) {
       if (!city) continue
-      for (const building of city.buildings) blocked.add(`${building.x},${building.y}`)
+      for (const building of city.buildings) eachBuildingTile(building, (x, y) => blocked.add(`${x},${y}`))
     }
     this.blockedBuildings = blocked
     this.settledRevision = this.cityRevision

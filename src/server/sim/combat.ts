@@ -1,6 +1,6 @@
 import { flightTime } from '../../shared/ballistics.ts'
 import { CITY_SIGHT } from '../../shared/cities.ts'
-import { planeInFlight } from '../../shared/flight.ts'
+import { airborne, planeInFlight } from '../../shared/flight.ts'
 import { turnToward } from '../../shared/motion.ts'
 import type { ShotEvent, ShotHit } from '../../shared/protocol.ts'
 import { Locomotion, WeaponKind } from '../../shared/unit-types.ts'
@@ -19,6 +19,10 @@ export type Impact = {
   damage: number
   splash: number
   kind: WeaponKind
+  /** The shot was aimed at an aircraft, so its splash stays in the air. */
+  air: boolean
+  /** Aimed at a unit of the shooter, so the blast can hurt that team. */
+  allies: boolean
 }
 
 export type Blast = {
@@ -26,6 +30,7 @@ export type Blast = {
   z: number
   damage: number
   splash: number
+  air: boolean
 }
 
 export type StructureTarget = {
@@ -103,9 +108,11 @@ export function engage(
     const landed = scatterPoint(aimX, aimZ, shotScatter(dist, unit.speed, unit.type.topSpeed))
     const accel = weapon.accel ?? 0
     const flight = predicted?.flight ?? (explosive(weapon.kind) && weapon.shellSpeed > 0 ? flightTime(dist, weapon.shellSpeed, accel) : 0)
+    const air = target !== null && flying(target)
+    const allies = target !== null && target.ownerId === unit.ownerId
     if (flight === 0) {
-      strike(units, landed.x, landed.z, unit.ownerId, weapon.damage, weapon.splash)
-      if (explosive(weapon.kind)) blasts.push({ x: landed.x, z: landed.z, damage: weapon.damage, splash: weapon.splash })
+      strike(units, landed.x, landed.z, unit.ownerId, weapon.damage, weapon.splash, air, allies)
+      if (explosive(weapon.kind)) blasts.push({ x: landed.x, z: landed.z, damage: weapon.damage, splash: weapon.splash, air })
     } else {
       impacts.push({
         time: time + flight,
@@ -115,6 +122,8 @@ export function engage(
         damage: weapon.damage,
         splash: weapon.splash,
         kind: weapon.kind,
+        air,
+        allies,
       })
     }
     shots.push({
@@ -137,8 +146,8 @@ export function applyImpacts(units: readonly Unit[], impacts: Impact[], time: nu
     const impact = impacts[i]
     if (impact.time > time) continue
     impacts.splice(i, 1)
-    strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash)
-    if (explosive(impact.kind)) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash })
+    strike(units, impact.x, impact.z, impact.ownerId, impact.damage, impact.splash, impact.air, impact.allies)
+    if (explosive(impact.kind)) blasts.push({ x: impact.x, z: impact.z, damage: impact.damage, splash: impact.splash, air: impact.air })
     hits.push({ kind: impact.kind, aimX: impact.x, aimZ: impact.z })
   }
   return hits
@@ -203,14 +212,19 @@ function interceptTime(rx: number, rz: number, vx: number, vz: number, speed: nu
   return soonest ?? fallback
 }
 
-function strike(units: readonly Unit[], x: number, z: number, ownerId: number, damage: number, splash: number) {
+function strike(units: readonly Unit[], x: number, z: number, ownerId: number, damage: number, splash: number, air: boolean, allies: boolean) {
   for (const unit of units) {
-    if (unit.health <= 0 || unit.ownerId === ownerId) continue
+    if (unit.health <= 0 || (!allies && unit.ownerId === ownerId)) continue
+    if (air && !flying(unit)) continue
     const dist = Math.hypot(unit.pos.x - x, unit.pos.z - z)
     const dealt = splash > 0 ? damage * Math.max(0, 1 - dist / splash) : dist <= bodyReach(unit) ? damage : 0
     if (dealt <= 0) continue
     unit.health = Math.max(0, unit.health - dealt)
   }
+}
+
+function flying(unit: Unit): boolean {
+  return airborne(unit.type.locomotion, unit.flight, unit.altitude)
 }
 
 function bodyReach(unit: Unit): number {
@@ -318,7 +332,7 @@ function pickStructure(unit: Unit, structures: readonly StructureTarget[], frien
 function orderedTarget(unit: Unit, byId: Map<number, Unit>): Unit | null {
   if (unit.attackId === null) return null
   const target = byId.get(unit.attackId)
-  if (!target || target.health <= 0 || target.ownerId === unit.ownerId) return null
+  if (!target || target.health <= 0) return null
   return target
 }
 

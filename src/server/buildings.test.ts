@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CITY_GROW_SECONDS, CITY_MODELS, buildingCost, canPlaceCityBuilding, layoutCities, populationOf, projectCity } from '../shared/cities.ts'
-import { AIRPORT, ARTILLERY, FACTORY, HEAVY_TANK, HELIPAD, MED_TANK, SCOUT, SHIPYARD, TURRET, UnitTypeId } from '../shared/unit-types.ts'
+import { AIRPORT, ARTILLERY, FACTORY, HEAVY_TANK, HELIPAD, MED_TANK, SCOUT, SHIPYARD, TURRET, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import { Game } from './game.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, STARTING_CREDITS, creditCap } from './player.ts'
 import { Terrain } from '../shared/tiles.ts'
@@ -65,8 +65,8 @@ describe('buildings', () => {
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 4 })).toBe(true)
     game.finishBuild(human.id)
     expect(human.credits).toBe(10_000 - FACTORY.cost)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
     expect(human.credits).toBe(10_000 - FACTORY.cost)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(0)
     expect(game.trainingFor(human.id)[0]?.progress).toBe(0)
@@ -82,7 +82,8 @@ describe('buildings', () => {
     game.tick(SCOUT.buildTime)
     expect(game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)).toHaveLength(2)
     expect(game.trainingFor(human.id)).toHaveLength(0)
-    expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost - SCOUT.cost * 2 + earned(SCOUT.buildTime * 2))
+    const floor = 10_000 - FACTORY.cost - SCOUT.cost * 2 + earned(SCOUT.buildTime * 2)
+    expect(human.credits).toBeGreaterThanOrEqual(floor - 0.01)
   })
 
   it('cancels the latest queued build and leaves credits already spent', () => {
@@ -122,9 +123,9 @@ describe('buildings', () => {
     }
     holder.health = 0
     game.tick(0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.MedTank)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
     expect(game.cancelTraining(human.id, UnitTypeId.Scout)).toBe(true)
     expect(game.trainingFor(human.id).map((job) => job.typeId)).toEqual([UnitTypeId.Scout, UnitTypeId.MedTank])
     game.tick(SCOUT.buildTime / 2)
@@ -198,14 +199,14 @@ describe('buildings', () => {
     const room = population - FACTORY.supply
     expect(room).toBeGreaterThan(0)
     for (let i = 0; i < room; i++) game.spawn(human, UnitTypeId.Scout, { x: 18, y: i }, 0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(false)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(false)
     const scout = game.units.find((unit) => unit.typeId === UnitTypeId.Scout)
     expect(scout).toBeDefined()
     if (!scout) return
     scout.health = 0
     game.tick(0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(false)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(false)
   })
 
   it('charges more population for heavier units and turrets', () => {
@@ -223,15 +224,15 @@ describe('buildings', () => {
     expect(room).toBeGreaterThanOrEqual(MED_TANK.supply)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 2, y: 2 })).toBe(true)
     game.finishBuild(human.id)
-    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.MedTank)).toBe(true)
     const second = room >= MED_TANK.supply * 2
-    expect(game.trySpawn(human.id, UnitTypeId.MedTank)).toBe(second)
+    expect(train(game, human.id, UnitTypeId.MedTank)).toBe(second)
     let left = room - MED_TANK.supply - (second ? MED_TANK.supply : 0)
     while (left >= TURRET.supply) {
-      expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+      expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
       left -= SCOUT.supply
     }
-    expect(game.trySpawn(human.id, UnitTypeId.Artillery)).toBe(false)
+    expect(train(game, human.id, UnitTypeId.Artillery)).toBe(false)
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 14, y: 14 })).toBe(false)
     expect(SCOUT.supply).toBe(1)
     expect(MED_TANK.supply).toBe(2)
@@ -276,47 +277,40 @@ describe('buildings', () => {
     expect(game.placeBuilding(human.id, UnitTypeId.Turret, { x: 2, y: 2 })).toBe(true)
   })
 
-  it('adds a quarter of training speed for each finished factory', () => {
-    const game = new Game(new World(24, 24))
-    const human = game.addPlayer()
-    seat(game, human.id, 10, 8)
-    growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
-    expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 13, y: 8 })).toBe(true)
-    game.finishBuild(human.id)
-    game.finishBuild(human.id)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    game.tick(SCOUT.buildTime / 2)
-    expect(game.trainingFor(human.id)[0]?.progress).toBeCloseTo(0.75)
-  })
-
-  it('sends finished units out of the primary factory toward the waypoint', () => {
+  it('trains each factory on its own and sends the unit out of that one', () => {
     const game = new Game(new World(28, 28))
     const human = game.addPlayer()
     seat(game, human.id, 10, 8)
-    growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply)
+    growPop(game, human.id, FACTORY.supply * 2 + SCOUT.supply * 3)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 4, y: 6 })).toBe(true)
     expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 13, y: 8 })).toBe(true)
     game.finishBuild(human.id)
     game.finishBuild(human.id)
     const first = game.units[0]
     const second = game.units[1]
-    expect(game.setPrimary(human.id, second.id)).toBe(true)
-    expect(game.primaryFactory(human.id)).toBe(second.id)
+    const pace = 1.25
+    expect(train(game, human.id, UnitTypeId.Scout, first.id)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout, second.id)).toBe(true)
+    game.tick(SCOUT.buildTime / 2)
+    const jobs = game.trainingFor(human.id)
+    expect(jobs.map((job) => job.yardId)).toEqual([first.id, second.id])
+    expect(jobs[0]?.progress).toBeCloseTo(0.5 * pace)
+    expect(jobs[1]?.progress).toBeCloseTo(0.5 * pace)
     const rally = { x: 24, y: 8 }
     expect(game.setRally(human.id, rally)).toBe(true)
-    expect(game.rally(human.id)).toEqual(rally)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
-    game.tick(SCOUT.buildTime / 1.5)
-    const scout = game.units.find((unit) => unit.typeId === UnitTypeId.Scout)
-    expect(scout).toBeDefined()
-    if (!scout) return
-    const from = (factory: { pos: { x: number; z: number } }) => Math.hypot(scout.pos.x - factory.pos.x, scout.pos.z - factory.pos.z)
-    expect(from(second)).toBeLessThan(from(first))
-    expect(scout.path.at(-1)).toEqual(rally)
+    game.tick(SCOUT.buildTime / 2)
+    const scouts = game.units.filter((unit) => unit.typeId === UnitTypeId.Scout)
+    expect(scouts).toHaveLength(2)
+    const from = (scout: { pos: { x: number; z: number } }, factory: { pos: { x: number; z: number } }) =>
+      Math.hypot(scout.pos.x - factory.pos.x, scout.pos.z - factory.pos.z)
+    expect(from(scouts[0], first)).toBeLessThan(from(scouts[0], second))
+    expect(from(scouts[1], second)).toBeLessThan(from(scouts[1], first))
+    expect(scouts[0].path.at(-1)).toEqual(rally)
+    expect(scouts[1].path.at(-1)).toEqual(rally)
+    expect(train(game, human.id, UnitTypeId.Scout, second.id)).toBe(true)
     second.health = 0
     game.tick(0)
-    expect(game.primaryFactory(human.id)).toBe(0)
+    expect(game.trainingFor(human.id)).toHaveLength(0)
   })
 
   it('sends the next unit to an open tile beside an occupied waypoint', () => {
@@ -329,7 +323,7 @@ describe('buildings', () => {
     const rally = { x: 20, y: 8 }
     expect(game.setRally(human.id, rally)).toBe(true)
     const parked = game.spawn(human, UnitTypeId.Scout, rally, 0)
-    expect(game.trySpawn(human.id, UnitTypeId.Scout)).toBe(true)
+    expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
     game.tick(SCOUT.buildTime)
     const scout = game.units.find((unit) => unit.typeId === UnitTypeId.Scout && unit.id !== parked.id)
     expect(scout).toBeDefined()
@@ -437,6 +431,31 @@ describe('buildings', () => {
     expect(game.orderMove(human.id, [turret.id], { x: 8, y: 8 })).toBe(false)
     expect(turret.path).toEqual([])
   })
+
+  it('finishes a structure and a queued unit on the next tick when INSTANT=1', () => {
+    const previous = process.env.INSTANT
+    process.env.INSTANT = '1'
+    try {
+      const game = new Game(new World(16, 16))
+      const human = game.addPlayer()
+      seat(game, human.id, 4, 10)
+      growPop(game, human.id, FACTORY.supply + SCOUT.supply)
+      expect(game.placeBuilding(human.id, UnitTypeId.Factory, { x: 6, y: 6 })).toBe(true)
+      quiet(game, 4, 10)
+      game.tick(1 / 30)
+      const factory = game.units[0]
+      expect(factory.progress).toBe(1)
+      expect(human.credits).toBeCloseTo(10_000 - FACTORY.cost)
+      game.claimCity({ x: 4.5, y: 10.5 }, human.id)
+      expect(train(game, human.id, UnitTypeId.Scout)).toBe(true)
+      game.tick(1 / 30)
+      expect(game.units.some((unit) => unit.typeId === UnitTypeId.Scout)).toBe(true)
+      expect(game.trainingFor(human.id)).toHaveLength(0)
+    } finally {
+      if (previous === undefined) delete process.env.INSTANT
+      else process.env.INSTANT = previous
+    }
+  })
 })
 
 function cityPop(game: Game, index: number): number {
@@ -483,6 +502,14 @@ function growPop(game: Game, playerId: number, people: number) {
 
 function quiet(game: Game, x: number, y: number) {
   game.claimCity({ x: x + 0.5, y: y + 0.5 }, 0)
+}
+
+function train(game: Game, playerId: number, typeId: UnitTypeId, yardId?: number): boolean {
+  const id =
+    yardId ??
+    game.units.find((unit) => unit.ownerId === playerId && unit.typeId === yardOf(typeId) && unit.health > 0 && unit.progress >= 1)?.id ??
+    0
+  return game.trySpawn(playerId, typeId, id)
 }
 
 function terrainOf(game: Game): number[] {

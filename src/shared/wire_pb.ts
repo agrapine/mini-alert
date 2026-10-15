@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file wire.proto.
  */
 export const file_wire: GenFile = /*@__PURE__*/
-  fileDesc("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VW5pdEhlYWx0aE1zZxIKCgJpZBgBIAEoDRIOCgZoZWFsdGgYAiABKAIiLwoPVW5pdFByb2dyZXNzTXNnEgoKAmlkGAEgASgNEhAKCHByb2dyZXNzGAIgASgCIhsKDVVuaXRIaWRkZW5Nc2cSCgoCaWQYASABKA0idAoMU2hvdFNwYXduTXNnEgwKBGtpbmQYASABKA0SEgoKc2hvb3Rlcl9pZBgCIAEoDRIJCgF4GAMgASgCEgkKAXoYBCABKAISDQoFYWltX3gYBSABKAISDQoFYWltX3oYBiABKAISDgoGZmxpZ2h0GAcgASgCIjgKClNob3RIaXRNc2cSDAoEa2luZBgBIAEoDRINCgVhaW1feBgCIAEoAhINCgVhaW1fehgDIAEoAiIdCgpDcmVkaXRzTXNnEg8KB2NyZWRpdHMYASABKAIiKgoLVHJhaW5pbmdNc2cSGwoEam9icxgBIAMoCzINLnJ0cy5UcmFpbkpvYiItCghSYWxseU1zZxILCgNzZXQYASABKAgSCQoBeBgCIAEoBRIJCgF5GAMgASgFIhgKClByaW1hcnlNc2cSCgoCaWQYASABKA0iJwoJWWllbGRzTXNnEhoKBnBvaW50cxgBIAMoCzIKLnJ0cy5Qb2ludCInCgtUcmFjZVNhbXBsZRIMCgRzbG90GAEgASgNEgoKAm1zGAIgASgCIj0KCFRyYWNlTXNnEg4KBmJ1ZGdldBgBIAEoAhIhCgdzYW1wbGVzGAIgAygLMhAucnRzLlRyYWNlU2FtcGxlIuAECgtTZXJ2ZXJFdmVudBIiCgd3ZWxjb21lGAEgASgLMg8ucnRzLldlbGNvbWVNc2dIABIkCghzbmFwc2hvdBgCIAEoCzIQLnJ0cy5TbmFwc2hvdE1zZ0gAEiQKBm1vdGlvbhgDIAEoCzISLnJ0cy5Vbml0TW90aW9uTXNnSAASJAoGaGVhbHRoGAQgASgLMhIucnRzLlVuaXRIZWFsdGhNc2dIABIoCghwcm9ncmVzcxgFIAEoCzIULnJ0cy5Vbml0UHJvZ3Jlc3NNc2dIABIkCgZoaWRkZW4YBiABKAsyEi5ydHMuVW5pdEhpZGRlbk1zZ0gAEicKCnNob3Rfc3Bhd24YByABKAsyES5ydHMuU2hvdFNwYXduTXNnSAASIwoIc2hvdF9oaXQYCCABKAsyDy5ydHMuU2hvdEhpdE1zZ0gAEiEKCW1hcF9wYXRjaBgJIAEoCzIMLnJ0cy5NYXBEYXRhSAASIgoEY2l0eRgKIAEoCzISLnJ0cy5DaXR5VXBkYXRlTXNnSAASIgoHY3JlZGl0cxgLIAEoCzIPLnJ0cy5DcmVkaXRzTXNnSAASJAoIdHJhaW5pbmcYDCABKAsyEC5ydHMuVHJhaW5pbmdNc2dIABIeCgVyYWxseRgNIAEoCzINLnJ0cy5SYWxseU1zZ0gAEiIKB3ByaW1hcnkYDiABKAsyDy5ydHMuUHJpbWFyeU1zZ0gAEiAKBnlpZWxkcxgPIAEoCzIOLnJ0cy5ZaWVsZHNNc2dIABIeCgV0cmFjZRgQIAEoCzINLnJ0cy5UcmFjZU1zZ0gAQgYKBGJvZHkiSgoLU2VydmVyRnJhbWUSDAoEdGljaxgBIAEoDRIgCgZldmVudHMYAiADKAsyEC5ydHMuU2VydmVyRXZlbnQSCwoDYWNrGAMgASgNIjYKDE9yZGVyTW92ZU1zZxIQCgh1bml0X2lkcxgBIAMoDRIJCgF4GAIgASgFEgkKAXkYAyABKAUiGwoIU3Bhd25Nc2cSDwoHdHlwZV9pZBgBIAEoDSI1Cg5PcmRlckF0dGFja01zZxIQCgh1bml0X2lkcxgBIAMoDRIRCgl0YXJnZXRfaWQYAiABKA0iPgoUT3JkZXJBdHRhY2tHcm91bmRNc2cSEAoIdW5pdF9pZHMYASADKA0SCQoBeBgCIAEoBRIJCgF5GAMgASgFIjkKEFBsYWNlQnVpbGRpbmdNc2cSDwoHdHlwZV9pZBgBIAEoDRIJCgF4GAIgASgFEgkKAXkYAyABKAUiIQoOQ2FuY2VsU3Bhd25Nc2cSDwoHdHlwZV9pZBgBIAEoDSIkChFDYW5jZWxCdWlsZGluZ01zZxIPCgd0eXBlX2lkGAEgASgNIiAKDVNldFByaW1hcnlNc2cSDwoHdW5pdF9pZBgBIAEoDSIjCgtTZXRSYWxseU1zZxIJCgF4GAEgASgFEgkKAXkYAiABKAUiJAoMUGxhY2VDaXR5TXNnEgkKAXgYASABKAUSCQoBeRgCIAEoBSIUChJSZXF1ZXN0U25hcHNob3RNc2ciCQoHUGluZ01zZyLBBAoNQ2xpZW50Q29tbWFuZBInCgpvcmRlcl9tb3ZlGAEgASgLMhEucnRzLk9yZGVyTW92ZU1zZ0gAEh4KBXNwYXduGAIgASgLMg0ucnRzLlNwYXduTXNnSAASKwoMb3JkZXJfYXR0YWNrGAMgASgLMhMucnRzLk9yZGVyQXR0YWNrTXNnSAASLwoOcGxhY2VfYnVpbGRpbmcYBCABKAsyFS5ydHMuUGxhY2VCdWlsZGluZ01zZ0gAEisKDGNhbmNlbF9zcGF3bhgFIAEoCzITLnJ0cy5DYW5jZWxTcGF3bk1zZ0gAEjEKD2NhbmNlbF9idWlsZGluZxgGIAEoCzIWLnJ0cy5DYW5jZWxCdWlsZGluZ01zZ0gAEikKC3NldF9wcmltYXJ5GAcgASgLMhIucnRzLlNldFByaW1hcnlNc2dIABIlCglzZXRfcmFsbHkYCCABKAsyEC5ydHMuU2V0UmFsbHlNc2dIABI4ChNvcmRlcl9hdHRhY2tfZ3JvdW5kGAkgASgLMhkucnRzLk9yZGVyQXR0YWNrR3JvdW5kTXNnSAASJwoKcGxhY2VfY2l0eRgKIAEoCzIRLnJ0cy5QbGFjZUNpdHlNc2dIABIzChByZXF1ZXN0X3NuYXBzaG90GAsgASgLMhcucnRzLlJlcXVlc3RTbmFwc2hvdE1zZ0gAEhwKBHBpbmcYDCABKAsyDC5ydHMuUGluZ01zZ0gAEgsKA3NlcRgUIAEoDRIMCgR0aWNrGBUgASgNQgYKBGJvZHliBnByb3RvMw");
+  fileDesc("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DwoHcmFsbHlfeRgJIAEoBSIrCg1Vbml0SGVhbHRoTXNnEgoKAmlkGAEgASgNEg4KBmhlYWx0aBgCIAEoAiIvCg9Vbml0UHJvZ3Jlc3NNc2cSCgoCaWQYASABKA0SEAoIcHJvZ3Jlc3MYAiABKAIiGwoNVW5pdEhpZGRlbk1zZxIKCgJpZBgBIAEoDSJ0CgxTaG90U3Bhd25Nc2cSDAoEa2luZBgBIAEoDRISCgpzaG9vdGVyX2lkGAIgASgNEgkKAXgYAyABKAISCQoBehgEIAEoAhINCgVhaW1feBgFIAEoAhINCgVhaW1fehgGIAEoAhIOCgZmbGlnaHQYByABKAIiOAoKU2hvdEhpdE1zZxIMCgRraW5kGAEgASgNEg0KBWFpbV94GAIgASgCEg0KBWFpbV96GAMgASgCIh0KCkNyZWRpdHNNc2cSDwoHY3JlZGl0cxgBIAEoAiIqCgtUcmFpbmluZ01zZxIbCgRqb2JzGAEgAygLMg0ucnRzLlRyYWluSm9iIi0KCFJhbGx5TXNnEgsKA3NldBgBIAEoCBIJCgF4GAIgASgFEgkKAXkYAyABKAUiJwoJWWllbGRzTXNnEhoKBnBvaW50cxgBIAMoCzIKLnJ0cy5Qb2ludCInCgtUcmFjZVNhbXBsZRIMCgRzbG90GAEgASgNEgoKAm1zGAIgASgCIj0KCFRyYWNlTXNnEg4KBmJ1ZGdldBgBIAEoAhIhCgdzYW1wbGVzGAIgAygLMhAucnRzLlRyYWNlU2FtcGxlIrwECgtTZXJ2ZXJFdmVudBIiCgd3ZWxjb21lGAEgASgLMg8ucnRzLldlbGNvbWVNc2dIABIkCghzbmFwc2hvdBgCIAEoCzIQLnJ0cy5TbmFwc2hvdE1zZ0gAEiQKBm1vdGlvbhgDIAEoCzISLnJ0cy5Vbml0TW90aW9uTXNnSAASJAoGaGVhbHRoGAQgASgLMhIucnRzLlVuaXRIZWFsdGhNc2dIABIoCghwcm9ncmVzcxgFIAEoCzIULnJ0cy5Vbml0UHJvZ3Jlc3NNc2dIABIkCgZoaWRkZW4YBiABKAsyEi5ydHMuVW5pdEhpZGRlbk1zZ0gAEicKCnNob3Rfc3Bhd24YByABKAsyES5ydHMuU2hvdFNwYXduTXNnSAASIwoIc2hvdF9oaXQYCCABKAsyDy5ydHMuU2hvdEhpdE1zZ0gAEiEKCW1hcF9wYXRjaBgJIAEoCzIMLnJ0cy5NYXBEYXRhSAASIgoEY2l0eRgKIAEoCzISLnJ0cy5DaXR5VXBkYXRlTXNnSAASIgoHY3JlZGl0cxgLIAEoCzIPLnJ0cy5DcmVkaXRzTXNnSAASJAoIdHJhaW5pbmcYDCABKAsyEC5ydHMuVHJhaW5pbmdNc2dIABIeCgVyYWxseRgNIAEoCzINLnJ0cy5SYWxseU1zZ0gAEiAKBnlpZWxkcxgPIAEoCzIOLnJ0cy5ZaWVsZHNNc2dIABIeCgV0cmFjZRgQIAEoCzINLnJ0cy5UcmFjZU1zZ0gAQgYKBGJvZHkiSgoLU2VydmVyRnJhbWUSDAoEdGljaxgBIAEoDRIgCgZldmVudHMYAiADKAsyEC5ydHMuU2VydmVyRXZlbnQSCwoDYWNrGAMgASgNIjYKDE9yZGVyTW92ZU1zZxIQCgh1bml0X2lkcxgBIAMoDRIJCgF4GAIgASgFEgkKAXkYAyABKAUiLAoIU3Bhd25Nc2cSDwoHdHlwZV9pZBgBIAEoDRIPCgd5YXJkX2lkGAIgASgNIjUKDk9yZGVyQXR0YWNrTXNnEhAKCHVuaXRfaWRzGAEgAygNEhEKCXRhcmdldF9pZBgCIAEoDSI+ChRPcmRlckF0dGFja0dyb3VuZE1zZxIQCgh1bml0X2lkcxgBIAMoDRIJCgF4GAIgASgFEgkKAXkYAyABKAUiOQoQUGxhY2VCdWlsZGluZ01zZxIPCgd0eXBlX2lkGAEgASgNEgkKAXgYAiABKAUSCQoBeRgDIAEoBSIyCg5DYW5jZWxTcGF3bk1zZxIPCgd0eXBlX2lkGAEgASgNEg8KB3lhcmRfaWQYAiABKA0iJAoRQ2FuY2VsQnVpbGRpbmdNc2cSDwoHdHlwZV9pZBgBIAEoDSIjCgtTZXRSYWxseU1zZxIJCgF4GAEgASgFEgkKAXkYAiABKAUiJAoMUGxhY2VDaXR5TXNnEgkKAXgYASABKAUSCQoBeRgCIAEoBSIUChJSZXF1ZXN0U25hcHNob3RNc2ciCQoHUGluZ01zZyIvCg9TZXRDaXR5Rm9jdXNNc2cSDQoFaW5kZXgYASABKA0SDQoFZm9jdXMYAiABKBEixgQKDUNsaWVudENvbW1hbmQSJwoKb3JkZXJfbW92ZRgBIAEoCzIRLnJ0cy5PcmRlck1vdmVNc2dIABIeCgVzcGF3bhgCIAEoCzINLnJ0cy5TcGF3bk1zZ0gAEisKDG9yZGVyX2F0dGFjaxgDIAEoCzITLnJ0cy5PcmRlckF0dGFja01zZ0gAEi8KDnBsYWNlX2J1aWxkaW5nGAQgASgLMhUucnRzLlBsYWNlQnVpbGRpbmdNc2dIABIrCgxjYW5jZWxfc3Bhd24YBSABKAsyEy5ydHMuQ2FuY2VsU3Bhd25Nc2dIABIxCg9jYW5jZWxfYnVpbGRpbmcYBiABKAsyFi5ydHMuQ2FuY2VsQnVpbGRpbmdNc2dIABIlCglzZXRfcmFsbHkYCCABKAsyEC5ydHMuU2V0UmFsbHlNc2dIABI4ChNvcmRlcl9hdHRhY2tfZ3JvdW5kGAkgASgLMhkucnRzLk9yZGVyQXR0YWNrR3JvdW5kTXNnSAASJwoKcGxhY2VfY2l0eRgKIAEoCzIRLnJ0cy5QbGFjZUNpdHlNc2dIABIzChByZXF1ZXN0X3NuYXBzaG90GAsgASgLMhcucnRzLlJlcXVlc3RTbmFwc2hvdE1zZ0gAEhwKBHBpbmcYDCABKAsyDC5ydHMuUGluZ01zZ0gAEi4KDnNldF9jaXR5X2ZvY3VzGA0gASgLMhQucnRzLlNldENpdHlGb2N1c01zZ0gAEgsKA3NlcRgUIAEoDRIMCgR0aWNrGBUgASgNQgYKBGJvZHliBnByb3RvMw");
 
 /**
  * @generated from message rts.Point
@@ -129,6 +129,11 @@ export type TrainJob = Message<"rts.TrainJob"> & {
    * @generated from field: float progress = 2;
    */
   progress: number;
+
+  /**
+   * @generated from field: uint32 yard_id = 3;
+   */
+  yardId: number;
 };
 
 /**
@@ -344,6 +349,11 @@ export type CityStateMsg = Message<"rts.CityStateMsg"> & {
    * @generated from field: repeated rts.CitySite sites = 8;
    */
   sites: CitySite[];
+
+  /**
+   * @generated from field: sint32 focus = 9;
+   */
+  focus: number;
 };
 
 /**
@@ -523,6 +533,11 @@ export type UnitMotionMsg = Message<"rts.UnitMotionMsg"> & {
    * @generated from field: int32 bay = 29;
    */
   bay: number;
+
+  /**
+   * @generated from field: int32 rounds = 30;
+   */
+  rounds: number;
 };
 
 /**
@@ -577,11 +592,6 @@ export type SnapshotMsg = Message<"rts.SnapshotMsg"> & {
    * @generated from field: repeated rts.TrainJob training = 5;
    */
   training: TrainJob[];
-
-  /**
-   * @generated from field: uint32 primary_factory_id = 6;
-   */
-  primaryFactoryId: number;
 
   /**
    * @generated from field: bool rally_set = 7;
@@ -803,23 +813,6 @@ export const RallyMsgSchema: GenMessage<RallyMsg> = /*@__PURE__*/
   messageDesc(file_wire, 20);
 
 /**
- * @generated from message rts.PrimaryMsg
- */
-export type PrimaryMsg = Message<"rts.PrimaryMsg"> & {
-  /**
-   * @generated from field: uint32 id = 1;
-   */
-  id: number;
-};
-
-/**
- * Describes the message rts.PrimaryMsg.
- * Use `create(PrimaryMsgSchema)` to create a new message.
- */
-export const PrimaryMsgSchema: GenMessage<PrimaryMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 21);
-
-/**
  * @generated from message rts.YieldsMsg
  */
 export type YieldsMsg = Message<"rts.YieldsMsg"> & {
@@ -834,7 +827,7 @@ export type YieldsMsg = Message<"rts.YieldsMsg"> & {
  * Use `create(YieldsMsgSchema)` to create a new message.
  */
 export const YieldsMsgSchema: GenMessage<YieldsMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 22);
+  messageDesc(file_wire, 21);
 
 /**
  * @generated from message rts.TraceSample
@@ -856,7 +849,7 @@ export type TraceSample = Message<"rts.TraceSample"> & {
  * Use `create(TraceSampleSchema)` to create a new message.
  */
 export const TraceSampleSchema: GenMessage<TraceSample> = /*@__PURE__*/
-  messageDesc(file_wire, 23);
+  messageDesc(file_wire, 22);
 
 /**
  * @generated from message rts.TraceMsg
@@ -878,7 +871,7 @@ export type TraceMsg = Message<"rts.TraceMsg"> & {
  * Use `create(TraceMsgSchema)` to create a new message.
  */
 export const TraceMsgSchema: GenMessage<TraceMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 24);
+  messageDesc(file_wire, 23);
 
 /**
  * @generated from message rts.ServerEvent
@@ -967,12 +960,6 @@ export type ServerEvent = Message<"rts.ServerEvent"> & {
     case: "rally";
   } | {
     /**
-     * @generated from field: rts.PrimaryMsg primary = 14;
-     */
-    value: PrimaryMsg;
-    case: "primary";
-  } | {
-    /**
      * @generated from field: rts.YieldsMsg yields = 15;
      */
     value: YieldsMsg;
@@ -991,7 +978,7 @@ export type ServerEvent = Message<"rts.ServerEvent"> & {
  * Use `create(ServerEventSchema)` to create a new message.
  */
 export const ServerEventSchema: GenMessage<ServerEvent> = /*@__PURE__*/
-  messageDesc(file_wire, 25);
+  messageDesc(file_wire, 24);
 
 /**
  * @generated from message rts.ServerFrame
@@ -1020,7 +1007,7 @@ export type ServerFrame = Message<"rts.ServerFrame"> & {
  * Use `create(ServerFrameSchema)` to create a new message.
  */
 export const ServerFrameSchema: GenMessage<ServerFrame> = /*@__PURE__*/
-  messageDesc(file_wire, 26);
+  messageDesc(file_wire, 25);
 
 /**
  * @generated from message rts.OrderMoveMsg
@@ -1047,7 +1034,7 @@ export type OrderMoveMsg = Message<"rts.OrderMoveMsg"> & {
  * Use `create(OrderMoveMsgSchema)` to create a new message.
  */
 export const OrderMoveMsgSchema: GenMessage<OrderMoveMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 27);
+  messageDesc(file_wire, 26);
 
 /**
  * @generated from message rts.SpawnMsg
@@ -1057,6 +1044,11 @@ export type SpawnMsg = Message<"rts.SpawnMsg"> & {
    * @generated from field: uint32 type_id = 1;
    */
   typeId: number;
+
+  /**
+   * @generated from field: uint32 yard_id = 2;
+   */
+  yardId: number;
 };
 
 /**
@@ -1064,7 +1056,7 @@ export type SpawnMsg = Message<"rts.SpawnMsg"> & {
  * Use `create(SpawnMsgSchema)` to create a new message.
  */
 export const SpawnMsgSchema: GenMessage<SpawnMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 28);
+  messageDesc(file_wire, 27);
 
 /**
  * @generated from message rts.OrderAttackMsg
@@ -1086,7 +1078,7 @@ export type OrderAttackMsg = Message<"rts.OrderAttackMsg"> & {
  * Use `create(OrderAttackMsgSchema)` to create a new message.
  */
 export const OrderAttackMsgSchema: GenMessage<OrderAttackMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 29);
+  messageDesc(file_wire, 28);
 
 /**
  * @generated from message rts.OrderAttackGroundMsg
@@ -1113,7 +1105,7 @@ export type OrderAttackGroundMsg = Message<"rts.OrderAttackGroundMsg"> & {
  * Use `create(OrderAttackGroundMsgSchema)` to create a new message.
  */
 export const OrderAttackGroundMsgSchema: GenMessage<OrderAttackGroundMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 30);
+  messageDesc(file_wire, 29);
 
 /**
  * @generated from message rts.PlaceBuildingMsg
@@ -1140,7 +1132,7 @@ export type PlaceBuildingMsg = Message<"rts.PlaceBuildingMsg"> & {
  * Use `create(PlaceBuildingMsgSchema)` to create a new message.
  */
 export const PlaceBuildingMsgSchema: GenMessage<PlaceBuildingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 31);
+  messageDesc(file_wire, 30);
 
 /**
  * @generated from message rts.CancelSpawnMsg
@@ -1150,6 +1142,11 @@ export type CancelSpawnMsg = Message<"rts.CancelSpawnMsg"> & {
    * @generated from field: uint32 type_id = 1;
    */
   typeId: number;
+
+  /**
+   * @generated from field: uint32 yard_id = 2;
+   */
+  yardId: number;
 };
 
 /**
@@ -1157,7 +1154,7 @@ export type CancelSpawnMsg = Message<"rts.CancelSpawnMsg"> & {
  * Use `create(CancelSpawnMsgSchema)` to create a new message.
  */
 export const CancelSpawnMsgSchema: GenMessage<CancelSpawnMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 32);
+  messageDesc(file_wire, 31);
 
 /**
  * @generated from message rts.CancelBuildingMsg
@@ -1174,24 +1171,7 @@ export type CancelBuildingMsg = Message<"rts.CancelBuildingMsg"> & {
  * Use `create(CancelBuildingMsgSchema)` to create a new message.
  */
 export const CancelBuildingMsgSchema: GenMessage<CancelBuildingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 33);
-
-/**
- * @generated from message rts.SetPrimaryMsg
- */
-export type SetPrimaryMsg = Message<"rts.SetPrimaryMsg"> & {
-  /**
-   * @generated from field: uint32 unit_id = 1;
-   */
-  unitId: number;
-};
-
-/**
- * Describes the message rts.SetPrimaryMsg.
- * Use `create(SetPrimaryMsgSchema)` to create a new message.
- */
-export const SetPrimaryMsgSchema: GenMessage<SetPrimaryMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 34);
+  messageDesc(file_wire, 32);
 
 /**
  * @generated from message rts.SetRallyMsg
@@ -1213,7 +1193,7 @@ export type SetRallyMsg = Message<"rts.SetRallyMsg"> & {
  * Use `create(SetRallyMsgSchema)` to create a new message.
  */
 export const SetRallyMsgSchema: GenMessage<SetRallyMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 35);
+  messageDesc(file_wire, 33);
 
 /**
  * @generated from message rts.PlaceCityMsg
@@ -1235,7 +1215,7 @@ export type PlaceCityMsg = Message<"rts.PlaceCityMsg"> & {
  * Use `create(PlaceCityMsgSchema)` to create a new message.
  */
 export const PlaceCityMsgSchema: GenMessage<PlaceCityMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 36);
+  messageDesc(file_wire, 34);
 
 /**
  * @generated from message rts.RequestSnapshotMsg
@@ -1248,7 +1228,7 @@ export type RequestSnapshotMsg = Message<"rts.RequestSnapshotMsg"> & {
  * Use `create(RequestSnapshotMsgSchema)` to create a new message.
  */
 export const RequestSnapshotMsgSchema: GenMessage<RequestSnapshotMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 37);
+  messageDesc(file_wire, 35);
 
 /**
  * @generated from message rts.PingMsg
@@ -1261,7 +1241,29 @@ export type PingMsg = Message<"rts.PingMsg"> & {
  * Use `create(PingMsgSchema)` to create a new message.
  */
 export const PingMsgSchema: GenMessage<PingMsg> = /*@__PURE__*/
-  messageDesc(file_wire, 38);
+  messageDesc(file_wire, 36);
+
+/**
+ * @generated from message rts.SetCityFocusMsg
+ */
+export type SetCityFocusMsg = Message<"rts.SetCityFocusMsg"> & {
+  /**
+   * @generated from field: uint32 index = 1;
+   */
+  index: number;
+
+  /**
+   * @generated from field: sint32 focus = 2;
+   */
+  focus: number;
+};
+
+/**
+ * Describes the message rts.SetCityFocusMsg.
+ * Use `create(SetCityFocusMsgSchema)` to create a new message.
+ */
+export const SetCityFocusMsgSchema: GenMessage<SetCityFocusMsg> = /*@__PURE__*/
+  messageDesc(file_wire, 37);
 
 /**
  * @generated from message rts.ClientCommand
@@ -1308,12 +1310,6 @@ export type ClientCommand = Message<"rts.ClientCommand"> & {
     case: "cancelBuilding";
   } | {
     /**
-     * @generated from field: rts.SetPrimaryMsg set_primary = 7;
-     */
-    value: SetPrimaryMsg;
-    case: "setPrimary";
-  } | {
-    /**
      * @generated from field: rts.SetRallyMsg set_rally = 8;
      */
     value: SetRallyMsg;
@@ -1342,6 +1338,12 @@ export type ClientCommand = Message<"rts.ClientCommand"> & {
      */
     value: PingMsg;
     case: "ping";
+  } | {
+    /**
+     * @generated from field: rts.SetCityFocusMsg set_city_focus = 13;
+     */
+    value: SetCityFocusMsg;
+    case: "setCityFocus";
   } | { case: undefined; value?: undefined };
 
   /**
@@ -1362,5 +1364,5 @@ export type ClientCommand = Message<"rts.ClientCommand"> & {
  * Use `create(ClientCommandSchema)` to create a new message.
  */
 export const ClientCommandSchema: GenMessage<ClientCommand> = /*@__PURE__*/
-  messageDesc(file_wire, 39);
+  messageDesc(file_wire, 38);
 

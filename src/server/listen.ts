@@ -11,6 +11,7 @@ import { runFixedStep } from './clock.ts'
 import { Lobby, type LobbySocket } from './lobby.ts'
 import { loadSaves, saveIntervalMs, saveSaves } from './save.ts'
 import { serveClient } from './static.ts'
+import { instantBuilds } from './instant.ts'
 import { __TRACE__, traceCommit, traceReset } from './trace.ts'
 
 const PORT = Number(process.env.PORT) || 8787
@@ -111,7 +112,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`server listening on ${PORT}`)
+  console.log(`server listening on ${PORT}${instantBuilds() ? ', instant builds' : ''}`)
 })
 
 function query(url: string | undefined, name: string): string | null {

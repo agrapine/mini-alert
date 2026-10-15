@@ -16,6 +16,27 @@ export const MAP_SIZES = [MapSize.Tiny, MapSize.Small, MapSize.Medium, MapSize.L
 
 export const DEFAULT_MAP_SIZE = MapSize.Small
 
+export const enum Landform {
+  Island = 0,
+  Land = 1,
+}
+
+export const DEFAULT_LANDFORM = Landform.Island
+
+export const LAKE_MIN = 0
+export const LAKE_MAX = 1
+export const LAKE_DEFAULT = 0.25
+
+export function isLandform(value: number): value is Landform {
+  return value === Landform.Island || value === Landform.Land
+}
+
+export function clampLakes(value: number): number {
+  if (!Number.isFinite(value)) return LAKE_DEFAULT
+  const stepped = Math.round(value / 0.05) * 0.05
+  return Math.min(LAKE_MAX, Math.max(LAKE_MIN, Number(stepped.toFixed(2))))
+}
+
 export function slotsForSize(size: MapSize): number {
   if (size === MapSize.Tiny) return 2
   if (size === MapSize.Small) return 4
@@ -43,6 +64,8 @@ export const enum LobbyClientKind {
   SetAiPace = 13,
   ClaimAdmin = 14,
   DestroyGame = 15,
+  SetLandform = 16,
+  SetLakes = 17,
 }
 
 export const enum LobbyServerKind {
@@ -84,6 +107,8 @@ export type GameCard = {
   id: number
   status: RoomStatus
   mapSize: MapSize
+  landform: Landform
+  lakes: number
   slots: SlotView[]
   waiting: string[]
 }
@@ -166,6 +191,16 @@ export type DestroyGame = {
   gameId: number
 }
 
+export type SetLandform = {
+  kind: LobbyClientKind.SetLandform
+  landform: Landform
+}
+
+export type SetLakes = {
+  kind: LobbyClientKind.SetLakes
+  lakes: number
+}
+
 export const AI_PACE_MIN = 0.25
 export const AI_PACE_MAX = 3
 export const AI_PACE_DEFAULT = 1
@@ -192,6 +227,8 @@ export type LobbyClientMessage =
   | SetAiPace
   | ClaimAdmin
   | DestroyGame
+  | SetLandform
+  | SetLakes
 
 export type WaitingRoom = {
   kind: LobbyServerKind.Waiting
@@ -208,6 +245,8 @@ export type GameLobbyState = {
   hostId: number
   status: RoomStatus
   mapSize: MapSize
+  landform: Landform
+  lakes: number
   slots: SlotView[]
   waiting: Person[]
   chat: ChatLine[]

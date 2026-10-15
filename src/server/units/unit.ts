@@ -212,7 +212,7 @@ export abstract class Unit {
     if (this.attackPoint) return this.pursuePoint(dt, paths)
     if (this.attackId === null) return false
     const target = units.find((unit) => unit.id === this.attackId)
-    if (!target || target.health <= 0 || target.ownerId === this.ownerId) {
+    if (!target || target.health <= 0) {
       this.attackId = null
       return false
     }

@@ -1,42 +1,33 @@
 # Changelog
 
-## Current
+## 0.6
+- Improved cities, growth, density, growth / income control
+- Unit rebalance
+- Force attack own units
+- Map generation options
+- Minimap blips
+- Per factory queues
+- Air atttack now doesn't damage land units / structures.
+- Jets: reduced speed and health.
+- Turrets: improved targetting and fire rate. Health is tripled, to 300.
+- Cruisers turn faster and shoot farther.
+- Improved AI.
+
+## 0.5 (Swipelab)
 
 - Selection works like Red Alert: Shift+click adds or removes a unit, Shift+drag adds a box, right-click deselects, double-click or double-tap selects every unit of that type on screen.
-- Control groups: Ctrl+1–9 (or Alt+1–9) assigns, 1–9 selects, pressing the number twice centers the camera, Shift+number adds the group.
-- Minimap: left press jumps the camera at once and dragging keeps panning; right click sends the selected units there.
-- Units can be ordered into the fog. A group spreads over free tiles around the target, and a target on water, forest, or an enclosed spot sends units to the nearest reachable tile.
-- Middle-click panning always lets go when the button is released.
-- Smoother play over the network: units glide between server updates, corrections blend in instead of jumping, units start moving the moment you give an order, and a backgrounded tab catches up without reloading the map.
-- Much less network traffic (about 5x less during battles and captures) and faster pathfinding, so large orders no longer stall the server.
-- Steady unit speed on jittery connections: late network packets no longer slow the game down and speed it back up.
-- Orders get their answer from the server straight away instead of on the next server tick.
-- No more stutter while scouting or capturing cities: the island is rebuilt at most twice a second, and never for city changes.
-- Turrets turn toward their target between server updates, and attack orders start turning and moving at once.
-- The server does about a sixth of the fog-of-war work per player, leaving more headroom on small hosts.
-- The HUD shows your ping to the server.
-- Queued units, rally flags, the primary factory star and new building sites show the moment you click, then settle to the server's answer.
-- The game connection is compressed, cutting traffic about 4x again.
-- The minimap fog repaints a few times a second instead of every frame.
-- Fewer network messages: routine updates (credits, training and build progress, map reveals, capture progress, position checks) are batched about five times a second, roughly halving messages in battle and cutting them by four fifths while only training.
-- A connection that goes silent, for example when a phone switches networks, reconnects within seconds and keeps your seat.
-- Reloading the page keeps your seat, and the server notices dropped connections within about twenty seconds.
-- Move orders take the exact route at once: your game plans the same path the server will, and the server allows for your ping so both stay in step.
-- Units are corrected only when your view drifts from the server, about ninety percent fewer position updates.
-- Long matches no longer slow down as cities get damaged: the server keeps each city's layout instead of rebuilding it for every unit every tick (about 12x faster in a war-torn match).
-- If the server ever falls behind, the game slows down with it instead of throwing away updates, which left holes in the map and kept asking for full resyncs.
-- One seat per browser: new tabs, bookmarks and home-screen launches play as the same person instead of appearing twice. Opening the game in another tab moves you there, and the old tab offers to play here instead. The address bar no longer carries your seat, so sharing the page address does not hand it over. To play as yourself on another device, use Copy my link in the lobby and open the link there.
-- Anyone disconnected from an unstarted game for ten minutes leaves it, freeing their slot and passing on the host, and a game nobody is left in closes. Started matches keep their seats.
-- `npm run bench` plays scripted matches against a real server over simulated LAN, internet, bad and spiky connections and reports traffic, order echo time, how far units drift on screen from the server, and server time per tick, so network changes can be measured before they ship.
-- Units always settle to the server's answer after a move or attack order.
-- Units no longer jump on jittery or lossy connections: your game holds each server update until its moment comes, so it runs slightly behind the server, up to a fifth of a second on unsteady connections.
-- The server runs precompiled, spending 1–20% less time per tick and leaving more headroom on small hosts.
-- The server works out city and sight data once per tick for all players instead of once for each, redraws a player's view of a city only when the city changes or the player explores it, and retraces the sight of cities and buildings only when they change, leaving more headroom on small hosts.
-- Idle armies no longer cost the server sight work every tick: units standing still keep their view without the server retracing it for each player, cutting the server's network time on a quiet large map by more than half.
-- New city growth mechanics, buildings have density and can grow over landscape.
-- Better AI
-- Improved cruiser turn speed, attack range
-- Server timing tracing
+- Control groups: Ctrl+1–9 (or Alt+1–9) assigns, 1–9 selects, press twice to center the camera, Shift+number adds the group.
+- Minimap: click jumps the camera, drag pans, right-click sends the selected units.
+- Order units into the fog. A group spreads around the target; water, forest, or a walled-in spot sends them to the nearest tile they can reach.
+- Middle-click panning lets go when you release the button.
+- Smoother play online. Orders start at once, units keep a steady speed, and turrets turn as they acquire a target.
+- Scouting, capturing, and long battles no longer stutter, even as cities get torn up.
+- If the game falls behind, it slows down instead of leaving holes in the map.
+- The HUD shows your ping.
+- Queued units, rally flags, the primary factory, and new building sites show the moment you click.
+- Reloading, or a connection that drops (a phone switching networks, a backgrounded tab), keeps your seat.
+- One seat per browser. Opening another tab moves you there; the old tab can take the seat back. Copy my link in the lobby to play as yourself on another device.
+- Anyone gone from an unstarted game for ten minutes leaves it, and an empty game closes. Started matches keep their seats.
 
 ## 0.4
 - New structures: Airports, helipads, shipyards, 

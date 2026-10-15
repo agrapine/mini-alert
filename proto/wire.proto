@@ -29,6 +29,7 @@ message MapData {
 message TrainJob {
   uint32 type_id = 1;
   float progress = 2;
+  uint32 yard_id = 3;
 }
 
 message CitySite {
@@ -75,6 +76,7 @@ message CityStateMsg {
   uint32 grown = 6;
   repeated sint32 ruins = 7;
   repeated CitySite sites = 8;
+  sint32 focus = 9;
 }
 
 message CityUpdateMsg {
@@ -112,6 +114,7 @@ message UnitMotionMsg {
   int32 orbit_x = 27;
   int32 orbit_y = 28;
   int32 bay = 29;
+  int32 rounds = 30;
 }
 
 message WelcomeMsg {
@@ -124,7 +127,6 @@ message SnapshotMsg {
   repeated CityUpdateMsg cities = 3;
   float credits = 4;
   repeated TrainJob training = 5;
-  uint32 primary_factory_id = 6;
   bool rally_set = 7;
   int32 rally_x = 8;
   int32 rally_y = 9;
@@ -174,10 +176,6 @@ message RallyMsg {
   int32 y = 3;
 }
 
-message PrimaryMsg {
-  uint32 id = 1;
-}
-
 message YieldsMsg {
   repeated Point points = 1;
 }
@@ -207,7 +205,6 @@ message ServerEvent {
     CreditsMsg credits = 11;
     TrainingMsg training = 12;
     RallyMsg rally = 13;
-    PrimaryMsg primary = 14;
     YieldsMsg yields = 15;
     TraceMsg trace = 16;
   }
@@ -228,6 +225,7 @@ message OrderMoveMsg {
 
 message SpawnMsg {
   uint32 type_id = 1;
+  uint32 yard_id = 2;
 }
 
 message OrderAttackMsg {
@@ -249,14 +247,11 @@ message PlaceBuildingMsg {
 
 message CancelSpawnMsg {
   uint32 type_id = 1;
+  uint32 yard_id = 2;
 }
 
 message CancelBuildingMsg {
   uint32 type_id = 1;
-}
-
-message SetPrimaryMsg {
-  uint32 unit_id = 1;
 }
 
 message SetRallyMsg {
@@ -273,6 +268,11 @@ message RequestSnapshotMsg {}
 
 message PingMsg {}
 
+message SetCityFocusMsg {
+  uint32 index = 1;
+  sint32 focus = 2;
+}
+
 message ClientCommand {
   oneof body {
     OrderMoveMsg order_move = 1;
@@ -281,12 +281,12 @@ message ClientCommand {
     PlaceBuildingMsg place_building = 4;
     CancelSpawnMsg cancel_spawn = 5;
     CancelBuildingMsg cancel_building = 6;
-    SetPrimaryMsg set_primary = 7;
     SetRallyMsg set_rally = 8;
     OrderAttackGroundMsg order_attack_ground = 9;
     PlaceCityMsg place_city = 10;
     RequestSnapshotMsg request_snapshot = 11;
     PingMsg ping = 12;
+    SetCityFocusMsg set_city_focus = 13;
   }
   uint32 seq = 20;
   // The sender's simulation tick when the command was issued.

@@ -178,7 +178,7 @@ describe('ai', () => {
     expect(game.units.some((unit) => unit.ownerId === ai.id && unit.typeId === UnitTypeId.Factory)).toBe(false)
     const thought = bot.lastThought
     expect(thought?.candidates.some((candidate) => candidate.scenario === Scenario.Build && candidate.blocked === 'pop')).toBe(true)
-    expect(thought?.candidates.some((candidate) => candidate.blocked === '' && (candidate.scenario === Scenario.Garrison || candidate.scenario === Scenario.Scout))).toBe(true)
+    expect(thought?.candidates.some((candidate) => candidate.blocked === '' && candidate.scenario === Scenario.Scout)).toBe(true)
   })
 
   it('queues a scout from a finished factory', () => {
@@ -210,7 +210,7 @@ describe('ai', () => {
       },
       2,
     )
-    expect(thought.orders).toContainEqual({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout })
+    expect(thought.orders).toContainEqual({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Scout, yardId: 2 })
   })
 
   it('orders the next idle unit while one is already marching on a city', () => {
@@ -410,10 +410,10 @@ describe('ai', () => {
       structure(21, UnitTypeId.Turret, 18, 16),
       structure(22, UnitTypeId.Helipad, 14, 16),
     ]), 4)
-    expect(thought.orders).toContainEqual({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Gunship })
+    expect(thought.orders).toContainEqual({ kind: ClientMessageKind.Spawn, typeId: UnitTypeId.Gunship, yardId: 22 })
   })
 
-  it('drops a city that has not grown and sends the scout to another', () => {
+  it('does not park a scout in a city so the city will grow', () => {
     const home = {
       x: 4,
       y: 4,
@@ -455,11 +455,8 @@ describe('ai', () => {
     }
     const fresh = consider({ ...brain, mood: { now: 4, pop: 0, popAt: 4, plan: 0, atX: -1, atY: -1, planAt: 4, salt: 1, banX: -1, banY: -1, near: 1e9 } }, 4)
     const stale = consider({ ...brain, mood: { now: 40, pop: 0, popAt: 0, plan: 0, atX: -1, atY: -1, planAt: 0, salt: 1, banX: -1, banY: -1, near: 1e9 } }, 4)
-    const moved = (thought: { orders: { kind: number; unitIds?: number[] }[] }) =>
-      thought.orders.some((order) => order.kind === ClientMessageKind.OrderMove && order.unitIds?.includes(1))
-    expect(moved(fresh)).toBe(false)
-    expect(moved(stale)).toBe(true)
-    expect(stale.candidates.some((candidate) => candidate.blocked === 'timeout')).toBe(true)
+    expect(fresh.candidates.some((candidate) => candidate.scenario === Scenario.Garrison)).toBe(false)
+    expect(stale.candidates.some((candidate) => candidate.scenario === Scenario.Garrison)).toBe(false)
   })
 
   it('keeps exploring with the army until another player is seen', () => {

@@ -1,4 +1,5 @@
-import { cityCenter, cityContains, footprintNearCity, growCity, layoutCities, populationOf, projectCity, type CityLayout } from '../shared/cities.ts'
+import { BAY_COUNT } from '../shared/flight.ts'
+import { cityCenter, eachBuildingTile, footprintNearCity, layoutCities, populationOf, projectCity, type CityLayout } from '../shared/cities.ts'
 import { canPlaceFootprint } from '../shared/footprint.ts'
 import {
   ClientMessageKind,
@@ -51,7 +52,6 @@ const ZONE = 16
 const CALL_IN = 20
 const ASSAULT_ARMY = 3
 const ENEMY_CITY_ARMY = 2
-const GROW_LIMIT = 24
 const PLAN_LIMIT = 36
 const GROUP = 6
 const CLUSTER = 12
@@ -169,7 +169,6 @@ export function consider(input: Brain, budget: number): Thought {
     return true
   }
 
-  const growthStale = mood.now - mood.popAt >= GROW_LIMIT
   let timedOut = false
   let acted: { scenario: Scenario; x: number; y: number } | null = null
   const finish = (lane: Lane, scenario: Scenario, at: TileCoord, plan: Plan): boolean => {
@@ -192,9 +191,6 @@ export function consider(input: Brain, budget: number): Thought {
     if (ok && lane === Lane.March) acted = { scenario, x: at.x, y: at.y }
     return ok
   }
-
-  holdGrowth(brain, layouts, apply, growthStale)
-  if (growthStale && center) note(Lane.Home, Scenario.Garrison, 85, center, 'timeout', 0)
 
   if (home && center && !factory(brain)) {
     const built = build(brain, layouts, zoneAt(center, Scenario.Build))
@@ -453,8 +449,21 @@ function placeNext(brain: Brain, layouts: readonly (CityLayout | null)[], center
 }
 
 function train(brain: Brain, typeId: UnitTypeId): ClientMessage[] {
-  if (!yardReady(brain, yardOf(typeId)) || !afford(brain, UNIT_TYPES[typeId])) return []
-  return [{ kind: ClientMessageKind.Spawn, typeId }]
+  if (!afford(brain, UNIT_TYPES[typeId])) return []
+  const yardType = yardOf(typeId)
+  let best: UnitSnapshot | null = null
+  let bestLoad = Infinity
+  for (const unit of own(brain)) {
+    if (unit.typeId !== yardType || unit.health <= 0 || unit.progress < 1) continue
+    if (typeId === UnitTypeId.Jet && jetLoad(brain, unit) >= BAY_COUNT) continue
+    let load = 0
+    for (const job of brain.training) if (job.yardId === unit.id) load += 1
+    if (load >= bestLoad) continue
+    best = unit
+    bestLoad = load
+  }
+  if (!best) return []
+  return [{ kind: ClientMessageKind.Spawn, typeId, yardId: best.id }]
 }
 
 function capture(brain: Brain, tile: TileCoord, reserved: ReadonlySet<number>): Plan {
@@ -733,7 +742,7 @@ function buildingTiles(layouts: readonly (CityLayout | null)[]): Set<string> {
   const blocked = new Set<string>()
   for (const layout of layouts) {
     if (!layout) continue
-    for (const building of layout.buildings) blocked.add(`${building.x},${building.y}`)
+    for (const building of layout.buildings) eachBuildingTile(building, (x, y) => blocked.add(`${x},${y}`))
   }
   return blocked
 }
@@ -765,55 +774,6 @@ function ownMobile(brain: Brain): UnitSnapshot[] {
 
 function freeMobile(brain: Brain, reserved: ReadonlySet<number>): UnitSnapshot[] {
   return ownMobile(brain).filter((unit) => !reserved.has(unit.id))
-}
-
-function canGrow(brain: Brain, home: CityLayout): boolean {
-  return growCity(home, brain.terrain, brain.width, brain.height) !== null
-}
-
-function holdGrowth(
-  brain: Brain,
-  layouts: readonly (CityLayout | null)[],
-  apply: (lane: Lane, scenario: Scenario, score: number, at: TileCoord, plan: Plan) => boolean,
-  stale: boolean,
-) {
-  if (stale) return
-  let posted = 0
-  const staying = new Set<number>()
-  for (let i = 0; i < layouts.length; i++) {
-    const layout = layouts[i]
-    if (!layout || brain.cities[i]?.ownerId !== brain.playerId || !canGrow(brain, layout)) continue
-    const at = rallyTile(brain, layout)
-    const inside = ownMobile(brain).filter(
-      (unit) => domainOf(UNIT_TYPES[unit.typeId]) === MoveDomain.Ground && cityContains(layout, unit.tileX, unit.tileY),
-    )
-    if (inside.length > 0) {
-      staying.add(inside[0].id)
-      apply(Lane.Home, Scenario.Garrison, 85, at, acting([], [inside[0].id]))
-      continue
-    }
-    if (posted >= 2) continue
-    const unit = nearestGround(brain, at, staying)
-    if (!unit) {
-      apply(Lane.Home, Scenario.Garrison, 85, at, idle('no target'))
-      continue
-    }
-    staying.add(unit.id)
-    if (apply(Lane.Home, Scenario.Garrison, 85, at, acting([move(unit.id, at)]))) posted += 1
-  }
-}
-
-function nearestGround(brain: Brain, at: TileCoord, skip: ReadonlySet<number>): UnitSnapshot | null {
-  let best: UnitSnapshot | null = null
-  let bestDist = Infinity
-  for (const unit of ownMobile(brain)) {
-    if (skip.has(unit.id) || domainOf(UNIT_TYPES[unit.typeId]) !== MoveDomain.Ground) continue
-    const dist = (unit.tileX - at.x) ** 2 + (unit.tileY - at.y) ** 2
-    if (dist >= bestDist) continue
-    bestDist = dist
-    best = unit
-  }
-  return best
 }
 
 type Cluster = {
@@ -940,6 +900,18 @@ function banned(brain: Brain, x: number, y: number): boolean {
 
 function afford(brain: Brain, type: UnitType): boolean {
   return brain.credits >= type.cost && supplyUsed(brain) + type.supply <= population(brain)
+}
+
+function jetLoad(brain: Brain, airport: UnitSnapshot): number {
+  let parked = 0
+  for (const unit of own(brain)) {
+    if (unit.typeId !== UnitTypeId.Jet || unit.health <= 0 || !unit.home || (unit.bay ?? -1) < 0) continue
+    if (unit.home.x !== airport.tileX || unit.home.y !== airport.tileY) continue
+    parked += 1
+  }
+  let queued = 0
+  for (const job of brain.training) if (job.yardId === airport.id && job.typeId === UnitTypeId.Jet) queued += 1
+  return parked + queued
 }
 
 function yardReady(brain: Brain, typeId: UnitTypeId): boolean {

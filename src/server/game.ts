@@ -1,12 +1,13 @@
-import { BUILDING_HP, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, DENSITY_MIN, cityCenter, cityContains, cityHolds, citySightOrigin, footprintNearCity, growCity, insertBuilding, layoutCities, lostStreets, modelAtRank, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
+import { BUILDING_HP, BUILDING_RADIUS, buildingCost, canPlaceCityBuilding, captureDuration, captureFade, CITY_GROW_SECONDS, clampCityFocus, DENSITY_MIN, cityCenter, cityContains, cityHolds, citySightOrigin, eachBuildingTile, footprintNearCity, growCity, growthFactor, insertBuilding, layoutCities, lostStreets, modelAtRank, moneyFactor, populationOf, settledCity, SIEGE_RANGE, STREET_HP, StreetKind, type CityLayout } from '../shared/cities.ts'
 import type { CitySite, CityState, MapPoint, ShotEvent, ShotHit, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
 import type { CitySight } from '../shared/vision.ts'
-import { Terrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
+import { SCAR_CHANCE, SCAR_FADE, SCAR_MAX, Terrain, scarGain, scarStrength, scarTerrain, tileCenter, type TileCoord } from '../shared/tiles.ts'
 import { bayFacing, bayTile, baysFree, Flight, openBay } from '../shared/flight.ts'
 import { domainOf, MoveDomain, spanOf, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
 import { SIM_STEP } from '../shared/motion.ts'
 import { planMoves } from '../shared/route.ts'
 import { PathFinder } from './path/pathfinder.ts'
+import { instantBuilds } from './instant.ts'
 import { __TRACE__, traceBegin, traceEnd } from './trace.ts'
 import { TraceSlot } from '../shared/trace.ts'
 import { CREDIT_PER_POPULATION, INCOME_SECONDS, Player, creditCap } from './player.ts'
@@ -35,6 +36,9 @@ type CityRuntime = {
   progress: number
   challengerId: number
   grown: number
+  /** -2..2. Negative leans toward money, positive toward growth. */
+  focus: number
+  growCredit: number
   ruins: TileCoord[]
   sites: CitySite[]
   integrity: Map<string, number>
@@ -86,16 +90,17 @@ export class Game {
   private deaths: Unit[] = []
   private readonly jobs = new Map<number, number[]>()
   private readonly training = new Map<number, TrainJob[]>()
-  private readonly primaries = new Map<number, number>()
   private readonly rallies = new Map<number, TileCoord>()
   scenery: Scenery = EMPTY_SCENERY
   private readonly cities: CityRuntime[] = []
-  private growClock = 0
   private incomeClock = 0
   private yields: MapPoint[] = []
   private landed: ShotHit[] = []
   private growthTerrain: number[] | null = null
   private readonly fallen: TileCoord[] = []
+  private readonly scars: TileCoord[] = []
+  /** Tile index to the time its scar next loses a strength. */
+  private scarUntil = new Map<number, number>()
 
   constructor(world: World) {
     this.world = world
@@ -125,6 +130,7 @@ export class Game {
       this.fillFootprint(unit)
     }
     this.syncBlocks()
+    this.armScars()
   }
 
   addPlayer(color?: number): Player {
@@ -145,10 +151,17 @@ export class Game {
     const terrain = this.terrainTable()
     this.cities.length = 0
     for (const layout of layoutCities(this.scenery.towns, this.scenery.seed, terrain, this.world.width, this.world.height)) {
-      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, ruins: [], sites: [], integrity: new Map() })
+      this.cities.push({ layout, ownerId: 0, progress: 0, challengerId: 0, grown: 0, focus: 0, growCredit: 0, ruins: [], sites: [], integrity: new Map() })
       this.clearCityTrees(layout)
     }
     this.syncBlocks()
+  }
+
+  setCityFocus(playerId: number, index: number, focus: number): boolean {
+    const city = this.cities[index]
+    if (!city || city.ownerId !== playerId) return false
+    city.focus = clampCityFocus(focus)
+    return true
   }
 
   claimCity(town: MapPoint, playerId: number) {
@@ -174,6 +187,7 @@ export class Game {
       challengerId: city.challengerId,
       challengerColor: city.challengerId > 0 ? (this.player(city.challengerId)?.color ?? 0) : 0,
       grown: city.grown,
+      focus: city.focus,
       ruins: city.ruins.map((tile) => ({ x: tile.x, y: tile.y })),
       sites: city.sites.map((site) => ({
         x: site.x,
@@ -187,6 +201,10 @@ export class Game {
 
   felled(): readonly TileCoord[] {
     return this.fallen
+  }
+
+  scarred(): readonly TileCoord[] {
+    return this.scars
   }
 
   clearedTiles(): TileCoord[] {
@@ -217,7 +235,7 @@ export class Game {
     let population = 0
     for (const city of this.cities) {
       if (city.ownerId !== playerId || this.besieged(city)) continue
-      population += this.peopleOf(city)
+      population += this.peopleOf(city) * moneyFactor(city.focus)
     }
     return CREDIT_PER_POPULATION * population
   }
@@ -322,7 +340,10 @@ export class Game {
     if (unit && owner && unit.progress < 1) {
       owner.credits = Math.max(0, owner.credits - unit.bill * (1 - unit.progress))
     }
-    if (unit) unit.progress = 1
+    if (unit) {
+      unit.progress = 1
+      if (unit.typeId === UnitTypeId.Airport) this.adoptOrphanJets(unit)
+    }
     queue?.shift()
     if (queue && queue.length === 0) this.jobs.delete(playerId)
   }
@@ -342,31 +363,11 @@ export class Game {
   }
 
   trainingFor(playerId: number): TrainJob[] {
-    return (this.training.get(playerId) ?? []).map((job) => ({ typeId: job.typeId, progress: job.progress }))
+    return (this.training.get(playerId) ?? []).map((job) => ({ typeId: job.typeId, progress: job.progress, yardId: job.yardId }))
   }
 
   trainingCount(playerId: number): number {
     return this.training.get(playerId)?.length ?? 0
-  }
-
-  setPrimary(playerId: number, unitId: number): boolean {
-    const unit = this.owned(playerId, unitId)
-    if (!unit || unit.typeId !== UnitTypeId.Factory || unit.health <= 0) return false
-    this.primaries.set(playerId, unitId)
-    return true
-  }
-
-  primaryFactory(playerId: number): number {
-    const id = this.primaries.get(playerId)
-    if (id === undefined) return 0
-    const unit = this.units.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.ownerId === playerId &&
-        candidate.typeId === UnitTypeId.Factory &&
-        candidate.health > 0,
-    )
-    return unit ? unit.id : 0
   }
 
   setRally(playerId: number, tile: TileCoord): boolean {
@@ -381,23 +382,26 @@ export class Game {
     return tile ? { x: tile.x, y: tile.y } : null
   }
 
-  trySpawn(playerId: number, typeId: UnitTypeId): boolean {
+  trySpawn(playerId: number, typeId: UnitTypeId, yardId: number): boolean {
     const owner = this.players.get(playerId)
     const type = UNIT_TYPES[typeId]
-    if (!owner || type.topSpeed <= 0 || !this.hasFinished(playerId, yardOf(typeId))) return false
+    const yard = this.owned(playerId, yardId)
+    if (!owner || !yard || type.topSpeed <= 0 || yard.health <= 0 || yard.progress < 1) return false
+    if (yard.typeId !== yardOf(typeId)) return false
     if (this.supplyUsed(playerId) + type.supply > this.population(playerId)) return false
-    if (typeId === UnitTypeId.Jet && this.queuedJets(playerId) >= this.jetRoom(playerId)) return false
+    if (typeId === UnitTypeId.Jet && this.queuedJets(playerId, yard.id) >= this.baysAt(yard)) return false
     const queue = this.training.get(playerId) ?? []
-    queue.push({ typeId, progress: 0 })
+    queue.push({ typeId, progress: 0, yardId: yard.id })
     this.training.set(playerId, queue)
     return true
   }
 
-  cancelTraining(playerId: number, typeId: UnitTypeId): boolean {
+  cancelTraining(playerId: number, typeId: UnitTypeId, yardId = 0): boolean {
     const queue = this.training.get(playerId)
     if (!queue) return false
     for (let i = queue.length - 1; i >= 0; i--) {
       if (queue[i].typeId !== typeId) continue
+      if (yardId !== 0 && queue[i].yardId !== yardId) continue
       queue.splice(i, 1)
       if (queue.length === 0) this.training.delete(playerId)
       return true
@@ -450,7 +454,7 @@ export class Game {
     if (!target || target.health <= 0) return false
     let ordered = false
     for (const unit of this.ownedAll(playerId, unitIds)) {
-      if (target.id === unit.id || target.ownerId === unit.ownerId) continue
+      if (target.id === unit.id) continue
       unit.attackPoint = null
       unit.attackId = target.id
       unit.step(0, this.pathfinder, this.units)
@@ -505,6 +509,7 @@ export class Game {
     this.blast(blasts)
     __TRACE__ && traceEnd()
     this.removeDead()
+    this.fadeScars()
     __TRACE__ && traceBegin(TraceSlot.CityCapture)
     this.advanceCaptures(dt)
     __TRACE__ && traceEnd()
@@ -547,9 +552,10 @@ export class Game {
     this.deaths = []
     for (const unit of this.units) {
       if (unit.health > 0) continue
+      if (unit.type.topSpeed <= 0) this.scarFootprint(unit)
       this.pathfinder.release(unit)
       this.clearJob(unit.id)
-      this.clearPrimary(unit.id)
+      this.clearTraining(unit.id)
       this.deaths.push(unit)
     }
     this.units.splice(0, this.units.length, ...this.units.filter((unit) => unit.health > 0))
@@ -580,6 +586,7 @@ export class Game {
       altitude: unit.altitude,
       orbit: unit.orbit ? { x: unit.orbit.x, y: unit.orbit.y } : null,
       bay: unit.bay,
+      rounds: unit.rounds,
     }
   }
 
@@ -639,7 +646,7 @@ export class Game {
           if (city.ownerId !== player.id || this.besieged(city)) continue
           const people = this.peopleOf(city)
           if (people <= 0) continue
-          player.credits += CREDIT_PER_POPULATION * people
+          player.credits += CREDIT_PER_POPULATION * people * moneyFactor(city.focus)
           const origin = citySightOrigin(this.live(city))
           this.yields.push({ x: origin.x, y: origin.z })
         }
@@ -658,16 +665,19 @@ export class Game {
   }
 
   private advanceGrowth(dt: number) {
-    this.growClock += dt
-    if (this.growClock < CITY_GROW_SECONDS) return
+    const step = instantBuilds() ? dt * 10 : dt
     const terrain = this.terrainTable()
     let changed = false
-    while (this.growClock >= CITY_GROW_SECONDS) {
-      this.growClock -= CITY_GROW_SECONDS
-      for (const city of this.cities) {
-        if (city.ownerId === 0 || !this.ownerPresent(city)) continue
+    for (const city of this.cities) {
+      if (city.ownerId === 0) continue
+      city.growCredit += step * growthFactor(city.focus)
+      while (city.growCredit >= CITY_GROW_SECONDS) {
+        city.growCredit -= CITY_GROW_SECONDS
         const next = growCity(city.layout, terrain, this.world.width, this.world.height)
-        if (!next) continue
+        if (!next) {
+          city.growCredit = 0
+          break
+        }
         const added = next.buildings.find(
           (building) => !city.layout.buildings.some((current) => current.x === building.x && current.y === building.y),
         )
@@ -681,21 +691,15 @@ export class Game {
     if (changed) this.syncBlocks()
   }
 
-  private ownerPresent(city: CityRuntime): boolean {
-    for (const unit of this.units) {
-      if (unit.health <= 0 || unit.type.topSpeed <= 0 || unit.ownerId !== city.ownerId) continue
-      if (cityHolds(this.live(city), unit.pos.x, unit.pos.z)) return true
-    }
-    return false
-  }
-
   private blast(blasts: readonly Blast[]) {
     if (blasts.length === 0) return
     let blocks = false
     for (const blast of blasts) {
+      if (blast.air) continue
       if (this.damageBuildings(blast)) blocks = true
       this.damageStreets(blast)
       this.fellTrees(blast)
+      this.scarGround(blast)
     }
     if (blocks) this.syncBlocks()
   }
@@ -707,7 +711,8 @@ export class Game {
       for (const building of city.layout.buildings) {
         if (building.keep || this.isRuin(city, building.x, building.y)) continue
         const dist = Math.hypot(building.x + 0.5 - blast.x, building.y + 0.5 - blast.z)
-        const dealt = blast.splash > 0 ? blast.damage * Math.max(0, 1 - dist / blast.splash) : 0
+        const gap = Math.max(0, dist - BUILDING_RADIUS)
+        const dealt = blast.splash > 0 ? blast.damage * Math.max(0, 1 - gap / blast.splash) : 0
         if (dealt <= 0) continue
         const id = `${building.x},${building.y}`
         const hp = (city.integrity.get(id) ?? BUILDING_HP) - dealt
@@ -717,6 +722,7 @@ export class Game {
         }
         city.integrity.delete(id)
         city.ruins.push({ x: building.x, y: building.y })
+        this.stampScar(building.x, building.y)
         for (const street of lostStreets(city.layout, city.ruins)) city.ruins.push(street)
         if (!this.hasDistrict(city)) {
           city.ownerId = 0
@@ -768,6 +774,84 @@ export class Game {
     }
   }
 
+  private scarFootprint(unit: Unit) {
+    const span = spanOf(unit.type)
+    for (let dy = 0; dy < span.y; dy++) {
+      for (let dx = 0; dx < span.x; dx++) this.stampScar(unit.tile.x + dx, unit.tile.y + dy)
+    }
+  }
+
+  private stampScar(x: number, y: number) {
+    if (!this.world.inBounds(x, y) || !openGround(this.world.terrainAt(x, y))) return
+    this.markScar(x, y, SCAR_MAX)
+  }
+
+  private markScar(x: number, y: number, strength: number) {
+    const tile = scarTerrain(strength)
+    const index = y * this.world.width + x
+    this.scarUntil.set(index, this.time + SCAR_FADE)
+    if (tile === this.world.terrainAt(x, y)) return
+    this.world.setTerrain(x, y, tile)
+    this.scars.push({ x, y })
+    if (this.growthTerrain) this.growthTerrain[index] = tile
+  }
+
+  private fadeScars() {
+    if (this.scarUntil.size === 0) return
+    const due: number[] = []
+    for (const [index, at] of this.scarUntil) if (at <= this.time) due.push(index)
+    const width = this.world.width
+    for (const index of due) {
+      const x = index % width
+      const y = (index - x) / width
+      const strength = scarStrength(this.world.terrainAt(x, y))
+      if (strength <= 1) {
+        this.world.setTerrain(x, y, Terrain.Land)
+        this.scarUntil.delete(index)
+        if (this.growthTerrain) this.growthTerrain[index] = Terrain.Land
+      } else {
+        const tile = scarTerrain(strength - 1)
+        this.world.setTerrain(x, y, tile)
+        this.scarUntil.set(index, this.time + SCAR_FADE)
+        if (this.growthTerrain) this.growthTerrain[index] = tile
+      }
+      this.scars.push({ x, y })
+    }
+  }
+
+  private armScars() {
+    if (!(this.scarUntil instanceof Map)) this.scarUntil = new Map()
+    const { width, height } = this.world
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (scarStrength(this.world.terrainAt(x, y)) === 0) continue
+        const index = y * width + x
+        if (!this.scarUntil.has(index)) this.scarUntil.set(index, this.time + SCAR_FADE)
+      }
+    }
+  }
+
+  private scarGround(blast: Blast) {
+    if (blast.splash <= 0) return
+    const reach = Math.ceil(blast.splash)
+    const cx = Math.floor(blast.x)
+    const cy = Math.floor(blast.z)
+    for (let y = cy - reach; y <= cy + reach; y++) {
+      for (let x = cx - reach; x <= cx + reach; x++) {
+        if (!this.world.inBounds(x, y)) continue
+        const dist = Math.hypot(x + 0.5 - blast.x, y + 0.5 - blast.z)
+        if (dist > blast.splash) continue
+        const dealt = blast.damage * Math.max(0, 1 - dist / blast.splash)
+        const gain = scarGain(dealt)
+        if (gain <= 0 || Math.random() >= SCAR_CHANCE) continue
+        const terrain = this.world.terrainAt(x, y)
+        if (!openGround(terrain)) continue
+        const next = Math.min(SCAR_MAX, scarStrength(terrain) + gain)
+        this.markScar(x, y, next)
+      }
+    }
+  }
+
   private live(city: CityRuntime): CityLayout {
     const cached = settledCities.get(city)
     if (cached && cached.layout === city.layout && cached.ruins === city.ruins.length) return cached.settled
@@ -803,7 +887,7 @@ export class Game {
   private clearCityTrees(layout: CityLayout) {
     const table = this.growthTerrain
     for (const tile of layout.tiles) {
-      if (this.world.terrainAt(tile.x, tile.y) !== Terrain.Tree) continue
+      if (!this.world.inBounds(tile.x, tile.y) || this.world.terrainAt(tile.x, tile.y) !== Terrain.Tree) continue
       this.world.setTerrain(tile.x, tile.y, Terrain.Land)
       this.fallen.push({ x: tile.x, y: tile.y })
       if (table) table[tile.y * this.world.width + tile.x] = Terrain.Land
@@ -814,7 +898,7 @@ export class Game {
     this.pathfinder.clearBlocked()
     for (const city of this.cities) {
       for (const building of this.live(city).buildings) {
-        this.pathfinder.setBlocked(building.x, building.y, true)
+        eachBuildingTile(building, (x, y) => this.pathfinder.setBlocked(x, y, true))
       }
     }
   }
@@ -887,12 +971,14 @@ export class Game {
           continue
         }
         const before = unit.progress
-        unit.progress = this.fund(owner, unit.bill, before, unit.type.buildTime, left)
+        const duration = instantBuilds() ? 0 : unit.type.buildTime
+        unit.progress = this.fund(owner, unit.bill, before, duration, left)
         const gained = unit.progress - before
         if (gained <= 0) break
-        left -= gained * unit.type.buildTime
+        left -= gained * duration
         if (unit.progress < 1) break
         queue.shift()
+        if (unit.typeId === UnitTypeId.Airport) this.adoptOrphanJets(unit)
       }
       if (queue.length === 0) this.jobs.delete(playerId)
     }
@@ -902,26 +988,44 @@ export class Game {
     for (const [playerId, queue] of this.training) {
       const owner = this.players.get(playerId)
       if (!owner) continue
-      let left = dt
-      while (queue.length > 0 && left > 0) {
-        const job = queue[0]
-        if (job.progress >= 1) {
-          if (!this.releaseTrainee(playerId, job.typeId)) break
-          queue.shift()
+      const leftFor = new Map<number, number>()
+      for (const job of queue) if (!leftFor.has(job.yardId)) leftFor.set(job.yardId, dt)
+      const drop = new Set<number>()
+      for (let i = 0; i < queue.length; i++) {
+        const job = queue[i]
+        let left = leftFor.get(job.yardId) ?? 0
+        if (left <= 0 && job.progress < 1) continue
+        const yard = this.units.find(
+          (unit) => unit.id === job.yardId && unit.ownerId === playerId && unit.health > 0 && unit.progress >= 1,
+        )
+        if (!yard) {
+          drop.add(i)
           continue
         }
-        const type = UNIT_TYPES[job.typeId]
-        const duration = type.buildTime / this.yardPace(playerId, yardOf(job.typeId))
-        const before = job.progress
-        job.progress = this.fund(owner, type.cost, before, duration, left)
-        const gained = job.progress - before
-        if (gained <= 0) break
-        left -= gained * duration
-        if (job.progress < 1) break
-        if (!this.releaseTrainee(playerId, job.typeId)) break
-        queue.shift()
+        if (job.progress < 1) {
+          const type = UNIT_TYPES[job.typeId]
+          const duration = instantBuilds() ? 0 : type.buildTime / (1 + FACTORY_BUILD_BONUS)
+          const before = job.progress
+          job.progress = this.fund(owner, type.cost, before, duration, left)
+          const gained = job.progress - before
+          if (gained <= 0) {
+            leftFor.set(job.yardId, 0)
+            continue
+          }
+          left -= gained * duration
+          leftFor.set(job.yardId, left)
+          if (job.progress < 1) continue
+        }
+        if (!this.releaseTrainee(playerId, job, yard)) {
+          leftFor.set(job.yardId, 0)
+          continue
+        }
+        drop.add(i)
       }
-      if (queue.length === 0) this.training.delete(playerId)
+      if (drop.size === 0) continue
+      const next = queue.filter((_, index) => !drop.has(index))
+      if (next.length === 0) this.training.delete(playerId)
+      else this.training.set(playerId, next)
     }
   }
 
@@ -935,15 +1039,14 @@ export class Game {
     return progress + slice / cost
   }
 
-  private releaseTrainee(playerId: number, typeId: UnitTypeId): boolean {
+  private releaseTrainee(playerId: number, job: TrainJob, yard: Unit): boolean {
     const owner = this.players.get(playerId)
     if (!owner) return false
+    const typeId = job.typeId
     const type = UNIT_TYPES[typeId]
-    const yard = this.exitYard(playerId, yardOf(typeId))
-    if (!yard) return false
     const domain = domainOf(type)
     if (domain === MoveDomain.Air) {
-      if (typeId === UnitTypeId.Jet) return this.releaseJet(owner)
+      if (typeId === UnitTypeId.Jet) return this.releaseJet(owner, yard)
       const unit = this.placeMobile(owner, typeId, yard.tile, 0)
       unit.home = { x: yard.tile.x, y: yard.tile.y }
       unit.flight = Flight.Ground
@@ -977,43 +1080,57 @@ export class Game {
     return best
   }
 
-  private releaseJet(owner: Player): boolean {
-    const spot = this.openJetBay(owner.id)
-    if (!spot) return false
-    const tile = bayTile(spot.airport.tile, spot.bay)
-    const unit = this.placeMobile(owner, UnitTypeId.Jet, tile, bayFacing(spot.bay))
-    unit.home = { x: spot.airport.tile.x, y: spot.airport.tile.y }
-    unit.bay = spot.bay
+  private releaseJet(owner: Player, airport: Unit): boolean {
+    const bay = openBay(this.takenBays(airport))
+    if (bay < 0) return false
+    const tile = bayTile(airport.tile, bay)
+    const unit = this.placeMobile(owner, UnitTypeId.Jet, tile, bayFacing(bay))
+    unit.home = { x: airport.tile.x, y: airport.tile.y }
+    unit.bay = bay
     unit.flight = Flight.Ground
     unit.altitude = 0
     return true
   }
 
-  private openJetBay(playerId: number): { airport: Unit; bay: number } | null {
-    for (const airport of this.units) {
-      if (!this.finishedAirport(airport, playerId)) continue
+  private adoptOrphanJets(airport: Unit) {
+    for (const unit of this.units) {
+      if (unit.ownerId !== airport.ownerId || unit.typeId !== UnitTypeId.Jet || unit.health <= 0) continue
+      if (this.jetHasAirport(unit)) continue
       const bay = openBay(this.takenBays(airport))
-      if (bay >= 0) return { airport, bay }
+      if (bay < 0) return
+      unit.home = { x: airport.tile.x, y: airport.tile.y }
+      unit.bay = bay
+      const grounded =
+        unit.flight === Flight.Ground ||
+        unit.flight === Flight.Taxi ||
+        unit.flight === Flight.Landing ||
+        unit.altitude < 0.25
+      if (grounded || unit.returning) unit.orderMove(airport.tile, this.pathfinder, this.units)
     }
-    return null
   }
 
-  private jetRoom(playerId: number): number {
-    const pads: TileCoord[] = []
+  private jetHasAirport(jet: Unit): boolean {
+    if (!jet.home || jet.bay < 0) return false
+    for (const unit of this.units) {
+      if (!this.finishedAirport(unit, jet.ownerId)) continue
+      if (unit.tile.x === jet.home.x && unit.tile.y === jet.home.y) return true
+    }
+    return false
+  }
+
+  private baysAt(airport: Unit): number {
     const parked: { x: number; y: number; bay: number }[] = []
     for (const unit of this.units) {
-      if (unit.ownerId !== playerId || unit.health <= 0) continue
-      if (this.finishedAirport(unit, playerId)) pads.push({ x: unit.tile.x, y: unit.tile.y })
-      if (unit.typeId === UnitTypeId.Jet && unit.home && unit.bay >= 0) {
-        parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay })
-      }
+      if (unit.typeId !== UnitTypeId.Jet || unit.health <= 0 || unit.bay < 0 || !unit.home) continue
+      if (unit.home.x !== airport.tile.x || unit.home.y !== airport.tile.y) continue
+      parked.push({ x: unit.home.x, y: unit.home.y, bay: unit.bay })
     }
-    return baysFree(pads, parked)
+    return baysFree([{ x: airport.tile.x, y: airport.tile.y }], parked)
   }
 
-  private queuedJets(playerId: number): number {
+  private queuedJets(playerId: number, yardId: number): number {
     let count = 0
-    for (const job of this.training.get(playerId) ?? []) if (job.typeId === UnitTypeId.Jet) count += 1
+    for (const job of this.training.get(playerId) ?? []) if (job.yardId === yardId && job.typeId === UnitTypeId.Jet) count += 1
     return count
   }
 
@@ -1031,41 +1148,8 @@ export class Game {
     return taken
   }
 
-  private hasFinished(playerId: number, typeId: UnitTypeId): boolean {
-    return this.units.some(
-      (unit) => unit.ownerId === playerId && unit.typeId === typeId && unit.health > 0 && unit.progress >= 1,
-    )
-  }
-
-  private exitYard(playerId: number, typeId: UnitTypeId): Unit | undefined {
-    if (typeId === UnitTypeId.Factory) return this.exitFactory(playerId)
-    return this.units.find(
-      (unit) => unit.ownerId === playerId && unit.typeId === typeId && unit.health > 0 && unit.progress >= 1,
-    )
-  }
-
-  private yardPace(playerId: number, typeId: UnitTypeId): number {
-    let count = 0
-    for (const unit of this.units) {
-      if (unit.ownerId !== playerId || unit.typeId !== typeId || unit.health <= 0 || unit.progress < 1) continue
-      count += 1
-    }
-    return 1 + FACTORY_BUILD_BONUS * count
-  }
-
   private ownsFactory(playerId: number): boolean {
     return this.units.some((unit) => unit.ownerId === playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0)
-  }
-
-  private exitFactory(playerId: number): Unit | undefined {
-    const ready = (unit: Unit) =>
-      unit.ownerId === playerId && unit.typeId === UnitTypeId.Factory && unit.health > 0 && unit.progress >= 1
-    const primaryId = this.primaries.get(playerId)
-    if (primaryId !== undefined) {
-      const primary = this.units.find((unit) => unit.id === primaryId && ready(unit))
-      if (primary) return primary
-    }
-    return this.units.find(ready)
   }
 
   private placeMobile(owner: Player, typeId: UnitTypeId, tile: TileCoord, facing: number): Unit {
@@ -1127,9 +1211,12 @@ export class Game {
     return null
   }
 
-  private clearPrimary(unitId: number) {
-    for (const [playerId, id] of this.primaries) {
-      if (id === unitId) this.primaries.delete(playerId)
+  private clearTraining(yardId: number) {
+    for (const [playerId, queue] of this.training) {
+      const next = queue.filter((job) => job.yardId !== yardId)
+      if (next.length === queue.length) continue
+      if (next.length === 0) this.training.delete(playerId)
+      else this.training.set(playerId, next)
     }
   }
 
@@ -1141,6 +1228,10 @@ export class Game {
       else this.jobs.set(playerId, next)
     }
   }
+}
+
+function openGround(terrain: Terrain): boolean {
+  return terrain === Terrain.Land || terrain === Terrain.Flowers || terrain === Terrain.Forest || scarStrength(terrain) > 0
 }
 
 function citySpan(city: CityLayout): { minX: number; minZ: number; maxX: number; maxZ: number } | null {

@@ -6,7 +6,7 @@ import {
   Object3D,
 } from 'three'
 import type { WorldSnapshot } from '../../shared/protocol.ts'
-import { Terrain } from '../../shared/tiles.ts'
+import { Terrain, scarStrength } from '../../shared/tiles.ts'
 
 export const TILE_TOP = 0.08
 
@@ -16,6 +16,7 @@ const OBSTACLE = new Color(0x3a342e)
 const FOREST = new Color(0x3d9a4a)
 const ROAD = new Color(0x667755)
 const TOWN = new Color(0x1a1a1a)
+const SCAR = new Color(0x6a5840)
 const dummy = new Object3D()
 
 export function buildTerrain(world: WorldSnapshot): InstancedMesh {
@@ -54,5 +55,6 @@ function tileColor(terrain: Terrain, x: number, y: number): Color {
   if (terrain === Terrain.Road) return ROAD
   if (terrain === Terrain.Town) return TOWN
   if (terrain === Terrain.Obstacle) return OBSTACLE
+  if (scarStrength(terrain) > 0) return SCAR
   return (x + y) % 2 === 0 ? CLEAR_A : CLEAR_B
 }
