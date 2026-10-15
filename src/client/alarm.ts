@@ -19,7 +19,7 @@ const GESTURES = ['pointerup', 'keydown']
 export class Alarm {
   private context: AudioContext | null = null
   private buffers: Takes<AudioBuffer> | null = null
-  private playing: AudioBufferSourceNode[] = []
+  private playing: AudioBufferSourceNode | null = null
   private until = 0
   private on = true
 
@@ -30,19 +30,17 @@ export class Alarm {
   setOn(on: boolean) {
     this.on = on
     if (on) return
-    for (const source of this.playing) source.stop()
-    this.playing = []
+    this.playing?.stop()
+    this.playing = null
     this.until = 0
   }
 
   sound(kind: ContactKind) {
     const context = this.context
     if (!this.on || !context || !this.buffers || context.currentTime < this.until) return
-    const horn = pick(this.buffers.horns)
-    const line = pick(this.buffers.lines[kind])
-    const start = context.currentTime
-    this.playing = [play(context, horn, start), play(context, line, start + horn.duration)]
-    this.until = start + horn.duration + line.duration
+    const sample = pick(pick([this.buffers.horns, this.buffers.lines[kind]]))
+    this.playing = play(context, sample)
+    this.until = context.currentTime + sample.duration
   }
 
   private unlock() {
@@ -78,10 +76,10 @@ function pick<T>(takes: T[]): T {
   return takes[Math.floor(Math.random() * takes.length)]
 }
 
-function play(context: AudioContext, buffer: AudioBuffer, when: number): AudioBufferSourceNode {
+function play(context: AudioContext, buffer: AudioBuffer): AudioBufferSourceNode {
   const source = context.createBufferSource()
   source.buffer = buffer
   source.connect(context.destination)
-  source.start(when)
+  source.start()
   return source
 }
