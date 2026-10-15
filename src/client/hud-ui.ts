@@ -1,6 +1,7 @@
 import type { Faction } from '../shared/lobby.ts'
 import { UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { BuildTab, focusLabel, HealthBand, PingState, TileBlock, TileKind, Trend, type HudModel, type HudTile, type QueueChip, type SelectedRow, type Selection } from './hud-model.ts'
+import { closeMenu } from './menu.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
 import './console.css'
@@ -200,6 +201,7 @@ export class HudView {
   private readonly population: HTMLElement
   private readonly cities: HTMLElement
   private readonly ping: HTMLElement
+  private readonly menu: HTMLElement
   private readonly tablist: HTMLElement
   private readonly tabs: { tab: BuildTab; button: HTMLButtonElement }[]
   private readonly orders: HTMLElement
@@ -246,6 +248,7 @@ export class HudView {
     this.population = find('#population')
     this.cities = find('#cities')
     this.ping = find('#ping')
+    this.menu = find('#menu')
     this.tablist = find('.build-tabs')
     this.tabs = TABS.map(([tab, label]) => {
       const button = document.createElement('button')
@@ -378,6 +381,7 @@ export class HudView {
     this.setFactions([], false, null)
     this.setOutcome(null)
     this.paintTrace(NO_TRACE)
+    closeMenu(this.menu)
   }
 
   /** Presses the tile labelled F<slot>; false when no shown tile carries that label. */

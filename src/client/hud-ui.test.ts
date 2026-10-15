@@ -794,8 +794,9 @@ describe('hud clear', () => {
     return [`${indent}<${node.localName}${attributes.join('')}${value}>`, ...[...node.childNodes].map((child) => dom(child, depth + 1))].join('\n')
   }
 
-  it('returns #hud to the DOM a fresh view builds, whatever was painted', () => {
+  it('returns #hud to the DOM a fresh view builds, whatever was painted or opened', () => {
     const { root, view } = mount()
+    bindMenu()
     const fresh = dom(root)
     const fixture = (make: () => HudFixture) => () => {
       const { input, credits, factions } = make()
@@ -810,6 +811,7 @@ describe('hud clear', () => {
       ['spectate', fixture(spectateHud)],
       ['outcome', () => view.setOutcome({ title: 'Victory', text: 'You are the last player.' })],
       ['trace', () => view.paintTrace(traceFrame())],
+      ['menu', () => one(root, '[data-open="menu"]').click()],
     ]
     for (const [name, scene] of scenes) {
       scene()
