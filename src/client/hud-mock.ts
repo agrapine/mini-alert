@@ -76,7 +76,7 @@ function show(scene: Scene) {
   localStorage.setItem('rts.seen-version', version)
   bindMenu({ onMusic: log('onMusic'), onSounds: log('onSounds'), onMusicVolume: log('onMusicVolume'), onSoundsVolume: log('onSoundsVolume'), onSurrender: log('onSurrender') })
   document.body.classList.add('match')
-  document.body.classList.toggle('spectate', fixture.input.spectating)
+  view.setBattle(12)
   view.paint(hudModel(fixture.input), fixture.credits)
   view.setFactions(fixture.factions, fixture.input.spectating, fixture.input.playerId)
   showRadar(fixture)

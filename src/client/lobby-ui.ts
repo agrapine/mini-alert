@@ -31,6 +31,7 @@ import {
 import { isMinimapShore, minimapRgb } from '../shared/minimap.ts'
 import type { Terrain } from '../shared/tiles.ts'
 import '@fontsource/saira-stencil-one/latin-400.css'
+import './console.css'
 import './lobby.css'
 
 export type LobbyActions = {

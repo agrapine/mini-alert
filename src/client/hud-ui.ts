@@ -2,6 +2,9 @@ import type { Faction } from '../shared/lobby.ts'
 import { Locomotion, UNIT_TYPES, UnitTypeId } from '../shared/unit-types.ts'
 import { focusLabel, PingState, TileKind, Trend, type HudModel, type HudTile } from './hud-model.ts'
 import { bindTrace, type TracePaint } from './trace-pie.ts'
+import '@fontsource/saira-stencil-one/latin-400.css'
+import './console.css'
+import './hud.css'
 
 export type HudActions = {
   armBuilding(typeId: UnitTypeId): void
@@ -18,14 +21,21 @@ export type HudActions = {
 export type CreditReadout = { shown: number; trend: Trend }
 
 const MARKUP = `
-<nav id="menubar">
-  <div id="menu" class="menu">
-    <button type="button" data-open="menu">Menu</button>
-    <div class="dropdown">
-      <button type="button" data-dismiss>Surrender</button>
-      <div class="submenu">
-        <button type="button">Settings <span class="caret">›</span></button>
-        <div class="flyout">
+<header id="menubar">
+  <p class="hud-logo">MINI ALERT</p>
+  <p id="battle"></p>
+  <div id="stats">
+    <p class="readout"><span class="readout-label">Credits</span><span class="readout-value"><span id="credits"></span><span class="trend" aria-hidden="true"></span></span></p>
+    <p class="readout"><span class="readout-label">Units</span><span class="readout-value"><span id="forces"></span><span> / </span><span class="cap"></span></span></p>
+    <p class="readout pop"><span class="readout-label">Pop</span><span class="readout-value" id="population"></span></p>
+    <p class="readout"><span class="readout-label">Cities</span><span class="readout-value" id="cities"></span></p>
+  </div>
+  <div class="hud-controls">
+    <p class="ping" title="Round trip to the server"><span id="ping"></span><span class="ping-dot" aria-hidden="true">◉</span></p>
+    <div id="menu" class="menu">
+      <button type="button" class="plate" data-open="menu">Menu</button>
+      <div class="dropdown">
+        <div class="menu-group" role="group" aria-label="Settings">
           <button type="button" data-toggle="music" aria-pressed="true">Music <span class="mark">On</span></button>
           <div class="volume">
             <label for="music-volume">Music volume</label>
@@ -40,65 +50,58 @@ const MARKUP = `
           </div>
           <button type="button" data-toggle aria-pressed="true">Input <span class="mark">On</span></button>
         </div>
+        <div class="menu-group">
+          <button type="button" data-open="changelog">Changelog</button>
+          <button type="button" data-open="fullscreen">Full screen <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+          <button type="button" class="danger" data-dismiss>Surrender</button>
+        </div>
       </div>
     </div>
+    <button type="button" class="plate" data-open="help" aria-label="Help" title="Help">?</button>
   </div>
-  <button type="button" data-open="changelog">Changelog</button>
-  <button type="button" data-open="help">Help</button>
-  <button type="button" id="fullscreen" data-open="fullscreen" aria-label="Full screen" title="Full screen">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
-  </button>
-</nav>
+</header>
 <div id="sheet" hidden>
   <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <header>
       <h2 id="sheet-title"></h2>
-      <button type="button" id="sheet-close">Close</button>
+      <button type="button" class="plate" id="sheet-close">Close</button>
     </header>
     <div id="sheet-body"></div>
   </div>
 </div>
-<div id="stats">
-  <div class="stat" title="Credits">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="16" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/><ellipse cx="12" cy="12" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/><ellipse cx="12" cy="8" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
-    <span id="credits"></span>
-  </div>
-  <div class="stat" title="Units">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="13" width="6" height="6" rx="1" fill="currentColor"/><rect x="9" y="5" width="6" height="6" rx="1" fill="currentColor"/><rect x="15" y="13" width="6" height="6" rx="1" fill="currentColor"/></svg>
-    <span id="forces"></span>
-  </div>
-  <div class="stat" title="Population">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="2.2" fill="currentColor"/><circle cx="16" cy="9" r="1.8" fill="currentColor"/><path d="M4.5 18c.6-2.6 2.4-4 4.5-4s3.9 1.4 4.5 4M13 18c.4-2 1.7-3.2 3.3-3.2 1.5 0 2.7 1 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-    <span id="population"></span>
-  </div>
-  <div class="stat" title="Cities">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10l5-3v13M9 20V7l6-3v16M15 20V9l5 2v9M3 20h18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-    <span id="cities"></span>
-  </div>
-  <div class="stat ping" title="Round trip to the server">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h2v-3H4zM9 19h2v-6H9zM14 19h2V9h-2zM19 19h2V5h-2z" fill="currentColor"/></svg>
-    <span id="ping"></span>
-  </div>
-</div>
 <aside id="side">
-  <div id="minimap">
-    <canvas id="minimap-map"></canvas>
-    <canvas id="minimap-marks"></canvas>
-  </div>
-  <div id="orders"></div>
-  <div id="city-focus" hidden>
-    <p id="city-focus-name">City hall</p>
-    <p id="city-focus-label">Balanced</p>
-    <input id="city-focus-range" type="range" min="-2" max="2" step="1" value="0" aria-label="City focus">
-  </div>
+  <section class="hud-panel" id="radar-panel" aria-labelledby="radar-title">
+    <header class="panel-head"><span class="panel-index" aria-hidden="true">01</span><h2 id="radar-title">Radar</h2></header>
+    <div class="radar-frame">
+      <div id="minimap">
+        <canvas id="minimap-map"></canvas>
+        <canvas id="minimap-marks"></canvas>
+      </div>
+      <span class="radar-ring" aria-hidden="true"></span>
+    </div>
+  </section>
+  <section class="hud-panel" id="build-panel" aria-labelledby="build-title">
+    <header class="panel-head"><span class="panel-index" aria-hidden="true">02</span><h2 id="build-title">Build</h2></header>
+    <div class="panel-scroll">
+      <div id="orders"></div>
+      <div id="city-focus" hidden>
+        <p id="city-focus-name">City hall</p>
+        <p id="city-focus-label">Balanced</p>
+        <input id="city-focus-range" type="range" min="-2" max="2" step="1" value="0" aria-label="City focus">
+      </div>
+    </div>
+  </section>
+  <section class="hud-panel" id="vision-panel" aria-labelledby="vision-title" hidden>
+    <header class="panel-head"><span class="panel-index" aria-hidden="true">02</span><h2 id="vision-title">Vision</h2></header>
+    <div class="panel-scroll" id="plates"></div>
+  </section>
 </aside>
-<div id="vision" hidden></div>
 <div id="legend" hidden></div>
 <div id="outcome" hidden>
   <div class="outcome-card" role="dialog" aria-modal="true" aria-labelledby="outcome-title">
     <h2 id="outcome-title"></h2>
     <p id="outcome-text"></p>
-    <button type="button" id="outcome-close">Close</button>
+    <button type="button" class="plate" id="outcome-close">Close</button>
   </div>
 </div>
 <div id="trace" hidden>
@@ -120,8 +123,11 @@ type TileNode = {
 }
 
 export class HudView {
+  private readonly battle: HTMLElement
   private readonly credits: HTMLElement
+  private readonly trend: HTMLElement
   private readonly forces: HTMLElement
+  private readonly cap: HTMLElement
   private readonly population: HTMLElement
   private readonly cities: HTMLElement
   private readonly ping: HTMLElement
@@ -130,7 +136,10 @@ export class HudView {
   private readonly cityFocus: HTMLElement
   private readonly focusLabel: HTMLElement
   private readonly focusRange: HTMLInputElement
+  private readonly build: HTMLElement
   private readonly vision: HTMLElement
+  private readonly plates: HTMLElement
+  private readonly leave: HTMLButtonElement
   private readonly legend: HTMLElement
   private readonly outcome: HTMLElement
   private readonly outcomeTitle: HTMLElement
@@ -149,8 +158,11 @@ export class HudView {
       if (!found) throw new Error(`missing ${selector}`)
       return found
     }
+    this.battle = find('#battle')
     this.credits = find('#credits')
+    this.trend = find('#stats .trend')
     this.forces = find('#forces')
+    this.cap = find('#stats .cap')
     this.population = find('#population')
     this.cities = find('#cities')
     this.ping = find('#ping')
@@ -167,7 +179,14 @@ export class HudView {
       this.focusLabel.textContent = focusLabel(step)
       this.actions.setCityFocus(step)
     })
-    this.vision = find('#vision')
+    this.build = find('#build-panel')
+    this.vision = find('#vision-panel')
+    this.plates = find('#plates')
+    this.leave = document.createElement('button')
+    this.leave.type = 'button'
+    this.leave.className = 'plate'
+    this.leave.textContent = 'Leave'
+    this.leave.addEventListener('click', () => this.actions.leave())
     this.legend = find('#legend')
     this.outcome = find('#outcome')
     this.outcomeTitle = find('#outcome-title')
@@ -185,8 +204,10 @@ export class HudView {
     setText(this.credits, Math.round(credits.shown).toLocaleString('en-US'))
     this.credits.classList.toggle('up', credits.trend === Trend.Up)
     this.credits.classList.toggle('down', credits.trend === Trend.Down)
+    setText(this.trend, credits.trend === Trend.Up ? '▲' : credits.trend === Trend.Down ? '▼' : '')
     setText(this.forces, String(model.army))
     this.forces.classList.toggle('over', model.over)
+    setText(this.cap, String(model.population))
     setText(this.population, String(model.population))
     setText(this.cities, String(model.cities))
     const ping = model.ping
@@ -208,24 +229,25 @@ export class HudView {
     }
   }
 
+  setBattle(gameId: number) {
+    setText(this.battle, `Battle #${gameId}`)
+  }
+
   setFactions(factions: readonly Faction[], spectating: boolean, viewedId: number | null) {
+    this.build.hidden = spectating
     this.vision.hidden = !spectating
-    this.vision.replaceChildren()
+    this.plates.replaceChildren()
     if (spectating) {
       for (const faction of factions) {
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.textContent = faction.name
-        button.style.color = cssColor(faction.color)
-        button.classList.toggle('on', faction.playerId === viewedId)
-        button.addEventListener('click', () => this.actions.viewAs(faction.playerId))
-        this.vision.append(button)
+        const plate = document.createElement('button')
+        plate.type = 'button'
+        plate.className = 'faction-plate'
+        plate.setAttribute('aria-pressed', String(faction.playerId === viewedId))
+        plate.append(...factionMark(faction))
+        plate.addEventListener('click', () => this.actions.viewAs(faction.playerId))
+        this.plates.append(plate)
       }
-      const leave = document.createElement('button')
-      leave.type = 'button'
-      leave.textContent = 'Leave'
-      leave.addEventListener('click', () => this.actions.leave())
-      this.vision.append(leave)
+      this.plates.append(this.leave)
     }
     this.legend.hidden = false
     this.legend.replaceChildren()
@@ -233,12 +255,7 @@ export class HudView {
       const row = document.createElement('div')
       row.className = 'legend-row'
       row.classList.toggle('defeated', faction.defeated)
-      const swatch = document.createElement('i')
-      swatch.style.background = cssColor(faction.color)
-      const name = document.createElement('span')
-      name.className = 'name'
-      name.textContent = faction.name
-      row.append(swatch, name)
+      row.append(...factionMark(faction))
       if (faction.defeated) {
         const tag = document.createElement('span')
         tag.className = 'tag'
@@ -260,8 +277,9 @@ export class HudView {
   }
 
   clear() {
+    this.build.hidden = false
     this.vision.hidden = true
-    this.vision.replaceChildren()
+    this.plates.replaceChildren()
     this.legend.hidden = true
     this.legend.replaceChildren()
     this.outcome.hidden = true
@@ -337,6 +355,16 @@ function paintTile(node: TileNode, tile: HudTile) {
   node.button.classList.toggle('armed', tile.armed)
   setText(node.cost, tile.cost)
   setText(node.hotkey, tile.slot === null ? '' : `F${tile.slot}`)
+}
+
+function factionMark(faction: Faction): [HTMLElement, HTMLElement] {
+  const swatch = document.createElement('i')
+  swatch.className = 'swatch'
+  swatch.style.background = cssColor(faction.color)
+  const name = document.createElement('span')
+  name.className = 'name'
+  name.textContent = faction.name
+  return [swatch, name]
 }
 
 function setText(element: HTMLElement, text: string) {

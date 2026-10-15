@@ -30,7 +30,7 @@ function scene() {
     ready: tiles.filter((tile) => tile.classList.contains('ready')).length,
     focus: text('#city-focus-label'),
     factions: document.querySelectorAll('#legend > *').length,
-    spectating: document.body.classList.contains('spectate'),
+    spectating: shown('#vision-panel'),
     menu: document.querySelector('#menu')?.classList.contains('open'),
     dialog: text('#sheet-title') ?? text('#outcome-title'),
     trace: shown('#trace'),
