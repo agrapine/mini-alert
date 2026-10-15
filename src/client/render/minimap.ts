@@ -85,7 +85,7 @@ export class Minimap {
   ) {
     this.world = world
     this.root.hidden = false
-    this.root.style.aspectRatio = `${world.width} / ${world.height}`
+    this.root.style.setProperty('--aspect', String(world.width / world.height))
     const painted = paintTerrain(map, world)
     this.ctx = painted.ctx
     this.image = painted.image

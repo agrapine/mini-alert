@@ -24,6 +24,7 @@
 - Settings has a Music volume and a Sounds volume slider, from 0 to 100% in steps of 5, each under its On/Off switch. They work by touch and with the arrow keys, apply as you move them and are remembered. Music starts at 40% and sounds at 100%.
 - The Music volume slider sets the music level on iPhone and iPad too.
 - On the minimap every enemy unit and building keeps its owner's colour inside a red outline, so enemies stand out from your own dots. While spectating, the enemies are those of the faction you view.
+- The battle screen is a command console like the lobby. A top bar shows the MINI ALERT mark, the battle number, Credits (▲ while rising, ▼ while falling), Units as army / population, Pop, Cities and the ◉ ping, with Menu and Help (?) at the right; the Menu holds the Music, Sounds and Input settings, Changelog, Full screen and Surrender. A 300 px sidebar frames the minimap as 01 Radar and the build tiles as 02 Build; spectators get 02 Vision, a plate per faction and Leave. The map fills the space beside them, the legend and the admin timing pie sit at its top corners, and Help, the changelog, Victory and Defeated open as console dialogs; an unseen changelog now shows over the lobby too. On phones the bar spans the top and the sidebar is a 120 px rail whose every control is at least 44 px.
 
 ## 0.6
 - F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.

@@ -83,6 +83,16 @@ function face(entry: HTMLElement) {
   }
 }
 
+function panel(root: ParentNode, heading: string): HTMLElement {
+  const found = all(root, 'section').find((entry) => one(entry, 'h2').textContent === heading)
+  if (!found) throw new Error(`no ${heading} panel`)
+  return found
+}
+
+function hex(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`
+}
+
 function classes(element: Element): string[] {
   return [...element.classList]
 }
@@ -133,6 +143,61 @@ describe('hud readouts', () => {
     expect(at(48)).toEqual(['48 ms', []])
     expect(at(210)).toEqual(['210 ms', ['slow']])
     expect(at(420)).toEqual(['420 ms', ['slow', 'bad']])
+  })
+})
+
+describe('hud top bar', () => {
+  it('holds the logotype, the battle, the labelled readouts, the ping, Menu and Help', () => {
+    const { root, view } = mount()
+    const { input, credits } = baseHud()
+    view.setBattle(12)
+    paint(view, input, credits)
+    const bar = one(root, '#menubar')
+    expect([one(bar, '.hud-logo').textContent, one(bar, '#battle').textContent]).toEqual(['MINI ALERT', 'Battle #12'])
+    expect(all(bar, '.readout').map((entry) => [one(entry, '.readout-label').textContent, one(entry, '.readout-value').textContent])).toEqual([
+      ['Credits', '12,450'],
+      ['Units', '23 / 42'],
+      ['Pop', '42'],
+      ['Cities', '2'],
+    ])
+    expect([one(bar, '.ping-dot').textContent, one(bar, '#ping').textContent]).toEqual(['◉', '48 ms'])
+    expect(one(bar, '[data-open="menu"]').textContent).toBe('Menu')
+    expect(one(bar, '[data-open="help"]').getAttribute('aria-label')).toBe('Help')
+  })
+
+  it('marks rising credits with ▲ and falling credits with ▼', () => {
+    const { root, view } = mount()
+    const trend = (readout: CreditReadout) => {
+      paint(view, baseHud().input, readout)
+      return one(root, '#stats .trend').textContent
+    }
+    expect([trend({ shown: 10, trend: Trend.Up }), trend({ shown: 10, trend: Trend.Down }), trend(STEADY)]).toEqual(['▲', '▼', ''])
+  })
+
+  it('drops down Music, Sounds and Input, then Changelog, Full screen and Surrender', () => {
+    const { root } = mount()
+    const items = all(one(root, '#menu .dropdown'), 'button').map((entry) => entry.textContent?.trim())
+    expect(items).toEqual(['Music On', 'Sounds On', 'Input On', 'Changelog', 'Full screen', 'Surrender'])
+  })
+})
+
+describe('hud sidebar', () => {
+  it('holds the minimap in panel 01 Radar and the tiles in panel 02 Build', () => {
+    const { root, view } = mount()
+    paint(view, baseHud().input)
+    const radar = panel(root, 'Radar')
+    const build = panel(root, 'Build')
+    const index = (entry: HTMLElement) => {
+      const tag = one(entry, '.panel-index')
+      return [tag.textContent, tag.getAttribute('aria-hidden')]
+    }
+    expect([index(radar), index(build)]).toEqual([
+      ['01', 'true'],
+      ['02', 'true'],
+    ])
+    expect(radar.contains(one(root, '#minimap'))).toBe(true)
+    expect(tiles(build).map((entry) => face(entry).name)).toEqual(['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building'])
+    expect(tiles(root)).toEqual(tiles(build))
   })
 })
 
@@ -431,7 +496,7 @@ describe('hud menu', () => {
     expect([sheet(root), localStorage.getItem(SEEN)]).toEqual(['Changelog', version])
   })
 
-  it('requests full screen from a click on its icon, and exits it when already full screen', () => {
+  it('requests full screen from a click on its icon, and exits it when already full screen, closing the menu', () => {
     const { root } = bind()
     const request = vi.fn(() => Promise.resolve())
     const exit = vi.fn(() => Promise.resolve())
@@ -440,8 +505,10 @@ describe('hud menu', () => {
     const icon = one(opener(root, 'fullscreen'), 'svg')
     const press = () => icon.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null })
+    opener(root, 'menu').click()
     press()
     expect([request.mock.calls.length, exit.mock.calls.length]).toEqual([1, 0])
+    expect(one(root, '#menu').classList.contains('open')).toBe(false)
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: document.documentElement })
     press()
     expect([request.mock.calls.length, exit.mock.calls.length]).toEqual([1, 1])
@@ -468,18 +535,25 @@ describe('hud factions', () => {
     ])
   })
 
-  it('offer vision only to spectators: a button per faction fires viewAs, and Leave fires leave', () => {
+  it('give spectators panel 02 Vision instead of Build: a plate per faction, pressed on the viewed one, then Leave', () => {
     const { root, view, actions } = mount()
-    const { factions } = spectateHud()
-    const visible = () => all(root, 'button').filter(shown).map((entry) => entry.textContent)
+    const { input, factions } = spectateHud()
+    paint(view, input)
     view.setFactions(factions, false, 1)
-    expect(visible()).not.toContain('Ada')
+    expect([shown(panel(root, 'Build')), shown(panel(root, 'Vision'))]).toEqual([true, false])
     view.setFactions(factions, true, 3)
-    expect(visible()).toEqual(expect.arrayContaining([...factions.map((faction) => faction.name), 'Leave']))
-    expect(factions.filter((faction) => button(root, faction.name).classList.contains('on')).map((faction) => faction.name)).toEqual(['Cy'])
-    expect(factions.map((faction) => button(root, faction.name).style.color)).toEqual([...one(root, '#legend').children].map((row) => one(row, 'i').style.background))
-    button(root, 'Eve').click()
-    button(root, 'Leave').click()
+    const vision = panel(root, 'Vision')
+    expect([shown(panel(root, 'Build')), shown(vision), one(vision, '.panel-index').textContent]).toEqual([false, true, '02'])
+    expect([tiles(root), root.querySelector('#vision')]).toEqual([[], null])
+    const plates = all(vision, '.faction-plate').map((plate) => ({
+      swatch: one(plate, '.swatch').style.background,
+      name: one(plate, '.name').textContent,
+      pressed: plate.getAttribute('aria-pressed'),
+    }))
+    expect(plates).toEqual(factions.map((faction) => ({ swatch: hex(faction.color), name: faction.name, pressed: String(faction.playerId === 3) })))
+    expect(all(vision, 'button').at(-1)?.textContent).toBe('Leave')
+    button(vision, 'Eve').click()
+    button(vision, 'Leave').click()
     expect(fired(actions)).toEqual([
       ['viewAs', [5]],
       ['leave', []],
@@ -514,13 +588,13 @@ describe('hud outcome and trace', () => {
     expect(one(trace, '#trace-total').textContent).toBe('17.5 / 33.3 ms')
   })
 
-  it('clear vision, legend, outcome and trace', () => {
+  it('clear vision, legend, outcome and trace, and bring Build back', () => {
     const { root, view } = mount()
     view.setFactions(spectateHud().factions, true, 3)
     view.showOutcome('Victory', 'You are the last player.')
     view.paintTrace(traceFrame())
     view.clear()
-    expect(['#vision', '#legend', '#outcome', '#trace'].map((id) => shown(one(root, id)))).toEqual([false, false, false, false])
+    expect(['#vision-panel', '#legend', '#outcome', '#trace', '#build-panel'].map((id) => shown(one(root, id)))).toEqual([false, false, false, false, true])
     expect(all(root, 'button').filter(shown).map((entry) => entry.textContent)).not.toContain('Leave')
   })
 })

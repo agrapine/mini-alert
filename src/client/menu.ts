@@ -120,6 +120,7 @@ export function bindMenu(actions: MenuActions = {}): void {
       return
     }
     if (opener?.dataset.open === 'fullscreen') {
+      closeMenu()
       if (document.fullscreenElement) void document.exitFullscreen()
       else void document.documentElement.requestFullscreen()
       return

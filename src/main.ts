@@ -197,6 +197,7 @@ net.onLobby = (message) => {
   }
   factions = message.factions
   seatId = message.seatId
+  hud.setBattle(message.gameId)
   if (message.spectating !== spectating) {
     spectating = message.spectating
     player.setSpectating(spectating)
@@ -248,7 +249,6 @@ net.connect()
 function showMatch() {
   document.body.classList.add('match')
   document.body.classList.remove('lobby')
-  document.body.classList.toggle('spectate', spectating)
   lobby.hide()
 }
 
@@ -265,7 +265,7 @@ function leaveMatch() {
   live.view?.dispose()
   live.view = null
   document.body.classList.add('lobby')
-  document.body.classList.remove('match', 'spectate')
+  document.body.classList.remove('match')
   hud.clear()
 }
 
