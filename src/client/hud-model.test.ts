@@ -326,14 +326,14 @@ describe('hud tile reasons', () => {
 
   it('mark a train tile Select a factory, an airport, a helipad or a shipyard unless its yard is the selected one', () => {
     const factory = unit(1, UnitTypeId.Factory)
-    const trains = (fields: Partial<HudInput>) => {
+    const trains = (fields: Parameters<typeof input>[0]) => {
       const model = hudModel(input({ units: [factory], ...fields }))
       return ['Scout', 'Jet', 'Gunship', 'Cruiser'].map((label) => {
         const tile = find(model, label)
         return [label, tile.block, tile.kind === TileKind.Train ? tile.yard : null]
       })
     }
-    expect(trains({})).toEqual([
+    expect(trains({ towns: [] })).toEqual([
       ['Scout', TileBlock.SelectFactory, null],
       ['Jet', TileBlock.SelectAirport, null],
       ['Gunship', TileBlock.SelectHelipad, null],
