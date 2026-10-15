@@ -289,16 +289,7 @@ export class HudView {
     setText(this.ping, ping.state === PingState.None ? '–' : `${ping.ms} ms`)
     this.ping.classList.toggle('slow', ping.state === PingState.Slow || ping.state === PingState.Bad)
     this.ping.classList.toggle('bad', ping.state === PingState.Bad)
-    this.selectedPanel.hidden = model.rows.length === 0 && model.hall === null
-    this.group.hidden = model.group === null
-    setText(this.group, model.group === null ? '' : `Group ${model.group}`)
-    this.paintRows(model.rows)
-    this.cityFocus.hidden = model.hall === null
-    if (model.hall !== null && document.activeElement !== this.focusRange) {
-      const focus = String(model.hall.focus)
-      if (this.focusRange.value !== focus) this.focusRange.value = focus
-      setText(this.focusLabel, model.hall.label)
-    }
+    this.paintSelected(model.rows, model.group, model.hall)
     for (let i = 0; i < model.tiles.length; i++) {
       const tile = model.tiles[i]
       paintTile(this.tiles[i] ?? this.createTile(tile), tile)
@@ -361,6 +352,7 @@ export class HudView {
     this.clicked = null
     this.selectionTab = null
     this.showTab()
+    this.paintSelected([], null, null)
     this.build.hidden = false
     this.vision.hidden = true
     this.plates.replaceChildren()
@@ -399,6 +391,19 @@ export class HudView {
       return node.button
     })
     arrange(this.chipRow, buttons)
+  }
+
+  private paintSelected(rows: readonly SelectedRow[], group: number | null, hall: HudModel['hall']) {
+    this.selectedPanel.hidden = rows.length === 0 && hall === null
+    this.group.hidden = group === null
+    setText(this.group, group === null ? '' : `Group ${group}`)
+    this.paintRows(rows)
+    this.cityFocus.hidden = hall === null
+    if (hall !== null && document.activeElement !== this.focusRange) {
+      const focus = String(hall.focus)
+      if (this.focusRange.value !== focus) this.focusRange.value = focus
+      setText(this.focusLabel, hall.label)
+    }
   }
 
   private paintRows(rows: readonly SelectedRow[]) {

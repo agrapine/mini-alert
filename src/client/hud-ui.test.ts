@@ -511,6 +511,19 @@ describe('hud selected panel', () => {
     expect(second).toHaveLength(6)
     expect(second.every((entry, index) => entry === first[index])).toBe(true)
   })
+
+  it('is hidden and empty after clear, as on a fresh view', () => {
+    const { root, view } = mount()
+    const [selected, group, focus] = ['#selected', '#group', '#city-focus'].map((id) => one(root, id))
+    const state = () => [selected.hidden, rows(root), group.hidden, group.textContent, focus.hidden]
+    const fresh = state()
+    paint(view, armyHud().input)
+    view.clear()
+    expect(state()).toEqual(fresh)
+    paint(view, hallHud().input)
+    view.clear()
+    expect(state()).toEqual(fresh)
+  })
 })
 
 describe('hud city hall', () => {
