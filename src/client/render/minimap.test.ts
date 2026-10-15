@@ -39,8 +39,9 @@ function mount() {
   root.getBoundingClientRect = () => new DOMRect(100, 50, 200, 100)
   const jump = vi.fn<(x: number, z: number) => void>()
   const command = vi.fn<MinimapCommand>()
-  new Minimap(root, map, marks, world(), jump).setCommand(command)
-  return { marks, jump, command }
+  const minimap = new Minimap(root, map, marks, world(), jump)
+  minimap.setCommand(command)
+  return { root, marks, minimap, jump, command }
 }
 
 function pointer(target: Element, type: string, clientX: number, clientY: number, init: PointerEventInit = {}): boolean {
@@ -75,6 +76,14 @@ describe('minimap pointer', () => {
     expect(tile).toEqual({ x: 11, y: 9 })
     expect(mods).toMatchObject({ shiftKey: true, ctrlKey: false, metaKey: false })
     expect(marks.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))).toBe(false)
+  })
+})
+
+describe('minimap dispose', () => {
+  it('leaves #minimap as the markup built it: no world aspect and blank canvases', () => {
+    const { root, minimap } = mount()
+    minimap.dispose()
+    expect([root.style.getPropertyValue('--aspect'), root.innerHTML]).toEqual(['', '<canvas></canvas><canvas></canvas>'])
   })
 })
 

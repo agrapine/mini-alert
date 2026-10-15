@@ -46,7 +46,7 @@ const SCENES: Scene[] = [
   open('changelog'),
   (view, root) => {
     fixture(baseHud)(view, root)
-    view.showOutcome('Defeated', 'Your forces are gone.')
+    view.setOutcome({ title: 'Defeated', text: 'Your forces are gone.' })
   },
   (view, root) => {
     fixture(traceHud)(view, root)

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { version } from '../../package.json'
 import { UnitTypeId } from '../shared/unit-types.ts'
-import { armedHud, armyHud, baseHud, factoryHud, hallHud, spectateHud, strainedHud, traceFrame } from './hud-fixtures.ts'
+import { armedHud, armyHud, baseHud, factoryHud, hallHud, spectateHud, strainedHud, traceFrame, type HudFixture } from './hud-fixtures.ts'
 import { hudModel, Trend, type HudInput } from './hud-model.ts'
 import { HudView, type CreditReadout, type HudActions } from './hud-ui.ts'
 import { bindMenu } from './menu.ts'
@@ -441,9 +441,10 @@ describe('hud F-slots', () => {
     expect(fired(actions)).toEqual([])
   })
 
-  it('do nothing after clear, until a paint opens a tab again', () => {
+  it('do nothing after clear, until a paint opens the tab of its selection', () => {
     const { root, view, actions } = mount()
     paint(view, baseHud().input)
+    button(root, 'Sea').click()
     view.clear()
     expect([1, 2, 3, 4, 5, 6].map((slot) => view.pressSlot(slot, false))).toEqual([false, false, false, false, false, false])
     expect(view.pressSlot(1, true)).toBe(false)
@@ -510,19 +511,6 @@ describe('hud selected panel', () => {
     const second = all(root, '.unit-row')
     expect(second).toHaveLength(6)
     expect(second.every((entry, index) => entry === first[index])).toBe(true)
-  })
-
-  it('is hidden and empty after clear, as on a fresh view', () => {
-    const { root, view } = mount()
-    const [selected, group, focus] = ['#selected', '#group', '#city-focus'].map((id) => one(root, id))
-    const state = () => [selected.hidden, rows(root), group.hidden, group.textContent, focus.hidden]
-    const fresh = state()
-    paint(view, armyHud().input)
-    view.clear()
-    expect(state()).toEqual(fresh)
-    paint(view, hallHud().input)
-    view.clear()
-    expect(state()).toEqual(fresh)
   })
 })
 
@@ -769,13 +757,13 @@ describe('hud outcome and trace', () => {
   it('reveal the outcome with its title and text until Close or the backdrop', () => {
     const { root, view } = mount()
     const outcome = one(root, '#outcome')
-    view.showOutcome('Defeated', 'Your forces are gone.')
+    view.setOutcome({ title: 'Defeated', text: 'Your forces are gone.' })
     expect(shown(outcome)).toBe(true)
     expect(one(outcome, '[role="dialog"]').textContent).toContain('Defeated')
     expect(one(outcome, '[role="dialog"]').textContent).toContain('Your forces are gone.')
     button(outcome, 'Close').click()
     expect(shown(outcome)).toBe(false)
-    view.showOutcome('Victory', 'You are the last player.')
+    view.setOutcome({ title: 'Victory', text: 'You are the last player.' })
     one(outcome, '[role="dialog"]').click()
     expect(shown(outcome)).toBe(true)
     outcome.click()
@@ -791,14 +779,42 @@ describe('hud outcome and trace', () => {
     expect(all(trace, 'li')).toHaveLength(traceFrame().samples.length)
     expect(one(trace, '#trace-total').textContent).toBe('17.5 / 33.3 ms')
   })
+})
 
-  it('clear vision, legend, outcome and trace, and bring Build back', () => {
+describe('hud clear', () => {
+  function dom(node: Node, depth = 0): string {
+    const indent = '  '.repeat(depth)
+    if (!(node instanceof Element)) return indent + JSON.stringify(node.textContent)
+    // Dropping the last class or inline property leaves an empty attribute behind.
+    const attributes = [...node.attributes]
+      .filter((attribute) => attribute.value !== '' || (attribute.name !== 'class' && attribute.name !== 'style'))
+      .map((attribute) => ` ${attribute.name}="${attribute.value}"`)
+      .sort()
+    const value = node instanceof HTMLInputElement ? ` .value="${node.value}"` : ''
+    return [`${indent}<${node.localName}${attributes.join('')}${value}>`, ...[...node.childNodes].map((child) => dom(child, depth + 1))].join('\n')
+  }
+
+  it('returns #hud to the DOM a fresh view builds, whatever was painted', () => {
     const { root, view } = mount()
-    view.setFactions(spectateHud().factions, true, 3)
-    view.showOutcome('Victory', 'You are the last player.')
-    view.paintTrace(traceFrame())
-    view.clear()
-    expect(['#vision-panel', '#legend', '#outcome', '#trace', '#build-panel'].map((id) => shown(one(root, id)))).toEqual([false, false, false, false, true])
-    expect(all(root, 'button').filter(shown).map((entry) => entry.textContent)).not.toContain('Leave')
+    const fresh = dom(root)
+    const fixture = (make: () => HudFixture) => () => {
+      const { input, credits, factions } = make()
+      view.setBattle(12)
+      paint(view, input, credits)
+      view.setFactions(factions, input.spectating, input.playerId)
+    }
+    const scenes: [string, () => void][] = [
+      ['army', fixture(armyHud)],
+      ['hall', fixture(hallHud)],
+      ['strained', fixture(strainedHud)],
+      ['spectate', fixture(spectateHud)],
+      ['outcome', () => view.setOutcome({ title: 'Victory', text: 'You are the last player.' })],
+      ['trace', () => view.paintTrace(traceFrame())],
+    ]
+    for (const [name, scene] of scenes) {
+      scene()
+      view.clear()
+      expect(dom(root), name).toBe(fresh)
+    }
   })
 })

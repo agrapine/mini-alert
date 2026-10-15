@@ -82,7 +82,7 @@ function show(scene: Scene) {
   showRadar(fixture)
   if (scene === 'menu') one('[data-open="menu"]').click()
   else if (scene === 'help') one('[data-open="help"]').click()
-  else if (scene === 'outcome') view.showOutcome('Victory', 'You are the last player.')
+  else if (scene === 'outcome') view.setOutcome({ title: 'Victory', text: 'You are the last player.' })
   else if (scene === 'trace') view.paintTrace(traceFrame())
 }
 

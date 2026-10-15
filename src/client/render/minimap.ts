@@ -78,7 +78,7 @@ export class Minimap {
 
   constructor(
     private readonly root: HTMLElement,
-    map: HTMLCanvasElement,
+    private readonly map: HTMLCanvasElement,
     private readonly marks: HTMLCanvasElement,
     world: WorldSnapshot,
     private readonly onJump: (x: number, z: number) => void,
@@ -86,7 +86,7 @@ export class Minimap {
     this.world = world
     this.root.hidden = false
     this.root.style.setProperty('--aspect', String(world.width / world.height))
-    const painted = paintTerrain(map, world)
+    const painted = paintTerrain(this.map, world)
     this.ctx = painted.ctx
     this.image = painted.image
     this.base = painted.base
@@ -131,6 +131,12 @@ export class Minimap {
     this.root.removeEventListener('pointercancel', this.onPointerCancel)
     this.root.removeEventListener('pointerleave', this.onPointerLeave)
     this.root.removeEventListener('contextmenu', preventMenu)
+    this.root.style.removeProperty('--aspect')
+    // Dropping a canvas's size attributes also blanks its bitmap.
+    for (const canvas of [this.map, this.marks]) {
+      canvas.removeAttribute('width')
+      canvas.removeAttribute('height')
+    }
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
