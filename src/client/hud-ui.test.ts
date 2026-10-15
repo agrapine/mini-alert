@@ -196,6 +196,32 @@ describe('hud tiles', () => {
     expect(fired(actions)).toEqual([['cancelQueued', [UnitTypeId.Jet]]])
   })
 
+  it('head the queued tiles with Queued: while jobs are queued', () => {
+    const { root, view } = mount()
+    const row = () =>
+      [...one(root, '#orders').children].filter(shown).map((entry) => (entry.classList.contains('tile') ? one(entry, '.name').textContent : entry.textContent?.trim()))
+    paint(view, baseHud().input)
+    expect(row()).not.toContain('Queued:')
+    paint(view, factoryHud().input)
+    expect(row()).toEqual(['Scout', 'Med Tank', 'Heavy Tank', 'Artillery', 'Queued:', 'Scout', 'Med Tank', 'Jet'])
+  })
+
+  it('fill the pie of a tile in progress, and keep a tile with work live when it is not ready', () => {
+    const { root, view } = mount()
+    const pie = (name: string) => {
+      const entry = one(tile(root, name), '.pie')
+      return [entry.style.getPropertyValue('--p'), entry.classList.contains('on')]
+    }
+    paint(view, factoryHud().input)
+    expect([pie('Med Tank'), pie('Heavy Tank')]).toEqual([
+      ['0.4', true],
+      ['0', false],
+    ])
+    expect(classes(tile(root, 'Heavy Tank'))).toEqual(['tile', 'vehicle', 'ready'])
+    paint(view, strainedHud().input)
+    expect(classes(tile(root, 'Turret'))).toEqual(['tile', 'structure', 'live'])
+  })
+
   it('keep their nodes when the same model is painted twice', () => {
     const { root, view } = mount()
     paint(view, factoryHud().input)
@@ -242,10 +268,11 @@ describe('hud city focus', () => {
   it('shows for a selected hall, with its label', () => {
     const { root, view } = mount()
     const focus = one(root, '#city-focus')
+    const orders = one(root, '#orders')
     paint(view, baseHud().input)
-    expect(shown(focus)).toBe(false)
+    expect([shown(focus), shown(orders)]).toEqual([false, true])
     paint(view, hallHud().input)
-    expect(shown(focus)).toBe(true)
+    expect([shown(focus), shown(orders)]).toEqual([true, false])
     expect(one(root, '#city-focus-label').textContent).toBe('Growth ×2')
     expect(one<HTMLInputElement>(root, 'input[aria-label="City focus"]').value).toBe('1')
     expect(tiles(root)).toEqual([])
@@ -335,6 +362,13 @@ describe('hud menu', () => {
     expect(localStorage.getItem('rts.sounds')).toBe('off')
   })
 
+  it('flips Input and its mark', () => {
+    const { root } = bind()
+    const input = button(root, 'Input On')
+    input.click()
+    expect([input.getAttribute('aria-pressed'), input.textContent]).toEqual(['false', 'Input Off'])
+  })
+
   it('opens Changelog, marking the version seen, and Help in the sheet', () => {
     const { root } = bind()
     localStorage.setItem(SEEN, '0.0.0')
@@ -365,17 +399,19 @@ describe('hud menu', () => {
     expect([sheet(root), localStorage.getItem(SEEN)]).toEqual(['Changelog', version])
   })
 
-  it('requests full screen, and exits it when already full screen', () => {
+  it('requests full screen from a click on its icon, and exits it when already full screen', () => {
     const { root } = bind()
     const request = vi.fn(() => Promise.resolve())
     const exit = vi.fn(() => Promise.resolve())
     Object.assign(document.documentElement, { requestFullscreen: request })
     Object.assign(document, { exitFullscreen: exit })
+    const icon = one(opener(root, 'fullscreen'), 'svg')
+    const press = () => icon.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null })
-    opener(root, 'fullscreen').click()
+    press()
     expect([request.mock.calls.length, exit.mock.calls.length]).toEqual([1, 0])
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: document.documentElement })
-    opener(root, 'fullscreen').click()
+    press()
     expect([request.mock.calls.length, exit.mock.calls.length]).toEqual([1, 1])
   })
 })
@@ -409,6 +445,7 @@ describe('hud factions', () => {
     view.setFactions(factions, true, 3)
     expect(visible()).toEqual(expect.arrayContaining([...factions.map((faction) => faction.name), 'Leave']))
     expect(factions.filter((faction) => button(root, faction.name).classList.contains('on')).map((faction) => faction.name)).toEqual(['Cy'])
+    expect(factions.map((faction) => button(root, faction.name).style.color)).toEqual([...one(root, '#legend').children].map((row) => one(row, 'i').style.background))
     button(root, 'Eve').click()
     button(root, 'Leave').click()
     expect(fired(actions)).toEqual([

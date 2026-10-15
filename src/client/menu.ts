@@ -76,7 +76,7 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: b
 
   bar.addEventListener('click', (event) => {
     const target = event.target
-    if (!(target instanceof HTMLElement)) return
+    if (!(target instanceof Element)) return
     const opener = target.closest<HTMLElement>('[data-open]')
     if (opener?.dataset.open === 'menu') {
       menu.classList.toggle('open')

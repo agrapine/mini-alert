@@ -75,20 +75,27 @@ describe('HUD layout', () => {
     )
   })
 
-  it.each(SCREENS)('%s: in the lobby the sheet shows and the match chrome does not', async (_, options) => {
+  it.each(SCREENS)('%s: the sheet shows over the match chrome, and in the lobby without it', async (_, options) => {
     const shown = await inScene(options, 'help', () => {
+      const rendered = (selector: string) => (document.querySelector(selector)?.getClientRects().length ?? 0) > 0
+      const chrome = () => {
+        const card = document.querySelector('.sheet-card')?.getBoundingClientRect()
+        const hit = card ? document.elementFromPoint(card.left + card.width / 2, card.top + card.height / 2) : null
+        return {
+          sheet: rendered('#sheet') && hit?.closest('#sheet') !== null,
+          menubar: rendered('#menubar'),
+          stats: rendered('#stats'),
+          side: rendered('#side'),
+        }
+      }
+      const match = chrome()
       document.body.classList.remove('match')
       document.body.classList.add('lobby')
-      const rendered = (selector: string) => (document.querySelector(selector)?.getClientRects().length ?? 0) > 0
-      const card = document.querySelector('.sheet-card')?.getBoundingClientRect()
-      const hit = card ? document.elementFromPoint(card.left + card.width / 2, card.top + card.height / 2) : null
-      return {
-        sheet: rendered('#sheet') && hit?.closest('#sheet') !== null,
-        menubar: rendered('#menubar'),
-        stats: rendered('#stats'),
-        side: rendered('#side'),
-      }
+      return { match, lobby: chrome() }
     })
-    expect(shown).toEqual({ sheet: true, menubar: false, stats: false, side: false })
+    expect(shown).toEqual({
+      match: { sheet: true, menubar: true, stats: true, side: true },
+      lobby: { sheet: true, menubar: false, stats: false, side: false },
+    })
   })
 })
