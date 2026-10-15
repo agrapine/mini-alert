@@ -74,7 +74,7 @@ function show(scene: Scene) {
   const view = new HudView(one('#hud'), actions)
   // An unseen version opens the changelog over every scene.
   localStorage.setItem('rts.seen-version', version)
-  bindMenu({ onMusic: log('onMusic'), onSounds: log('onSounds'), onSurrender: log('onSurrender') })
+  bindMenu({ onMusic: log('onMusic'), onSounds: log('onSounds'), onMusicVolume: log('onMusicVolume'), onSoundsVolume: log('onSoundsVolume'), onSurrender: log('onSurrender') })
   document.body.classList.add('match')
   document.body.classList.toggle('spectate', fixture.input.spectating)
   view.paint(hudModel(fixture.input), fixture.credits)
