@@ -359,6 +359,8 @@ export class HudView {
 
   clear() {
     this.clicked = null
+    this.selectionTab = null
+    this.showTab()
     this.build.hidden = false
     this.vision.hidden = true
     this.plates.replaceChildren()

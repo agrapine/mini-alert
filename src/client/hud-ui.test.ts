@@ -446,6 +446,19 @@ describe('hud F-slots', () => {
     expect([view.pressSlot(1, false), view.pressSlot(1, true)]).toEqual([false, false])
     expect(fired(actions)).toEqual([])
   })
+
+  it('do nothing after clear, until a paint opens a tab again', () => {
+    const { root, view, actions } = mount()
+    paint(view, baseHud().input)
+    view.clear()
+    expect([1, 2, 3, 4, 5, 6].map((slot) => view.pressSlot(slot, false))).toEqual([false, false, false, false, false, false])
+    expect(view.pressSlot(1, true)).toBe(false)
+    expect(fired(actions)).toEqual([])
+    expect(tiles(root)).toEqual([])
+    paint(view, baseHud().input)
+    expect(view.pressSlot(1, false)).toBe(true)
+    expect(fired(actions)).toEqual([['armBuilding', [UnitTypeId.Factory]]])
+  })
 })
 
 describe('hud selected panel', () => {
