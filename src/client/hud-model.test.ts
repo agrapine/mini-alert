@@ -145,14 +145,14 @@ describe('credit counter', () => {
 
   it('trends up or down while the target is more than 30 away', () => {
     const counter = new CreditCounter()
-    counter.ease(31, 1e-6)
+    counter.ease(31, 1e-20)
     expect(counter.trend).toBe(Trend.Up)
-    counter.snap(0)
-    counter.ease(30, 1e-6)
+    counter.ease(30, 1e-20)
     expect(counter.trend).toBe(Trend.Steady)
-    counter.snap(0)
-    counter.ease(-31, 1e-6)
+    counter.ease(-31, 1e-20)
     expect(counter.trend).toBe(Trend.Down)
+    counter.ease(-30, 1e-20)
+    expect(counter.trend).toBe(Trend.Steady)
   })
 })
 
@@ -167,10 +167,10 @@ describe('hud tiles without a yard', () => {
     expect(shown(model)).toEqual(['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building'])
   })
 
-  it('shows a yard while one is being built without a finished factory', () => {
-    const model = hudModel(input({ units: [unit(1, UnitTypeId.Helipad, { progress: 0.3 })] }))
+  it('shows a placed yard site without a finished factory', () => {
+    const model = hudModel(input({ units: [unit(1, UnitTypeId.Helipad, { progress: 0 })] }))
     expect(shown(model)).toEqual(['Factory', 'Turret', 'Helipad', 'Building'])
-    expect(find(model, 'Helipad')).toMatchObject({ count: 1, progress: 0.3, ready: false })
+    expect(find(model, 'Helipad')).toMatchObject({ count: 1, progress: 0, ready: false })
   })
 
   it('readies a structure only with population room for its supply, plus a finished factory where it needs one', () => {

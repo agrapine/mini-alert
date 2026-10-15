@@ -100,12 +100,12 @@ export function hudModel(input: HudInput): HudModel {
       count,
       progress,
       ready: gate && room(type.supply),
-      visible: grid && yard === null && (gate || count > 0 || progress > 0),
+      visible: grid && yard === null && (gate || count > 0),
       armed: input.placing === type.id,
     }))
   }
   tiles.push(tile({ kind: TileKind.City }, {
-    cost: costLine(input.quote ?? 0, 1),
+    cost: costLine(input.quote, 1),
     count: 0,
     progress: 0,
     ready: true,
@@ -248,8 +248,8 @@ function jetApron(own: readonly UnitSnapshot[], queue: readonly TrainJob[], airp
   return baysFree([{ x: airport.tileX, y: airport.tileY }], parked) - queued
 }
 
-function costLine(credits: number, supply: number): string {
-  const price = credits > 0 ? credits.toLocaleString('en-US') : ''
+function costLine(credits: number | null, supply: number): string {
+  const price = credits === null ? '' : credits.toLocaleString('en-US')
   if (supply <= 0) return price
   return price ? `${price} · ${supply}` : String(supply)
 }
