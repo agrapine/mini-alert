@@ -1,7 +1,6 @@
 import lobby1Url from '../../assets/music/lobby1.mp3?url'
 import lobby2Url from '../../assets/music/lobby2.mp3?url'
 
-const VOLUME = 0.4
 const tracks = import.meta.glob('../../assets/music/*.mp3', {
   eager: true,
   query: '?url',
@@ -9,7 +8,7 @@ const tracks = import.meta.glob('../../assets/music/*.mp3', {
 })
 
 const LOBBY = [lobby1Url, lobby2Url]
-const BATTLE = Object.entries(tracks)
+export const BATTLE = Object.entries(tracks)
   .filter(([path]) => !/\/lobby\d+\.mp3$/.test(path))
   .map((entry) => entry[1])
 
@@ -22,7 +21,6 @@ export class Music {
   private blocked = false
 
   constructor() {
-    this.audio.volume = VOLUME
     this.audio.addEventListener('ended', () => this.advance())
   }
 
@@ -46,6 +44,10 @@ export class Music {
     if (this.mode === 'silent') return
     this.mode = 'silent'
     this.audio.pause()
+  }
+
+  setVolume(volume: number) {
+    this.audio.volume = volume
   }
 
   setMuted(muted: boolean) {

@@ -18,13 +18,20 @@ const GESTURES = ['pointerup', 'keydown']
 
 export class Alarm {
   private context: AudioContext | null = null
+  private output: GainNode | null = null
   private buffers: Takes<AudioBuffer> | null = null
   private playing: AudioBufferSourceNode | null = null
   private until = 0
   private on = true
+  private volume = 1
 
   listen(target: Pick<EventTarget, 'addEventListener'>) {
     for (const gesture of GESTURES) target.addEventListener(gesture, () => this.unlock())
+  }
+
+  setVolume(volume: number) {
+    this.volume = volume
+    if (this.output) this.output.gain.value = volume
   }
 
   setOn(on: boolean) {
@@ -36,17 +43,20 @@ export class Alarm {
   }
 
   sound(kind: ContactKind) {
-    const context = this.context
-    if (!this.on || !context || !this.buffers || context.currentTime < this.until) return
+    const output = this.output
+    if (!this.on || !output || !this.buffers || output.context.currentTime < this.until) return
     const sample = pick(pick([this.buffers.horns, this.buffers.lines[kind]]))
-    this.playing = play(context, sample)
-    this.until = context.currentTime + sample.duration
+    this.playing = play(output, sample)
+    this.until = output.context.currentTime + sample.duration
   }
 
   private unlock() {
     if (!this.context) {
       if (!('AudioContext' in globalThis)) return
       this.context = new AudioContext()
+      this.output = this.context.createGain()
+      this.output.gain.value = this.volume
+      this.output.connect(this.context.destination)
       decode(this.context).then((buffers) => {
         this.buffers = buffers
       })
@@ -76,10 +86,10 @@ function pick<T>(takes: T[]): T {
   return takes[Math.floor(Math.random() * takes.length)]
 }
 
-function play(context: AudioContext, buffer: AudioBuffer): AudioBufferSourceNode {
-  const source = context.createBufferSource()
+function play(output: AudioNode, buffer: AudioBuffer): AudioBufferSourceNode {
+  const source = output.context.createBufferSource()
   source.buffer = buffer
-  source.connect(context.destination)
+  source.connect(output)
   source.start()
   return source
 }

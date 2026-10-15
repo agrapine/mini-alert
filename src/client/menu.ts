@@ -44,7 +44,15 @@ Jets taxi from their spot onto the center runway, roll, climb, and circle the or
 Fog covers ground you have not seen. Finished units reveal a circle around them, and a city you own reveals ten tiles around its center. Enemies outside that sight stay hidden. Ground you have already walked stays dim after you look away.
 `
 
-export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: boolean): void; onSurrender?(): void } = {}): void {
+type MenuActions = {
+  onMusic?(on: boolean): void
+  onSounds?(on: boolean): void
+  onMusicVolume?(volume: number): void
+  onSoundsVolume?(volume: number): void
+  onSurrender?(): void
+}
+
+export function bindMenu(actions: MenuActions = {}): void {
   const bar = document.querySelector<HTMLElement>('#menubar')
   const menu = document.querySelector<HTMLElement>('#menu')
   const sheet = document.querySelector<HTMLElement>('#sheet')
@@ -58,6 +66,27 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: b
     if (!name || settingOn(name)) continue
     setPressed(toggle, false)
     settings[name]?.(false)
+  }
+
+  const volumes: Record<string, ((volume: number) => void) | undefined> = {
+    musicVolume: actions.onMusicVolume,
+    soundsVolume: actions.onSoundsVolume,
+  }
+  for (const slider of bar.querySelectorAll<HTMLInputElement>('input[data-volume]')) {
+    const name = slider.dataset.volume
+    const readout = slider.parentElement?.querySelector('output')
+    if (!name || !readout) continue
+    const apply = () => {
+      readout.textContent = `${slider.value}%`
+      volumes[name]?.(slider.valueAsNumber / 100)
+    }
+    const remembered = volumeSetting(name)
+    if (remembered !== null) slider.value = String(remembered)
+    apply()
+    slider.addEventListener('input', () => {
+      rememberVolume(name, slider.valueAsNumber)
+      apply()
+    })
   }
 
   const closeMenu = () => menu.classList.remove('open')
@@ -132,18 +161,35 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: b
 }
 
 export function settingOn(name: string, store: Storage = localStorage): boolean {
-  try {
-    return store.getItem(`rts.${name}`) !== 'off'
-  } catch {
-    return true
-  }
+  return read(name, store) !== 'off'
 }
 
 export function rememberSetting(name: string, on: boolean, store: Storage = localStorage) {
+  write(name, on ? 'on' : 'off', store)
+}
+
+export function volumeSetting(name: string, store: Storage = localStorage): number | null {
+  const stored = read(name, store)
+  return stored === null ? null : Number(stored)
+}
+
+export function rememberVolume(name: string, percent: number, store: Storage = localStorage) {
+  write(name, String(percent), store)
+}
+
+function read(name: string, store: Storage): string | null {
   try {
-    store.setItem(`rts.${name}`, on ? 'on' : 'off')
+    return store.getItem(`rts.${name}`)
   } catch {
-    // Storage can be blocked. The toggle still applies for this visit.
+    return null
+  }
+}
+
+function write(name: string, value: string, store: Storage) {
+  try {
+    store.setItem(`rts.${name}`, value)
+  } catch {
+    // Storage can be blocked. The setting still applies for this visit.
   }
 }
 

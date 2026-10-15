@@ -307,13 +307,27 @@ describe('hud menu', () => {
 
   function bind() {
     const mounted = mount()
-    const menu = { onMusic: vi.fn(), onSounds: vi.fn(), onSurrender: vi.fn() }
+    const menu = {
+      onMusic: vi.fn(),
+      onSounds: vi.fn(),
+      onMusicVolume: vi.fn<(volume: number) => void>(),
+      onSoundsVolume: vi.fn<(volume: number) => void>(),
+      onSurrender: vi.fn(),
+    }
     bindMenu(menu)
     return { ...mounted, menu }
   }
 
   function opener(root: ParentNode, name: string): HTMLElement {
     return one(root, `[data-open="${name}"]`)
+  }
+
+  function slider(root: ParentNode, name: string): HTMLInputElement {
+    return one(root, `input[data-volume="${name}"]`)
+  }
+
+  function readout(root: ParentNode, name: string): string | null {
+    return one(root, `output[for="${slider(root, name).id}"]`).textContent
   }
 
   function sheet(root: ParentNode): string | null {
@@ -360,6 +374,24 @@ describe('hud menu', () => {
     one(root, '[data-toggle="sounds"]').click()
     expect(menu.onSounds.mock.calls).toEqual([[false]])
     expect(localStorage.getItem('rts.sounds')).toBe('off')
+  })
+
+  it('starts the volumes at 40% for Music and 100% for Sounds', () => {
+    const { root, menu } = bind()
+    expect([menu.onMusicVolume.mock.calls, menu.onSoundsVolume.mock.calls]).toEqual([[[0.4]], [[1]]])
+    expect([readout(root, 'musicVolume'), readout(root, 'soundsVolume')]).toEqual(['40%', '100%'])
+  })
+
+  it('applies a volume as its slider moves, and brings it back where it was left', () => {
+    const first = bind()
+    const music = slider(first.root, 'musicVolume')
+    music.value = '25'
+    music.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(first.menu.onMusicVolume).toHaveBeenLastCalledWith(0.25)
+    expect([readout(first.root, 'musicVolume'), localStorage.getItem('rts.musicVolume')]).toEqual(['25%', '25'])
+    const next = bind()
+    expect(slider(next.root, 'musicVolume').value).toBe('25')
+    expect(next.menu.onMusicVolume.mock.calls).toEqual([[0.25]])
   })
 
   it('flips Input and its mark', () => {

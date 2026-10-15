@@ -27,7 +27,17 @@ const MARKUP = `
         <button type="button">Settings <span class="caret">›</span></button>
         <div class="flyout">
           <button type="button" data-toggle="music" aria-pressed="true">Music <span class="mark">On</span></button>
+          <div class="volume">
+            <label for="music-volume">Music volume</label>
+            <output class="mark" for="music-volume"></output>
+            <input type="range" id="music-volume" data-volume="musicVolume" min="0" max="100" step="5" value="40">
+          </div>
           <button type="button" data-toggle="sounds" aria-pressed="true">Sounds <span class="mark">On</span></button>
+          <div class="volume">
+            <label for="sounds-volume">Sounds volume</label>
+            <output class="mark" for="sounds-volume"></output>
+            <input type="range" id="sounds-volume" data-volume="soundsVolume" min="0" max="100" step="5" value="100">
+          </div>
           <button type="button" data-toggle aria-pressed="true">Input <span class="mark">On</span></button>
         </div>
       </div>
