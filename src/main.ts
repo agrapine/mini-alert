@@ -1,5 +1,6 @@
 import './style.css'
 import { adminEnabled } from './client/admin.ts'
+import { Alarm } from './client/alarm.ts'
 import { Commander } from './client/commander.ts'
 import { LobbyView } from './client/lobby-ui.ts'
 import { Music } from './client/music.ts'
@@ -73,9 +74,13 @@ let preview: MapPreview | null = null
 let aimed = false
 
 const music = new Music()
+const alarm = new Alarm()
 bindMenu({
   onMusic(on) {
     music.setMuted(!on)
+  },
+  onSounds(on) {
+    alarm.setOn(on)
   },
   onSurrender() {
     net.sendLobby({ kind: LobbyClientKind.LeaveRoom })
@@ -83,6 +88,7 @@ bindMenu({
 })
 document.body.classList.add('lobby')
 window.addEventListener('pointerdown', () => music.resume())
+for (const gesture of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(gesture, () => alarm.unlock())
 
 let claimedName: string | null = null
 const admin = adminEnabled(location.search)
@@ -284,6 +290,7 @@ function mountWorld() {
   view.setMinimapHover((tile) => {
     if (player.raisingCity()) player.setAim(tile)
   })
+  view.setAlert((kind) => alarm.sound(kind))
   view.resize()
   aimed = false
   shownCredits = replica.credits

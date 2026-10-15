@@ -2,7 +2,6 @@ import changelog from '../../changelog.md?raw'
 import { version } from '../../package.json'
 
 const SEEN_VERSION = 'rts.seen-version'
-const MUSIC_KEY = 'rts.music'
 
 const HELP = `# Shortcuts
 
@@ -45,7 +44,7 @@ Jets taxi from their spot onto the center runway, roll, climb, and circle the or
 Fog covers ground you have not seen. Finished units reveal a circle around them, and a city you own reveals ten tiles around its center. Enemies outside that sight stay hidden. Ground you have already walked stays dim after you look away.
 `
 
-export function bindMenu(actions: { onMusic?(on: boolean): void; onSurrender?(): void } = {}): void {
+export function bindMenu(actions: { onMusic?(on: boolean): void; onSounds?(on: boolean): void; onSurrender?(): void } = {}): void {
   const bar = document.querySelector<HTMLElement>('#menubar')
   const menu = document.querySelector<HTMLElement>('#menu')
   const sheet = document.querySelector<HTMLElement>('#sheet')
@@ -53,10 +52,12 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSurrender?():
   const body = document.querySelector<HTMLElement>('#sheet-body')
   if (!bar || !menu || !sheet || !title || !body) return
 
-  const musicToggle = bar.querySelector<HTMLElement>('[data-toggle="music"]')
-  if (musicToggle && !musicOn()) {
-    setPressed(musicToggle, false)
-    actions.onMusic?.(false)
+  const settings: Record<string, ((on: boolean) => void) | undefined> = { music: actions.onMusic, sounds: actions.onSounds }
+  for (const toggle of bar.querySelectorAll<HTMLElement>('[data-toggle]')) {
+    const name = toggle.dataset.toggle
+    if (!name || settingOn(name)) continue
+    setPressed(toggle, false)
+    settings[name]?.(false)
   }
 
   const closeMenu = () => menu.classList.remove('open')
@@ -98,10 +99,10 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSurrender?():
     if (!toggle) return
     const on = toggle.getAttribute('aria-pressed') !== 'true'
     setPressed(toggle, on)
-    if (toggle.dataset.toggle === 'music') {
-      rememberMusic(on)
-      actions.onMusic?.(on)
-    }
+    const name = toggle.dataset.toggle
+    if (!name) return
+    rememberSetting(name, on)
+    settings[name]?.(on)
   })
 
   sheet.addEventListener('click', (event) => {
@@ -125,17 +126,17 @@ export function bindMenu(actions: { onMusic?(on: boolean): void; onSurrender?():
   if (seenVersion() !== version) openSheet('Changelog', changelog)
 }
 
-export function musicOn(store: Storage = localStorage): boolean {
+export function settingOn(name: string, store: Storage = localStorage): boolean {
   try {
-    return store.getItem(MUSIC_KEY) !== 'off'
+    return store.getItem(`rts.${name}`) !== 'off'
   } catch {
     return true
   }
 }
 
-export function rememberMusic(on: boolean, store: Storage = localStorage) {
+export function rememberSetting(name: string, on: boolean, store: Storage = localStorage) {
   try {
-    store.setItem(MUSIC_KEY, on ? 'on' : 'off')
+    store.setItem(`rts.${name}`, on ? 'on' : 'off')
   } catch {
     // Storage can be blocked. The toggle still applies for this visit.
   }
