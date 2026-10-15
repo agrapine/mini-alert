@@ -560,11 +560,14 @@ export class Replica {
     return open && !this.buildingBlocks().has(`${tile.x},${tile.y}`)
   }
 
-  /** Plans the move the server will plan for the same order, from what this player knows of the map, and starts the surface units at rest on it; one on the move keeps its course and target until the server answers. Returns the end tile of each route it starts. */
+  /** Plans the move the server will plan for the same order, from what this player knows of the map, and starts the surface units at rest on it; one on the move keeps its course and target until the server answers. Returns the end tile of every surface unit's route. */
   predictMove(unitIds: readonly number[], tile: TileCoord): TileCoord[] {
     const guess: MoveGuess = { kind: Logged.Move, unitIds, tile, plan: null }
     this.record(guess)
-    return this.planMove(guess)
+    this.planMove(guess, true)
+    const goals: TileCoord[] = []
+    for (const path of guess.plan?.routes.values() ?? []) if (path.length > 0) goals.push({ ...path[path.length - 1] })
+    return goals
   }
 
   /** Points ordered units at the target and leads those at rest and out of range toward it; a unit on the move keeps its course, and without a turret its target, until the server answers. */
@@ -580,11 +583,12 @@ export class Replica {
   }
 
   private applyGuess(guess: Guess) {
-    if (guess.kind === Logged.Move) this.planMove(guess)
+    if (guess.kind === Logged.Move) this.planMove(guess, false)
     else this.aim(guess.unitIds, guess.target, guess.targetId)
   }
 
-  private planMove(guess: MoveGuess): TileCoord[] {
+  /** Starts the surface units at rest on the guess's routes; with none at rest, it plans them only when `always`. */
+  private planMove(guess: MoveGuess, always: boolean) {
     const surface: UnitSnapshot[] = []
     const resting: UnitSnapshot[] = []
     let domains = 0
@@ -600,7 +604,7 @@ export class Replica {
       unit.attackPoint = null
     }
     const world = this.world
-    if (!world || resting.length === 0) return []
+    if (!world || surface.length === 0 || (!always && resting.length === 0)) return
     const inputs = this.routeInputs(surface)
     if (!guess.plan || !sameValues(guess.plan.inputs, inputs) || !this.openHolds(guess.plan, world, domains)) {
       const open = this.openTiles(world, domains)
@@ -608,15 +612,12 @@ export class Replica {
       const routes = planMoves(this.routeMap(world, open), movers, guess.tile)
       guess.plan = { inputs, open, terrainRevision: this.terrainRevision, cityRevision: this.cityRevision, routes }
     }
-    const goals: TileCoord[] = []
     for (const unit of resting) {
       const path = guess.plan.routes.get(unit.id)
       if (!path || path.length === 0) continue
       unit.path = path.slice()
       unit.goal = { ...path[path.length - 1] }
-      goals.push(unit.goal)
     }
-    return goals
   }
 
   /** The movers and each unit `routeMap` stamps, by id, type and tile. */

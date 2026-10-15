@@ -190,6 +190,17 @@ describe('replica drawing', () => {
     expect(replica.units[0].x).toBeGreaterThan(2.6)
   })
 
+  it('returns the end of the route a move order plans for each unit, keeping units on the move on course', () => {
+    const replica = joined(scout(2.5, road), onRow(scout(2.5, road), 2, 6), onRow(scout(2.5, []), 3, 8))
+    const goals = replica.predictMove([1, 2, 3], { x: 12, y: 10 })
+    const courses = replica.units.map((unit) => structuredClone(unit.path))
+    expect(courses[0]).toEqual(road)
+    expect(goals).toHaveLength(3)
+    expect(goals).toContainEqual(courses[2].at(-1))
+    expect(replica.predictMove([1, 2, 3], { x: 4, y: 12 })).toHaveLength(3)
+    expect(replica.units.map((unit) => unit.path)).toEqual(courses)
+  })
+
   it('keeps a steady pace when frames arrive with uneven delays', () => {
     const replica = joined(scout(1.5, []))
     const delays = [0, 12, 3, 15, 0, 9]
