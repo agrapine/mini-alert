@@ -11,6 +11,7 @@ const HELP = `# Shortcuts
 - **Move** — with units selected, click open ground
 - **Attack** — click an enemy. Hold Ctrl or ⌘ and click one of your units to fire on it, or click the ground to shell that spot. Units also fire at enemies they can see
 - **Build** — Factory, Turret, Airport, or Helipad goes on open ground beside a city you own. A shipyard goes on water beside a city you own. Building places one of the houses a city grows, only on a tile that city could grow. The price appears when you aim at that city. Right-click cancels
+- **Orders** — \`F1\`, \`F2\`, and so on press the build and train tiles in the bar, left to right and top to bottom. Shift with the key drops the latest order of that type
 - **City hall** — click the hall of a city you hold. A slider leans that city toward money or growth
 - **Train** — select a factory, airport, helipad, or shipyard. The bar shows what that building makes. Click a tile to queue it there. Units already in production stay listed under Queued, so they can be cancelled
 - **Waypoint** — with a factory selected, click the ground. Finished units move there

@@ -7,6 +7,7 @@ import { rememberedName, rememberName } from './client/player-name.ts'
 import { bindMenu } from './client/menu.ts'
 import { Net } from './client/net.ts'
 import { bindInput, orderAt } from './client/input/pointer.ts'
+import { typing } from './client/input/keys.ts'
 import { Replica } from './client/replica.ts'
 import { seatLink } from './client/seat.ts'
 import { GameView } from './client/render/view.ts'
@@ -393,6 +394,16 @@ if (orders) {
   for (const type of TRAINABLE) {
     tiles.push(createTile(orders, type.id, true, true, type.label, type.cost, () => player.cancelSpawn(type.id), () => player.cancelSpawn(type.id)))
   }
+  window.addEventListener('keydown', (event) => {
+    if (typing(event) || event.repeat || orders.hidden) return
+    const slot = functionSlot(event.code)
+    if (slot === null) return
+    const entry = tiles.find((tile) => tile.slot === slot)
+    if (!entry) return
+    event.preventDefault()
+    if (event.shiftKey) entry.onRemove?.()
+    else if (entry.button.classList.contains('ready')) entry.onAdd()
+  })
 }
 cityFocusRange?.addEventListener('input', () => {
   const step = Number(cityFocusRange.value)
@@ -509,16 +520,21 @@ const refreshHud = (dt: number) => {
     const supplyRoom = army + queued + UNIT_TYPES[entry.id].supply <= held.population
     paintTile(entry, site?.count ?? 0, site?.progress ?? 0, gate && supplyRoom, gate || (site?.count ?? 0) > 0 || (site?.progress ?? 0) > 0, armed === entry.id)
   }
+  stampHotkeys(tiles)
 }
 
 type OrderTile = {
   id: UnitTypeId | null
   train: boolean
   queue: boolean
+  slot: number
   button: HTMLButtonElement
   ring: HTMLElement
   badge: HTMLElement
+  hotkey: HTMLElement
   cost: HTMLElement
+  onAdd: () => void
+  onRemove?: () => void
 }
 
 function createTile(
@@ -547,7 +563,9 @@ function createTile(
   const badge = document.createElement('span')
   badge.className = 'badge'
   badge.hidden = true
-  button.append(pie, label, price, badge)
+  const hotkey = document.createElement('span')
+  hotkey.className = 'hotkey'
+  button.append(pie, label, price, badge, hotkey)
   button.addEventListener('click', (event) => {
     if (queue || event.shiftKey) {
       onRemove?.()
@@ -561,7 +579,25 @@ function createTile(
     onRemove?.()
   })
   bar.append(button)
-  return { id, train, queue, button, ring: pie, badge, cost: price }
+  return { id, train, queue, slot: 0, button, ring: pie, badge, hotkey, cost: price, onAdd, onRemove }
+}
+
+/** Visible build and train tiles, left to right, take F1 onward. Queued copies stay unlabeled. */
+function stampHotkeys(entries: readonly OrderTile[]) {
+  let slot = 0
+  for (const entry of entries) {
+    const next = !entry.queue && !entry.button.hidden ? ++slot : 0
+    entry.slot = next
+    const label = next > 0 ? `F${next}` : ''
+    if (entry.hotkey.textContent !== label) entry.hotkey.textContent = label
+  }
+}
+
+function functionSlot(code: string): number | null {
+  const match = /^F(\d+)$/.exec(code)
+  if (!match) return null
+  const slot = Number(match[1])
+  return slot >= 1 ? slot : null
 }
 
 function paintTile(entry: OrderTile, count: number, progress: number, enabled: boolean, visible: boolean, armed = false) {

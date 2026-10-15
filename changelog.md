@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6
+- F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.
 - Improved cities, growth, density, growth / income control
 - Unit rebalance
 - Force attack own units
