@@ -47,9 +47,11 @@ body {
 .dropdown button,
 .panel-index,
 .tile .cost,
+.tile .state,
 .tile .badge,
 .tile .hotkey,
-.queue-split,
+#queue-label,
+.chip .count,
 #city-focus-label,
 .legend-row .tag {
   font-family: var(--con-mono);
@@ -145,7 +147,8 @@ body {
 .plate,
 .faction-plate,
 .dropdown button,
-.tile {
+.tile,
+.chip {
   position: relative;
   box-sizing: border-box;
   border: 1px solid var(--con-edge);
@@ -171,7 +174,8 @@ body {
 .plate::after,
 .faction-plate::after,
 .dropdown button::after,
-.tile::after {
+.tile::after,
+.chip::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -183,6 +187,7 @@ body {
 .plate:hover,
 .faction-plate:hover,
 .tile.ready:hover,
+.chip:hover,
 .menu.open > .plate {
   border-color: var(--con-radar);
 }
@@ -190,7 +195,8 @@ body {
 .plate:hover::after,
 .faction-plate:hover::after,
 .dropdown button:hover::after,
-.tile.ready:hover::after {
+.tile.ready:hover::after,
+.chip:hover::after {
   opacity: 1;
 }
 
@@ -489,6 +495,30 @@ body {
   flex: 1;
 }
 
+.build-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 8px 0;
+}
+
+.build-tabs .plate {
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.build-tabs [aria-selected='true'] {
+  border-color: var(--con-radar);
+  background: var(--con-void);
+  color: var(--con-radar);
+}
+
+#build-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .panel-head {
   display: flex;
   align-items: baseline;
@@ -569,10 +599,11 @@ body {
   align-content: start;
 }
 
+.build-tabs[hidden],
 #orders[hidden],
 .tile[hidden],
 .tile .badge[hidden],
-.queue-split[hidden],
+#queue[hidden],
 #city-focus[hidden],
 #legend[hidden],
 #trace[hidden] {
@@ -581,12 +612,12 @@ body {
 
 .tile {
   min-width: 0;
-  height: 64px;
+  height: 74px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   align-items: flex-start;
-  gap: 4px;
+  gap: 3px;
   padding: 8px;
   overflow: hidden;
   font: 600 13px/1.1 var(--con-sans);
@@ -623,7 +654,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.tile .pie {
+.tile .state {
+  max-width: 100%;
+  min-height: 1em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.tile.armed.ready .state {
+  color: var(--con-radar);
+}
+
+.tile .pie,
+.chip .pie {
   position: absolute;
   left: 0;
   right: 0;
@@ -633,6 +680,10 @@ body {
   transform: scaleX(var(--p));
   transform-origin: left;
   pointer-events: none;
+}
+
+.chip .pie {
+  height: 2px;
 }
 
 .tile .badge,
@@ -659,26 +710,49 @@ body {
   pointer-events: none;
 }
 
-.tile .hotkey:empty {
-  display: none;
+#queue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--con-edge);
 }
 
-.queue-split {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+#queue-label {
+  margin: 0;
+  padding-top: 7px;
   font-size: 10px;
   line-height: 1;
   color: var(--con-dim);
 }
 
-.queue-split::before,
-.queue-split::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--con-edge);
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 8px;
+  overflow: hidden;
+  font: 600 12px/1.1 var(--con-sans);
+  white-space: nowrap;
+}
+
+.chip .count {
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--con-dim);
+}
+
+.chip .count:empty {
+  display: none;
 }
 
 #city-focus {
@@ -867,7 +941,8 @@ body {
   .plate::after,
   .faction-plate::after,
   .dropdown button::after,
-  .tile::after {
+  .tile::after,
+  .chip::after {
     transition: opacity 0.15s;
   }
 
@@ -975,15 +1050,28 @@ body {
     padding: 0;
   }
 
+  .build-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 0 4px;
+  }
+
+  .build-tabs .plate {
+    padding: 0 2px;
+  }
+
+  #build-scroll {
+    gap: 4px;
+  }
+
   #orders {
     gap: 4px;
   }
 
   .tile {
     height: auto;
-    aspect-ratio: 1;
+    min-height: 54px;
     gap: 2px;
-    padding: 4px;
+    padding: 16px 3px 5px;
     font-size: 10px;
   }
 
@@ -997,6 +1085,52 @@ body {
     font-size: 8px;
     letter-spacing: 0;
     white-space: nowrap;
+  }
+
+  .tile .state {
+    min-height: 2.1em;
+    font-size: 7px;
+    line-height: 1.05;
+    letter-spacing: 0;
+    white-space: normal;
+  }
+
+  #queue {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  #queue-label {
+    padding: 0;
+    font-size: 8px;
+  }
+
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chip {
+    min-height: 44px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
+    padding: 2px 3px 4px;
+    font-size: 10px;
+    white-space: normal;
+  }
+
+  .chip .name {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    line-height: 1.05;
+  }
+
+  .chip .count {
+    font-size: 9px;
   }
 
   .tile .badge,

@@ -1,7 +1,7 @@
 import { populationOf, type CityLayout } from '../shared/cities.ts'
 import { baysFree } from '../shared/flight.ts'
 import type { CityState, TrainJob, UnitSnapshot } from '../shared/protocol.ts'
-import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf } from '../shared/unit-types.ts'
+import { AIRPORT, ARTILLERY, CRUISER, FACTORY, GUNSHIP, HEAVY_TANK, HELIPAD, JET, MED_TANK, SCOUT, SHIPYARD, TURRET, UNIT_TYPES, UnitTypeId, yardOf, type UnitType } from '../shared/unit-types.ts'
 
 export const enum PingState {
   None = 0,
@@ -20,7 +20,24 @@ export const enum TileKind {
   Structure = 0,
   City = 1,
   Train = 2,
-  Queued = 3,
+}
+
+export const enum BuildTab {
+  Base = 0,
+  Land = 1,
+  Air = 2,
+  Sea = 3,
+}
+
+export const enum TileBlock {
+  NeedsFactory = 0,
+  NeedsPopulation = 1,
+  SelectFactory = 2,
+  SelectAirport = 3,
+  SelectHelipad = 4,
+  SelectShipyard = 5,
+  NotFinished = 6,
+  ApronFull = 7,
 }
 
 export type HudInput = {
@@ -29,6 +46,7 @@ export type HudInput = {
   queue: readonly TrainJob[]
   cities: readonly (CityState | null)[]
   layouts: readonly (CityLayout | null)[]
+  selected: readonly number[]
   yard: UnitSnapshot | null
   placing: UnitTypeId | null
   raising: boolean
@@ -40,20 +58,28 @@ export type HudInput = {
 
 export type Ping = { state: PingState.None } | { state: PingState.Good | PingState.Slow | PingState.Bad; ms: number }
 
-type TileHead = { kind: TileKind.City } | { kind: TileKind.Structure | TileKind.Train | TileKind.Queued; type: UnitTypeId }
+/** A train tile's yard is the id of the selected yard when that yard trains its type. */
+type TileHead =
+  | { kind: TileKind.City }
+  | { kind: TileKind.Structure; type: UnitTypeId }
+  | { kind: TileKind.Train; type: UnitTypeId; yard: number | null }
 
 type TileState = {
+  tab: BuildTab
+  slot: number
   cost: string
   count: number
   progress: number
-  ready: boolean
-  visible: boolean
+  block: TileBlock | null
   armed: boolean
   badge: boolean
-  slot: number | null
 }
 
 export type HudTile = TileHead & TileState
+
+export type QueueChip = { kind: TileKind.Structure | TileKind.Train; type: UnitTypeId; count: number; progress: number }
+
+export type Selection = { ids: readonly number[]; hall: number | null }
 
 export type HudModel = {
   army: number
@@ -62,8 +88,9 @@ export type HudModel = {
   over: boolean
   ping: Ping
   tiles: HudTile[]
-  queued: boolean
-  yard: number | null
+  tab: BuildTab | null
+  queue: QueueChip[]
+  selection: Selection
   hall: { focus: number; label: string } | null
 }
 
@@ -89,60 +116,62 @@ export function hudModel(input: HudInput): HudModel {
   const held = heldCities(input)
   const room = (supply: number) => army + training + supply <= held.population
   const factory = own.some((unit) => unit.typeId === UnitTypeId.Factory && unit.progress >= 1)
-  const grid = hall === null && !input.spectating
   const tiles: HudTile[] = []
+  const taken: number[] = []
+  const add = (head: TileHead, tab: BuildTab, state: Omit<TileState, 'tab' | 'slot' | 'badge'>) => {
+    taken[tab] = (taken[tab] ?? 0) + 1
+    tiles.push({ ...head, ...state, tab, slot: taken[tab], badge: state.count > 1 || (state.count === 1 && state.progress <= 0) })
+  }
 
   const sites = structureSites(own)
   for (const type of STRUCTURES) {
     const { count, progress } = sites.get(type.id) ?? IDLE
-    const gate = !NEEDS_FACTORY.has(type.id) || factory
-    tiles.push(tile({ kind: TileKind.Structure, type: type.id }, {
+    add({ kind: TileKind.Structure, type: type.id }, BuildTab.Base, {
       cost: costLine(type.cost, type.supply),
       count,
       progress,
-      ready: gate && room(type.supply),
-      visible: grid && yard === null && (gate || count > 0),
+      block: NEEDS_FACTORY.has(type.id) && !factory ? TileBlock.NeedsFactory : room(type.supply) ? null : TileBlock.NeedsPopulation,
       armed: input.placing === type.id,
-    }))
+    })
   }
-  tiles.push(tile({ kind: TileKind.City }, {
+  add({ kind: TileKind.City }, BuildTab.Base, {
     cost: costLine(input.quote, 1),
     count: 0,
     progress: 0,
-    ready: true,
-    visible: grid && yard === null,
+    block: null,
     armed: input.raising,
-  }))
+  })
 
   const yardJobs = tallyJobs(yard === null ? [] : input.queue.filter((job) => job.yardId === yard.id))
+  const trainBlock = (type: UnitType, at: UnitSnapshot | null): TileBlock | null => {
+    if (at === null) return selectYard(yardOf(type.id))
+    if (at.progress < 1) return TileBlock.NotFinished
+    if (!room(type.supply)) return TileBlock.NeedsPopulation
+    if (type.id === UnitTypeId.Jet && jetApron(own, input.queue, at) <= 0) return TileBlock.ApronFull
+    return null
+  }
   for (const type of TRAINABLE) {
     const { count, progress } = yardJobs.get(type.id) ?? IDLE
-    const trains = yard !== null && yardOf(type.id) === yard.typeId
-    tiles.push(tile({ kind: TileKind.Train, type: type.id }, {
+    const at = yard !== null && yard.typeId === yardOf(type.id) ? yard : null
+    add({ kind: TileKind.Train, type: type.id, yard: at === null ? null : at.id }, tabOf(yardOf(type.id)), {
       cost: costLine(type.cost, type.supply),
       count,
       progress,
-      ready: trains && yard.progress >= 1 && room(type.supply) && (type.id !== UnitTypeId.Jet || jetApron(own, input.queue, yard) > 0),
-      visible: grid && trains,
+      block: trainBlock(type, at),
       armed: false,
-    }))
+    })
   }
 
-  const allJobs = tallyJobs(input.queue)
+  const queue: QueueChip[] = []
+  for (const type of STRUCTURES) {
+    const site = sites.get(type.id)
+    if (site) queue.push({ kind: TileKind.Structure, type: type.id, ...site })
+  }
+  const jobs = tallyJobs(input.queue)
   for (const type of TRAINABLE) {
-    const { count, progress } = allJobs.get(type.id) ?? IDLE
-    tiles.push(tile({ kind: TileKind.Queued, type: type.id }, {
-      cost: costLine(type.cost, type.supply),
-      count,
-      progress,
-      ready: count > 0,
-      visible: grid && count > 0,
-      armed: false,
-    }))
+    const tally = jobs.get(type.id)
+    if (tally) queue.push({ kind: TileKind.Train, type: type.id, ...tally })
   }
-
-  let slot = 0
-  for (const entry of tiles) if (entry.visible && entry.kind !== TileKind.Queued) entry.slot = ++slot
 
   const focus = hall === null ? null : (input.cities[hall]?.focus ?? 0)
   return {
@@ -152,8 +181,9 @@ export function hudModel(input: HudInput): HudModel {
     over: army > held.population,
     ping: pingOf(input.rtt),
     tiles,
-    queued: input.queue.length > 0,
-    yard: yard === null ? null : yard.id,
+    tab: hall === null && !input.spectating ? tabOf(yard === null ? null : yard.typeId) : null,
+    queue,
+    selection: { ids: input.selected, hall },
     hall: focus === null ? null : { focus, label: focusLabel(focus) },
   }
 }
@@ -187,8 +217,18 @@ export class CreditCounter {
   }
 }
 
-function tile(head: TileHead, state: Omit<TileState, 'badge' | 'slot'>): HudTile {
-  return { ...head, ...state, badge: state.count > 1 || (state.count === 1 && state.progress <= 0), slot: null }
+function tabOf(yard: UnitTypeId | null): BuildTab {
+  if (yard === UnitTypeId.Factory) return BuildTab.Land
+  if (yard === UnitTypeId.Airport || yard === UnitTypeId.Helipad) return BuildTab.Air
+  if (yard === UnitTypeId.Shipyard) return BuildTab.Sea
+  return BuildTab.Base
+}
+
+function selectYard(yard: UnitTypeId): TileBlock {
+  if (yard === UnitTypeId.Airport) return TileBlock.SelectAirport
+  if (yard === UnitTypeId.Helipad) return TileBlock.SelectHelipad
+  if (yard === UnitTypeId.Shipyard) return TileBlock.SelectShipyard
+  return TileBlock.SelectFactory
 }
 
 function pingOf(rtt: number | null): Ping {

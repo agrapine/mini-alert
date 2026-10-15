@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { version } from '../../package.json'
 import { UnitTypeId } from '../shared/unit-types.ts'
-import { baseHud, factoryHud, hallHud, spectateHud, strainedHud, traceFrame } from './hud-fixtures.ts'
+import { armedHud, armyHud, baseHud, factoryHud, hallHud, spectateHud, strainedHud, traceFrame } from './hud-fixtures.ts'
 import { hudModel, Trend, type HudInput } from './hud-model.ts'
 import { HudView, type CreditReadout, type HudActions } from './hud-ui.ts'
 import { bindMenu } from './menu.ts'
@@ -78,9 +78,29 @@ function face(entry: HTMLElement) {
   return {
     name: one(entry, '.name').textContent,
     cost: one(entry, '.cost').textContent,
+    state: one(entry, '.state').textContent,
     badge: shown(badge) ? badge.textContent : null,
     hotkey: one(entry, '.hotkey').textContent,
   }
+}
+
+function tabs(root: ParentNode): HTMLButtonElement[] {
+  return all<HTMLButtonElement>(one(root, '[role="tablist"]'), '[role="tab"]')
+}
+
+function openTab(root: ParentNode): string | null {
+  const open = tabs(root).filter((entry) => shown(entry) && entry.getAttribute('aria-selected') === 'true')
+  return open.length === 1 ? open[0].textContent : null
+}
+
+function chips(root: ParentNode): HTMLButtonElement[] {
+  return all<HTMLButtonElement>(root, '#queue .chip').filter(shown)
+}
+
+function chip(root: ParentNode, name: string): HTMLButtonElement {
+  const found = chips(root).find((entry) => one(entry, '.name').textContent === name)
+  if (!found) throw new Error(`no ${name} chip`)
+  return found
 }
 
 function panel(root: ParentNode, heading: string): HTMLElement {
@@ -202,18 +222,19 @@ describe('hud sidebar', () => {
 })
 
 describe('hud tiles', () => {
-  it('show each visible tile with its name, cost line, badge and F-label', () => {
+  it('show each tile of the open tab with its name, cost line, state line, badge and F-label', () => {
     const { root, view } = mount()
     paint(view, factoryHud().input)
     expect(tiles(root).map(face)).toEqual([
-      { name: 'Scout', cost: '200 · 1', badge: '1', hotkey: 'F1' },
-      { name: 'Med Tank', cost: '800 · 2', badge: '2', hotkey: 'F2' },
-      { name: 'Heavy Tank', cost: '2,000 · 4', badge: null, hotkey: 'F3' },
-      { name: 'Artillery', cost: '1,500 · 3', badge: null, hotkey: 'F4' },
-      { name: 'Scout', cost: '200 · 1', badge: '1', hotkey: '' },
-      { name: 'Med Tank', cost: '800 · 2', badge: '2', hotkey: '' },
-      { name: 'Jet', cost: '2,000 · 2', badge: null, hotkey: '' },
+      { name: 'Scout', cost: '200 · 1', state: '', badge: '1', hotkey: 'F1' },
+      { name: 'Med Tank', cost: '800 · 2', state: '40%', badge: '2', hotkey: 'F2' },
+      { name: 'Heavy Tank', cost: '2,000 · 4', state: '', badge: null, hotkey: 'F3' },
+      { name: 'Artillery', cost: '1,500 · 3', state: '', badge: null, hotkey: 'F4' },
     ])
+    paint(view, armedHud().input)
+    const armed = face(tile(root, 'Turret')).state
+    paint(view, strainedHud().input)
+    expect([armed, face(tile(root, 'Turret')).state]).toEqual(['Ready · place', 'Needs population'])
   })
 
   it('fire the add action on a click only while ready', () => {
@@ -254,21 +275,14 @@ describe('hud tiles', () => {
     ])
   })
 
-  it('fire cancelQueued on a click on a queued tile', () => {
+  it('fire nothing on Shift-click or right-click of a train tile whose yard is not selected', () => {
     const { root, view, actions } = mount()
     paint(view, factoryHud().input)
-    tile(root, 'Jet').click()
-    expect(fired(actions)).toEqual([['cancelQueued', [UnitTypeId.Jet]]])
-  })
-
-  it('head the queued tiles with Queued: while jobs are queued', () => {
-    const { root, view } = mount()
-    const row = () =>
-      [...one(root, '#orders').children].filter(shown).map((entry) => (entry.classList.contains('tile') ? one(entry, '.name').textContent : entry.textContent?.trim()))
-    paint(view, baseHud().input)
-    expect(row()).not.toContain('Queued:')
-    paint(view, factoryHud().input)
-    expect(row()).toEqual(['Scout', 'Med Tank', 'Heavy Tank', 'Artillery', 'Queued:', 'Scout', 'Med Tank', 'Jet'])
+    button(root, 'Air').click()
+    shiftClick(tile(root, 'Jet'))
+    expect(rightClick(tile(root, 'Gunship'))).toBe(false)
+    expect(view.pressSlot(1, true)).toBe(true)
+    expect(fired(actions)).toEqual([])
   })
 
   it('fill the pie of a tile in progress, and keep a tile with work live when it is not ready', () => {
@@ -298,6 +312,98 @@ describe('hud tiles', () => {
   })
 })
 
+describe('hud build tabs', () => {
+  it('sit in a tablist labelled Build category, opening the tab of the selected yard and Base otherwise', () => {
+    const { root, view } = mount()
+    paint(view, baseHud().input)
+    expect(one(root, '[role="tablist"]').getAttribute('aria-label')).toBe('Build category')
+    expect(tabs(root).map((entry) => [entry.textContent, entry.getAttribute('aria-selected')])).toEqual([
+      ['Base', 'true'],
+      ['Land', 'false'],
+      ['Air', 'false'],
+      ['Sea', 'false'],
+    ])
+    const opened = (input: HudInput) => {
+      paint(view, input)
+      return [openTab(root), tiles(root).map((entry) => face(entry).name)]
+    }
+    expect([opened(factoryHud().input), opened(baseHud().input)]).toEqual([
+      ['Land', ['Scout', 'Med Tank', 'Heavy Tank', 'Artillery']],
+      ['Base', ['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Building']],
+    ])
+  })
+
+  it('keep a clicked tab through repaints of the same selection, and drop it when another selection replaces it', () => {
+    const { root, view } = mount()
+    const army = armyHud().input
+    const tanks = { ...army, selected: [4, 5] }
+    paint(view, tanks)
+    button(root, 'Air').click()
+    expect([openTab(root), tiles(root).map((entry) => face(entry).name)]).toEqual(['Air', ['Jet', 'Gunship']])
+    paint(view, { ...army, selected: [4, 5] })
+    expect(openTab(root)).toBe('Air')
+    paint(view, { ...army, selected: [7, 8] })
+    expect(openTab(root)).toBe('Base')
+    paint(view, tanks)
+    expect(openTab(root)).toBe('Base')
+    const idle = { ...army, selected: [] }
+    paint(view, idle)
+    button(root, 'Sea').click()
+    paint(view, { ...idle, hall: 0 })
+    expect(openTab(root)).toBeNull()
+    paint(view, idle)
+    expect(openTab(root)).toBe('Base')
+  })
+})
+
+describe('hud queue', () => {
+  it('shows a chip per type in production, sites first, with ×count above 1 and a progress underline', () => {
+    const { root, view } = mount()
+    const line = () => chips(root).map((entry) => [one(entry, '.name').textContent, one(entry, '.count').textContent, one(entry, '.pie').style.getPropertyValue('--p')])
+    paint(view, factoryHud().input)
+    expect(one(root, '#queue-label').textContent).toBe('Queue')
+    expect(line()).toEqual([
+      ['Scout', '', '0'],
+      ['Med Tank', '×2', '0.4'],
+      ['Jet', '', '0.6'],
+    ])
+    paint(view, strainedHud().input)
+    expect(line().map(([name]) => name)).toEqual(['Factory', 'Turret', 'Airport', 'Helipad', 'Shipyard', 'Scout', 'Med Tank', 'Heavy Tank', 'Artillery', 'Jet', 'Gunship', 'Cruiser'])
+  })
+
+  it('fires cancelBuild for a structure chip and cancelQueued for a unit chip on a click, Shift-click or right-click', () => {
+    const { root, view, actions } = mount()
+    paint(view, strainedHud().input)
+    chip(root, 'Turret').click()
+    shiftClick(chip(root, 'Scout'))
+    expect(rightClick(chip(root, 'Cruiser'))).toBe(false)
+    expect(fired(actions)).toEqual([
+      ['cancelBuild', [UnitTypeId.Turret]],
+      ['cancelQueued', [UnitTypeId.Scout]],
+      ['cancelQueued', [UnitTypeId.Cruiser]],
+    ])
+  })
+
+  it('hides while nothing is in production', () => {
+    const { root, view } = mount()
+    const queue = one(root, '#queue')
+    paint(view, factoryHud().input)
+    expect(shown(queue)).toBe(true)
+    paint(view, baseHud().input)
+    expect([shown(queue), chips(root)]).toEqual([false, []])
+  })
+
+  it('keeps its chip nodes when the same model is painted twice', () => {
+    const { root, view } = mount()
+    paint(view, strainedHud().input)
+    const first = chips(root)
+    paint(view, strainedHud().input)
+    const second = chips(root)
+    expect(second).toHaveLength(12)
+    expect(second.every((entry, index) => entry === first[index])).toBe(true)
+  })
+})
+
 describe('hud F-slots', () => {
   it('press the tile carrying that F-label, and drop instead with Shift', () => {
     const { root, view, actions } = mount()
@@ -317,6 +423,21 @@ describe('hud F-slots', () => {
     paint(view, strainedHud().input)
     expect(view.pressSlot(1, false)).toBe(true)
     expect(fired(actions)).toEqual([])
+  })
+
+  it('follow the open tab', () => {
+    const { root, view, actions } = mount()
+    paint(view, factoryHud().input)
+    view.pressSlot(1, false)
+    button(root, 'Base').click()
+    expect(face(tiles(root)[0])).toMatchObject({ name: 'Factory', hotkey: 'F1' })
+    view.pressSlot(1, false)
+    button(root, 'Sea').click()
+    expect([view.pressSlot(1, false), view.pressSlot(2, false)]).toEqual([true, false])
+    expect(fired(actions)).toEqual([
+      ['spawn', [UnitTypeId.Scout]],
+      ['armBuilding', [UnitTypeId.Factory]],
+    ])
   })
 
   it('do nothing while the grid is hidden', () => {
