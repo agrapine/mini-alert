@@ -8,12 +8,26 @@ const LINE_S = 1.5
 
 type FakeBuffer = { url: string; duration: number }
 
+class FakeGain {
+  gain = { value: 1 }
+  output: unknown = null
+
+  constructor(readonly context: FakeContext) {}
+
+  connect(output: unknown) {
+    this.output = output
+  }
+}
+
 class FakeSource {
   buffer: FakeBuffer | null = null
+  output: unknown = null
   started = false
   stopped = false
 
-  connect() {}
+  connect(output: unknown) {
+    this.output = output
+  }
 
   start() {
     this.started = true
@@ -30,6 +44,7 @@ class FakeContext {
   currentTime = 0
   destination = {}
   resumes = 0
+  gains: FakeGain[] = []
   sources: FakeSource[] = []
 
   constructor() {
@@ -44,6 +59,12 @@ class FakeContext {
 
   decodeAudioData(data: FakeBuffer) {
     return Promise.resolve(data)
+  }
+
+  createGain() {
+    const gain = new FakeGain(this)
+    this.gains.push(gain)
+    return gain
   }
 
   createBufferSource() {
@@ -74,8 +95,7 @@ function rolls(...values: number[]) {
   for (const value of values) random.mockReturnValueOnce(value)
 }
 
-async function unlocked() {
-  const alarm = new Alarm()
+async function unlocked(alarm = new Alarm()) {
   const target = gestures()
   alarm.listen(target)
   target.dispatch('pointerup')
@@ -176,6 +196,19 @@ describe('alarm', () => {
     alarm.setOn(true)
     alarm.sound(ContactKind.Unit)
     expect(context.sources).toHaveLength(2)
+  })
+
+  it('plays through a gain at the Sounds volume, set before audio starts or while an alarm sounds', async () => {
+    const alarm = new Alarm()
+    alarm.setVolume(0.3)
+    const { context } = await unlocked(alarm)
+    const [gain] = context.gains
+    expect(gain.gain.value).toBe(0.3)
+    expect(gain.output).toBe(context.destination)
+    alarm.sound(ContactKind.Base)
+    expect(context.sources[0].output).toBe(gain)
+    alarm.setVolume(0.65)
+    expect(gain.gain.value).toBe(0.65)
   })
 
   it('stays silent without Web Audio', () => {

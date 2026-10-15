@@ -82,6 +82,12 @@ bindMenu({
   onSounds(on) {
     alarm.setOn(on)
   },
+  onMusicVolume(volume) {
+    music.setVolume(volume)
+  },
+  onSoundsVolume(volume) {
+    alarm.setVolume(volume)
+  },
   onSurrender() {
     net.sendLobby({ kind: LobbyClientKind.LeaveRoom })
   },

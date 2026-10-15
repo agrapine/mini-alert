@@ -21,6 +21,7 @@
 - Coming under attack sounds an alarm with the minimap blip: at random, either a dancehall air horn or a Jamaican voice calling "Wi base a get attack!" when a building or city is hit or "Unit a get lick!" when a unit is, each drawn from several recorded takes. Settings › Sounds turns it off, cutting short an alarm already sounding, and remembers the choice.
 - The minimap attack ping is hard to miss: a large ring closes on the spot, the spot pulses three times under a bright marker and the minimap edge flashes once, red when a building or city is hit and amber when a unit is. It lasts about 4 seconds; when your system asks for reduced motion it is a still ring and marker.
 - A third battle track, Vroom Vroom Tancul, joins the music shuffled through a match.
+- Settings has a Music volume and a Sounds volume slider, from 0 to 100% in steps of 5, each under its On/Off switch. They work by touch and with the arrow keys, apply as you move them and are remembered. Music starts at 40% and sounds at 100%.
 
 ## 0.6
 - F1 onward queues the build and train tiles. The key sits in the bottom-right of each tile.

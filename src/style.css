@@ -130,6 +130,66 @@ body.match {
   font-variant-numeric: tabular-nums;
 }
 
+.volume {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 16px;
+  padding: 7px 10px 0;
+}
+
+.volume input {
+  --thumb: 16px;
+  --dot: 12px;
+  grid-column: 1 / -1;
+  width: 100%;
+  height: var(--thumb);
+  margin: 4px 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+
+.volume input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #4a5340;
+}
+
+.volume input::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #4a5340;
+}
+
+/* The transparent border widens the thumb's hit area past the visible dot; WebKit on iOS starts a drag only on the thumb. */
+.volume input::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc(2px - var(--thumb) / 2);
+  border: calc((var(--thumb) - var(--dot)) / 2) solid transparent;
+  border-radius: 50%;
+  background: #d7b85a padding-box;
+  appearance: none;
+}
+
+.volume input::-moz-range-thumb {
+  box-sizing: border-box;
+  width: var(--thumb);
+  height: var(--thumb);
+  border: calc((var(--thumb) - var(--dot)) / 2) solid transparent;
+  border-radius: 50%;
+  background: #d7b85a padding-box;
+}
+
+@media (pointer: coarse) {
+  .volume input {
+    --thumb: 44px;
+    --dot: 22px;
+  }
+}
+
 #sheet {
   position: fixed;
   z-index: 8;
